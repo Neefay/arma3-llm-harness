@@ -23,7 +23,14 @@ brmh_scheduled = [];
 brmh_scheduledErrors = createHashMap;
 brmh_scheduledDone = createHashMap;
 brmh_machines = createHashMap;
+brmh_looseErrors = createHashMap;
 brmh_chunkSeq = 0;
+// An error inside a loop fires once per iteration: a request keeps this many distinct errors (repeats
+// are counted, not stored), and an error no request owns is reported at most once per interval (s).
+BRMH_MAX_ERRORS = 20;
+BRMH_ERROR_REPEAT_INTERVAL = 1;
+// Envelopes larger than this (characters) are not mirrored to the RPT, only noted there.
+BRMH_MIRROR_MAX = 16000;
 BRMH_PYTHIA = isClass (configFile >> "CfgPatches" >> "PY3_Pythia");
 brmh_bridgeActive = false;
 brmh_bridgeCheckNext = 0;

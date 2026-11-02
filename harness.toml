@@ -16,6 +16,12 @@ source = "missions/brmh_selftest.VR"
 mods = ["@CBA_A3", "@Pythia", "@brmh"]   # @brmh = the built harness mod; the hub needs @Pythia
 client_mods = ["@CBA_A3", "@brmh"]
 
+[missions.demo]
+# Altis sandbox for the chat demo (docs/DEMO.md): a squad leader with two AI squadmates.
+source = "missions/brmh_demo.Altis"
+mods = ["@CBA_A3", "@Pythia", "@brmh"]
+client_mods = ["@CBA_A3", "@brmh"]
+
 # Example profile for your own mission:
 #
 # [missions.my_mission]

@@ -7,6 +7,8 @@
     steps:
       - wait_for: {match: {k: evt, type: fsm, dir: enter, state: GAME}, timeout_s: 90}
       - exec: {code: "1 + 1", target: server, expect: 2}
+      - exec: {code: "1/0", expect_error: "Zero divisor", expect_error_count: 1,
+               expect_first_error: {line: 1}}
       - assert: {context: {key: TEAM_WINS, equals: {DRAW: 1}}}
       - assert: {sequence: {match: {type: fsm, dir: enter}, field: state, expect: [SETUP, READY, GAME]}}
       - assert: {event: {k: evt, type: ctx, key: ENDING_REASON}}
@@ -121,6 +123,11 @@ def _step(h: Harness, kind: str, spec, since: int) -> str:
                 raise StepFailed(f"expected an error containing {spec['expect_error']!r}, got {texts}")
             if "expect_aborted" in spec and any(r.get("aborted") for r in res["results"]) != spec["expect_aborted"]:
                 raise StepFailed(f"aborted != {spec['expect_aborted']}")
+            errors = [e for r in res.get("results", []) for e in r.get("errors", [])]
+            if "expect_error_count" in spec and len(errors) != spec["expect_error_count"]:
+                raise StepFailed(f"expected {spec['expect_error_count']} distinct error(s), got {len(errors)}")
+            if "expect_first_error" in spec and not matcher(spec["expect_first_error"])(errors[0]):
+                raise StepFailed(f"first error {errors[0]} does not match {spec['expect_first_error']}")
             return f"error attributed: {texts[0]}"
         if "expect_owners" in spec and len(res.get("owners") or []) != spec["expect_owners"]:
             raise StepFailed(f"expected {spec['expect_owners']} machine(s), got owners {res.get('owners')}")

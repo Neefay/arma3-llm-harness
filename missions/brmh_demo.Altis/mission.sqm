@@ -1,0 +1,131 @@
+version=54;
+class EditorData
+{
+	moveGridStep=1;
+	angleGridStep=0.2617994;
+	scaleGridStep=1;
+	autoGroupingDist=10;
+	toggles=1;
+	class ItemIDProvider
+	{
+		nextID=11;
+	};
+	class Camera
+	{
+		pos[]={14200,40,18920};
+		dir[]={-0.55,-0.45,-0.7};
+		up[]={-0.28,0.89,-0.35};
+		aside[]={-0.79,0,0.62};
+	};
+};
+binarizationWanted=0;
+sourceName="brmh_demo";
+addons[]=
+{
+	"A3_Characters_F"
+};
+randomSeed=1;
+class ScenarioData
+{
+	author="arma-harness";
+};
+class Mission
+{
+	class Intel
+	{
+		timeOfChanges=1800;
+		startWeather=0.2;
+		startWind=0.1;
+		startWaves=0.1;
+		forecastWeather=0.2;
+		forecastWind=0.1;
+		forecastWaves=0.1;
+		forecastLightnings=0.1;
+		year=2035;
+		month=6;
+		day=24;
+		hour=17;
+		minute=30;
+		startFogDecay=0.014;
+		forecastFogDecay=0.014;
+	};
+	class Entities
+	{
+		items=2;
+		class Item1
+		{
+			dataType="Logic";
+			class PositionInfo
+			{
+				position[]={14180,0,18896};
+			};
+			name="HC1";
+			isPlayable=1;
+			id=10;
+			type="HeadlessClient_F";
+		};
+		class Item0
+		{
+			dataType="Group";
+			side="West";
+			class Entities
+			{
+				items=3;
+				class Item0
+				{
+					dataType="Object";
+					class PositionInfo
+					{
+						position[]={14170,0,18886};
+						angles[]={0,3.927,0};
+					};
+					side="West";
+					flags=7;
+					class Attributes
+					{
+						isPlayer=1;
+						isPlayable=1;
+					};
+					id=1;
+					type="B_Soldier_SL_F";
+				};
+				class Item1
+				{
+					dataType="Object";
+					class PositionInfo
+					{
+						position[]={14167,0,18889};
+						angles[]={0,3.927,0};
+					};
+					side="West";
+					flags=5;
+					class Attributes
+					{
+					};
+					id=2;
+					type="B_Soldier_AR_F";
+				};
+				class Item2
+				{
+					dataType="Object";
+					class PositionInfo
+					{
+						position[]={14173,0,18883};
+						angles[]={0,3.927,0};
+					};
+					side="West";
+					flags=5;
+					class Attributes
+					{
+					};
+					id=3;
+					type="B_medic_F";
+				};
+			};
+			class Attributes
+			{
+			};
+			id=0;
+		};
+	};
+};

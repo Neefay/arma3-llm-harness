@@ -25,8 +25,10 @@ Arma 3 dev harness. Typical flow:
    Events: k=evt (type=fsm|ctx|attached from the rounds adapter), k=err (script errors), k=res, k=hello.
 4. See: arma_snapshot (in-engine screenshot incl. GUI, optional camera position), arma_gui_text,
    arma_map (terrain SVG + named locations).
-5. arma_reload hot-reloads a mission file from the source folder; arma_run_scenario runs a YAML test.
-6. arma_stop when done. The game keeps running if this MCP server restarts.
+5. Conversation: arma_listen waits for a player's chat message to you, arma_say replies in game,
+   arma_view gives the player's view as data (with screen coordinates of what is on screen).
+6. arma_reload hot-reloads a mission file from the source folder; arma_run_scenario runs a YAML test.
+7. arma_stop when done. The game keeps running if this MCP server restarts.
 rounds_* tools read the rounds framework through its own accessors.
 """
 
@@ -175,6 +177,33 @@ def arma_gui_text(target: str = "interface", text_only: bool = True) -> dict:
 def arma_map(contours: bool = True, trees: bool = False) -> dict:
     """Export the terrain map as SVG (works headless) and list named locations in world coordinates."""
     return h().map_svg(contours=contours, trees=trees)
+
+
+@server.tool()
+@safe
+def arma_listen(name: str = "claude", since: int | None = None, timeout_s: float = 600) -> dict:
+    """Wait for a player to type a chat message addressed to you ("claude, ...", "@claude ...", "hey
+    claude ..."). Returns the message, the kills since `since`, and `next`: pass it back as `since` on the
+    following call so nothing said meanwhile is missed. Reply with arma_say; look with arma_view and
+    arma_snapshot."""
+    return h().listen(name=name, since=since, timeout=timeout_s)
+
+
+@server.tool()
+@safe
+def arma_say(text: str, sender: str = "Claude", hint: bool = False, target: str = "interface") -> dict:
+    """Show players a chat line "<sender>: <text>" in its own colour. hint=true also shows a hint box
+    (for longer answers). Keep lines short: the chat feed shows about one sentence comfortably."""
+    return h().say(text, sender=sender, hint=hint, target=target)
+
+
+@server.tool()
+@safe
+def arma_view(radius: float = 300, max_objects: int = 40, target: str = "interface") -> dict:
+    """The player's view as data: position, grid, facing, world time/weather, and on-screen buildings,
+    vehicles and units with world positions, screen [x, y] (0..1), distance, line-of-sight `seen` (0..1)
+    and building position counts. Use it with arma_snapshot to turn "that house" into coordinates."""
+    return h().view(radius=radius, max_objects=max_objects, target=target)
 
 
 @server.tool()

@@ -1,0 +1,5 @@
+onLoadName = "arma-harness demo";
+onLoadMission = "Talk to Claude in chat: start a message with 'claude'.";
+respawn = "BASE";
+respawnDelay = 5;
+respawnOnStart = -1;

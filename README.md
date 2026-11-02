@@ -83,6 +83,9 @@ The game processes survive MCP server restarts: they are started through WMI, ou
 | `arma_snapshot(camera_pos, camera_target)` | In-engine screenshot, GUI included, optionally from a temporary camera. Returns the image and warns about black frames. |
 | `arma_gui_text` | Readable text of visible controls on interface machines. Display 46 is the mission HUD; others may be background displays (main menu, role assignment). |
 | `arma_map` | Terrain map as SVG, plus named locations in world coordinates (works headless) |
+| `arma_listen(since)` | Wait for a player to type a chat message addressed to Claude ("claude, ..."). Shows an instant "thinking..." hint; returns the message, kills since `since`, and the next cursor. See [docs/DEMO.md](docs/DEMO.md). |
+| `arma_say(text, hint?)` | Reply in game: a chat line on Claude's own radio channel, optionally also a hint box |
+| `arma_view(radius)` | The player's view as data: position, grid, world time and weather, and on-screen buildings, vehicles and units with screen coordinates, line of sight and building positions |
 | `arma_reload(path, function?)` | Hot-reload a file from the mission source folder. Refuses files with load-time side effects unless `force`. |
 | `arma_run_scenario(path)` | Run a YAML scenario; returns pass/fail and writes a markdown report |
 | `rounds_state`, `rounds_context_get` / `rounds_context_set`, `rounds_fire_event`, `rounds_gui` | The rounds framework, through its own accessors |
@@ -141,7 +144,7 @@ steps:
   - assert: {no_errors: true}
 ```
 
-- **Step kinds:** `wait_for`, `exec` (`expect`, `expect_error`, `expect_owners`), `assert` (`context`, `sqf`, `event`, `sequence`, `no_errors`), `sleep`, `snapshot`, `hc_start`, `client_start`, `fire_event`, `context_set`, `reload`.
+- **Step kinds:** `wait_for`, `exec` (`expect`, `expect_error`, `expect_error_count`, `expect_first_error`, `expect_owners`), `assert` (`context`, `sqf`, `event`, `sequence`, `no_errors`), `sleep`, `snapshot`, `hc_start`, `client_start`, `fire_event`, `context_set`, `reload`.
 - **Scenarios in the repo:**
   - `selftest`: the harness itself, on the bundled mission;
   - `attached_check`: certifies whatever game is attached or running;

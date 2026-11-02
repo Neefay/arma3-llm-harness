@@ -79,6 +79,20 @@ def main(argv: list[str] | None = None) -> int:
     g.add_argument("--target", default="interface")
     g.add_argument("--all", action="store_true", help="include controls without text")
     sub.add_parser("map")
+    sub.add_parser("observe", help="install the chat and kill observers")
+    li = sub.add_parser("listen", help="wait for a chat message addressed to Claude")
+    li.add_argument("--name", default="claude")
+    li.add_argument("--since", type=int)
+    li.add_argument("--timeout", type=float, default=600)
+    sy = sub.add_parser("say", help="show a chat line from Claude to players")
+    sy.add_argument("text")
+    sy.add_argument("--sender", default="Claude")
+    sy.add_argument("--hint", action="store_true")
+    sy.add_argument("--target", default="interface")
+    vw = sub.add_parser("view", help="what the player's camera sees, as data")
+    vw.add_argument("--radius", type=float, default=300)
+    vw.add_argument("--max", type=int, default=40)
+    vw.add_argument("--target", default="interface")
     rl = sub.add_parser("reload")
     rl.add_argument("path")
     rl.add_argument("--target", default="all")
@@ -139,6 +153,14 @@ def _dispatch(h: Harness, a):
             return h.gui_text(target=a.target, text_only=not a.all)
         case "map":
             return h.map_svg()
+        case "observe":
+            return h.observe()
+        case "listen":
+            return h.listen(name=a.name, since=a.since, timeout=a.timeout)
+        case "say":
+            return h.say(a.text, sender=a.sender, hint=a.hint, target=a.target)
+        case "view":
+            return h.view(radius=a.radius, max_objects=a.max, target=a.target)
         case "reload":
             return h.reload(a.path, target=a.target, function=a.function, force=a.force)
         case "scenario":

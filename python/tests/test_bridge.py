@@ -86,6 +86,22 @@ class BridgeTest(unittest.TestCase):
         status, _ = self.call("GET", "/status", token="wrong")
         self.assertEqual(status, 403)
 
+    def test_reattach_while_running_adopts_new_token(self):
+        # Detach deletes the session and port files; the bridge keeps serving with the old token.
+        self.write_session()
+        _, port = self.hub.start("m", "VR")
+        os.remove(self.session_file)
+        os.remove(self.port_file)
+        self.hub.poll()
+        self.write_session(token="fresh", boot=[{"code": "boot code"}])
+        self.hub.last_session_check = 0
+        polled = self.hub.poll()
+        self.assertTrue(any("boot code" in p for p in polled), polled)
+        with open(self.port_file, encoding="utf-8") as f:
+            self.assertEqual(json.load(f)["port"], port)
+        self.assertEqual(self.call("GET", "/status", token="fresh")[0], 200)
+        self.assertEqual(self.call("GET", "/status", token="secret")[0], 403)
+
     def test_exec_multi_target_collects_all_results(self):
         self.write_session()
         self.hub.start("m", "VR")

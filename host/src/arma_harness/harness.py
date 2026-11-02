@@ -5,6 +5,7 @@ reconnect to a running game. Game processes are owned by the OS, not by us (see 
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import re
 import secrets
@@ -325,6 +326,9 @@ class Harness:
         src = strip_comments(code) if strip else code
         st = self._require()
         res = self.bridge().exec(src, target, timeout, scheduled, args)
+        for r in res.get("results") or []:
+            if r.get("errors"):
+                r["errors"] = _compact_errors(r["errors"])
         self.audit.record(run=st.run_id, target=target, scheduled=scheduled, code=src,
                           ok=res.get("ok"), error=res.get("error"), id=res.get("id"))
         return res
@@ -442,6 +446,87 @@ class Harness:
             raise HarnessError(f"map export failed: {res}")
         return {"path": str(path), "world": world, "world_size": size, "bytes": path.stat().st_size,
                 "export": r, "locations": _svg_locations(path, size)}
+
+    # -- conversation ----------------------------------------------------------------------------
+
+    def observe(self) -> dict:
+        """Install the chat (interface machines) and kill (server) observers. Idempotent; they are gone
+        after a mission restart, so callers re-run this rather than track it."""
+        return self.exec(_snippet("observe.sqf"), "all", timeout=5, strip=False)
+
+    def listen(self, name: str = "claude", since: int | None = None, timeout: float = 600,
+               ack: str | None = "thinking...") -> dict:
+        """Block until a player types a chat message addressed to ``name`` ("claude, ...", "@claude ...",
+        "hey claude ...", any case). Returns the message, the kills since ``since``, and the cursor to
+        pass back next time so nothing said in between is missed. ``ack`` is shown at once as a hint on
+        the sender's machine, so players see the message landed while the reply is being worked out."""
+        obs = self.observe()
+        if not obs.get("ok"):
+            raise HarnessError(f"could not install observers: {obs}")
+        b = self.bridge()
+        start = b.cursor() if since is None else since
+        rx = rf"(?i)^\s*(@|hey\s+|ok\s+)?{re.escape(name)}\b"
+        is_chat = matcher({"k": "evt", "type": "chat", "text": {"$re": rx}})
+        # A mission restart removes the observers: reinstall them once the player's machine is back
+        # (its hello), and keep waiting.
+        is_restart = matcher({"k": "mission", "state": "start"})
+        is_back = matcher({"k": "hello", "iface": True})
+        deadline = time.time() + timeout
+        cursor, ev, restarted = start, None, False
+        while ev is None and time.time() < deadline:
+            hit, cursor = b.wait_for(lambda e, r=restarted: is_chat(e) or is_restart(e) or (r and is_back(e)),
+                                     cursor, deadline - time.time())
+            if hit is None:
+                break
+            if is_restart(hit):
+                restarted = True
+            elif is_chat(hit):
+                ev = hit
+            else:
+                restarted = False
+                with contextlib.suppress(HarnessError, BridgeError):
+                    self.observe()
+        nxt = cursor
+        if ev is not None and ack:
+            with contextlib.suppress(HarnessError, BridgeError):
+                self.exec(_ACK_SQF, f"owner:{ev.get('o')}", timeout=3, args=[name.capitalize(), ack], strip=False)
+        between = b.events(since=start, limit=5000).get("events", [])
+        kills = [e for e in between if e.get("k") == "evt" and e.get("type") == "killed"
+                 and (ev is None or e.get("seq", 0) < ev.get("seq", 0))]
+        return {"found": ev is not None, "message": ev, "kills": kills, "next": nxt}
+
+    def say(self, text: str, sender: str = "Claude", hint: bool = False, target: str = "interface") -> dict:
+        """Show a chat line "<sender>: <text>" (own colour) to players; hint=true also shows a hint box."""
+        made = self.exec(_snippet("say_channel.sqf"), "server", timeout=5, args=[sender], strip=False)
+        channel = (made.get("results") or [{}])[0].get("r")
+        if not isinstance(channel, int | float):
+            channel = 0
+        return self.exec(_snippet("say.sqf"), target, timeout=5, args=[text, sender, hint, int(channel)],
+                         strip=False)
+
+    def view(self, radius: float = 300, max_objects: int = 40, target: str = "interface") -> dict:
+        """What the player's camera sees, as data: player and world state plus on-screen buildings,
+        vehicles and units with screen coordinates, positions and line-of-sight. Pair with a snapshot."""
+        return self.exec(_snippet("view.sqf"), target, timeout=10, args=[radius, max_objects], strip=False)
+
+
+_ACK_SQF = """hintSilent parseText format ["<t color='#f28c26'>%1</t> %2", _this # 0, _this # 1]"""
+
+
+def _compact_errors(errors: list[dict], keep: int = 10) -> list[dict]:
+    """Collapse repeats of the same script error (an error inside a loop fires once per iteration and
+    can run to megabytes): one entry per distinct error with a ``repeats`` count, first ``keep`` kept."""
+    seen: dict[tuple, dict] = {}
+    for e in errors:
+        key = (e.get("file"), e.get("line"), e.get("pos"), e.get("text"))
+        if key in seen:
+            seen[key]["repeats"] = seen[key].get("repeats", 1) + 1
+        else:
+            seen[key] = dict(e)
+    out = list(seen.values())
+    if len(out) > keep:
+        out = out[:keep] + [{"text": f"... {len(out) - keep} more distinct errors (see arma_errors)"}]
+    return out
 
 
 def _svg_locations(path: Path, world_size: float) -> list[dict]:

@@ -21,6 +21,10 @@ private _mirror = not brmh_bridgeActive or {
 };
 if (not _mirror) exitWith {};
 
+// Writing megabytes to the RPT in 900-character lines stalls the game for minutes.
+if (count _json > BRMH_MIRROR_MAX) exitWith {
+	diag_log text format ["[BRMH] envelope of %1 characters not mirrored: %2...", count _json, _json select [0, 300]];
+};
 if (count _json <= 900) exitWith {
 	diag_log text ("[BRMH] " + _json);
 };

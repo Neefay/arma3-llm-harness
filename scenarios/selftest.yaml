@@ -11,6 +11,9 @@ steps:
   - exec: {code: "private _x = 1/0; 'continues'", expect_error: "Zero divisor", expect_aborted: false}
   - exec: {code: "private _a = 'x' + 1; 'never'", expect_error: "Generic error", expect_aborted: true}
   - exec: {code: "1 +", expect_error: "Invalid number"}
+  # An error inside a loop fires per iteration; it comes back once, with a repeat count.
+  - exec: {code: "for '_i' from 1 to 500 do {private _y = 1/0}; 'done'", expect_error: "Zero divisor",
+           expect_error_count: 1, expect_first_error: {repeats: 500}}
   # Scheduled code may sleep; its result arrives when it finishes.
   - exec: {code: "sleep 0.5; 'slept'", scheduled: true, expect: "slept"}
   - exec: {code: "_this # 0 + _this # 1", args: [40, 2], expect: 42}

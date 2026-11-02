@@ -28,6 +28,8 @@ import traceback
 
 MAX_EVENTS = 50000
 MAX_POLL = 64
+# How often a running bridge looks for a new session file (a host that detached and attached again).
+SESSION_CHECK_INTERVAL = 2.0
 
 
 def harness_home():
@@ -75,6 +77,7 @@ class Hub:
         self.mission = None
         self.started = None
         self.polls = 0
+        self.last_session_check = 0.0
 
     # -- game side --------------------------------------------------------------------------
 
@@ -84,7 +87,9 @@ class Hub:
                 # The game only calls start() once per mission (preInit resets its flag), so a call
                 # while running means the mission (re)started, even under the same name.
                 self._new_epoch(mission, world)
-                return [True, self.port]
+        if self.server is not None:
+            self._adopt_session()
+            return [True, self.port]
         session_file, port_file = session_paths()
         if not os.path.isfile(session_file):
             return [False, 0]
@@ -103,11 +108,42 @@ class Hub:
             self.session = session
             self.started = time.time()
             self._new_epoch(mission, world)
+        self._write_port_file()
+        return [True, self.port]
+
+    def _write_port_file(self):
+        port_file = session_paths()[1]
         tmp = port_file + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump({"pid": os.getpid(), "port": self.port, "started": self.started}, f)
         os.replace(tmp, port_file)
-        return [True, self.port]
+
+    def _adopt_session(self):
+        """A host detached and attached again while the bridge kept running (its HTTP server outlives
+        the host): take the new session's token and boot payload, and announce the port again."""
+        self.last_session_check = time.time()
+        session_file = session_paths()[0]
+        try:
+            with open(session_file, encoding="utf-8") as f:
+                session = json.load(f)
+        except (OSError, ValueError):
+            return
+        token = session.get("token")
+        if not token or token == self.token:
+            return
+        with self.lock:
+            self.token = token
+            self.session = session
+            for i, item in enumerate(session.get("boot", [])):
+                self.inbox.append(json.dumps({
+                    "id": "boot%d.attach%d" % (self.epoch, i),
+                    "code": item.get("code", ""),
+                    "target": item.get("target", "server"),
+                    "scheduled": bool(item.get("scheduled", False)),
+                    "args": item.get("args", []),
+                }))
+            self._append({"k": "session", "state": "attached"})
+        self._write_port_file()
 
     def _new_epoch(self, mission, world):
         """A (re)started mission: fail requests of the old run and queue the boot payload again."""
@@ -129,6 +165,8 @@ class Hub:
         self._append({"k": "mission", "state": "start", "epoch": self.epoch, "mission": mission, "world": world})
 
     def poll(self):
+        if self.server is not None and time.time() - self.last_session_check > SESSION_CHECK_INTERVAL:
+            self._adopt_session()
         with self.lock:
             self.polls += 1
             out = []
