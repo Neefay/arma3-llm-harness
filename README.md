@@ -24,6 +24,59 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for how it works and the engi
 
 ---
 
+## Quick start (first time)
+
+About 15 minutes, most of it downloads and the first build. All commands are PowerShell, run from the repo root.
+
+**1. Install the prerequisites**
+
+| What | How |
+|---|---|
+| Arma 3 (Steam), with the Workshop mods **CBA_A3** and **Pythia** | Subscribe in the Workshop, then start the game once so Steam downloads them |
+| Python 3.11+ | [python.org](https://www.python.org/downloads/) (tick "Add to PATH") |
+| Rust | [rustup.rs](https://rustup.rs), then `rustup update stable` |
+| HEMTT 1.23+ | `winget install BrettMayson.HEMTT`, or download it from [hemtt.dev](https://hemtt.dev) |
+| Claude Code (optional, for the LLM side) | [docs](https://docs.claude.com/en/docs/claude-code) |
+
+**2. Build**
+
+```powershell
+git clone https://github.com/Neefay/arma3-llm-harness.git arma-harness
+cd arma-harness
+python -m venv host\.venv
+host\.venv\Scripts\python -m pip install -e ".\host[dev]"
+host\.venv\Scripts\python tools\build.py --check
+```
+
+The last line builds the mod into `%LOCALAPPDATA%\arma-harness\mods\@brmh` and runs every offline test. It should end with all tests passing and `deployed ...`.
+
+**3. Check it against the real game.** This boots a local dedicated server with the bundled self-test mission (no game window) and should print `"verdict": "pass"` within about a minute:
+
+```powershell
+host\.venv\Scripts\arma-harness.exe scenario selftest
+```
+
+**4. Connect Claude Code.** Copy `.mcp.json.example` to `.mcp.json` and fix the path inside it, then start `claude` in this folder. It now has the `arma_*` tools. Try: *"Start the selftest mission with a client and take a snapshot."*
+
+**5. Use it in your own game (optional).**
+1. In the Arma 3 Launcher, add the local mod `%LOCALAPPDATA%\arma-harness\mods\@brmh` (Mods → ⋯ → Add local mod), enable it with CBA_A3 and Pythia, and **turn BattlEye off**.
+2. Start a mission as host: an Eden preview, singleplayer, or Play → Multiplayer → host.
+3. Once you are in the mission, run `host\.venv\Scripts\arma-harness.exe attach`, then `arma-harness scenario attached_check` to certify it.
+
+To talk to Claude from in-game chat, see the demo: [`docs/DEMO.md`](docs/DEMO.md).
+
+### If something goes wrong
+
+| Symptom | Fix |
+|---|---|
+| `build.py` says NOT DEPLOYED | A running game has the mod loaded (its files are locked). Quit Arma and run it again. |
+| `attach`: "no bridge" | You must be *in* a mission (not the main menu), as host, with `@Pythia` and `@brmh` enabled. Check the RPT for `@Pythia mod and extension loaded`. |
+| `attach` finds several Arma processes | Pass `--pid <pid>` of the one you're playing. |
+| Snapshot is black | The game window is minimised, or a loading screen is showing. Restore the window and retry. |
+| Anything else | `arma-harness status`, then `arma-harness rpt --machine server --tail 50`, and the logs in `%LOCALAPPDATA%\arma-harness\logs\`. |
+
+---
+
 ## Requirements
 
 - **Windows 10/11** and **Arma 3 2.22+** (Steam), with these Workshop mods: **CBA_A3**, **Pythia**, plus whatever your mission needs (rounds_framework needs **ace**).
