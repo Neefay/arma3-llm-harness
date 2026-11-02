@@ -1,0 +1,18 @@
+# Harness self-test: exercises the harness itself on a tiny vanilla mission (no framework).
+name: harness self-test
+mission: selftest
+start: {hcs: 1}
+steps:
+  - wait_for: {match: {k: hello, kind: HC}, timeout_s: 60}
+  - exec: {code: "1 + 1", expect: 2}
+  - exec: {code: "[clientOwner, BRMH_MACHINE]", target: hcs, expect_owners: 1}
+  - exec: {code: "BRMH_MACHINE", target: all, expect_owners: 2}
+  # Errors are attributed to the request that caused them; a type error aborts the code.
+  - exec: {code: "private _x = 1/0; 'continues'", expect_error: "Zero divisor", expect_aborted: false}
+  - exec: {code: "private _a = 'x' + 1; 'never'", expect_error: "Generic error", expect_aborted: true}
+  - exec: {code: "1 +", expect_error: "Invalid number"}
+  # Scheduled code may sleep; its result arrives when it finishes.
+  - exec: {code: "sleep 0.5; 'slept'", scheduled: true, expect: "slept"}
+  - exec: {code: "_this # 0 + _this # 1", args: [40, 2], expect: 42}
+  - assert: {sqf: "time > 0"}
+  - assert: {event: {k: err, text: {$re: "Zero divisor"}}}

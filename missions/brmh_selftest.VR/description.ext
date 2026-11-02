@@ -1,0 +1,3 @@
+onLoadName = "arma-harness self-test";
+respawn = "BASE";
+respawnDelay = 3;

@@ -1,0 +1,9 @@
+* text=auto
+*.sqf text eol=crlf
+*.hpp text eol=crlf
+*.cpp text eol=crlf
+*.ext text eol=crlf
+*.sqm text eol=crlf
+*.png binary
+*.pbo binary
+*.dll binary

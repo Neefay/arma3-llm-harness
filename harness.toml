@@ -1,0 +1,29 @@
+# arma-harness configuration. Mission profiles are what tools refer to by name
+# (arma_start(mission="selftest")). Paths may be absolute or relative to the file defining them.
+#
+# Personal profiles go in harness.local.toml next to this file (git-ignored), or in
+# %LOCALAPPDATA%\arma-harness\harness.toml. Later files override earlier ones, profile by profile.
+
+[arma]
+# dir = "C:/Program Files (x86)/Steam/steamapps/common/Arma 3"   # auto-detected when omitted
+
+[harness]
+default_mission = "selftest"
+
+[missions.selftest]
+# Tiny vanilla VR mission shipped with the harness (2 playable slots, 1 headless client slot).
+source = "missions/brmh_selftest.VR"
+mods = ["@CBA_A3", "@Pythia", "@brmh"]   # @brmh = the built harness mod; the hub needs @Pythia
+client_mods = ["@CBA_A3", "@brmh"]
+
+# Example profile for your own mission:
+#
+# [missions.my_mission]
+# source = "C:/Users/me/Documents/Arma 3 - Other Profiles/me/missions/my_mission.Altis"
+# mods = ["@CBA_A3", "@ace", "@Pythia", "@brmh"]
+# client_mods = ["@CBA_A3", "@ace", "@brmh"]
+# hc_mods = ["@CBA_A3", "@ace", "@brmh"]       # default: same as mods
+# adapters = []                                 # e.g. ["rounds_framework"]
+# overrides = { ROUND_DURATION = 60 }           # adapter context overrides
+# skip_lobby = true                              # adds skipLobby / briefing = 0 to the staged copy
+# allow_recompile = true                         # allowFunctionsRecompile in the staged copy (arma_reload)

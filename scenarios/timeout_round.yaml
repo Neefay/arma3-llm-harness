@@ -1,0 +1,21 @@
+# Seed scenario 2: a round that runs out of time ends as TIME_LIMIT, and ROUNDS_DATA for that round
+# holds END_TIME, ROUND_WINNER and ENDING_REASON together (the ROUNDS_DATA race check).
+name: timeout round
+mission: rounds_framework
+start:
+  overrides: {ROUND_DURATION: 4, MAX_ROUNDS: 2}
+steps:
+  - wait_for: {match: {k: evt, type: fsm, dir: enter, state: ROUND_END}, timeout_s: 120}
+  - assert:
+      context:
+        key: ROUNDS_DATA
+        match:
+          0.ENDING_REASON: TIME_LIMIT
+          0.ROUND_WINNER: {$exists: true}
+          0.END_TIME: {$gt: 0}
+          0.START_TIME: {$gt: 0}
+  - assert: {context: {key: TEAM_WINS, match: {DRAW: 1}}}
+  - wait_for: {match: {k: evt, type: fsm, dir: enter, state: GAME_END}, timeout_s: 120}
+  # CURRENT_ROUND is written just after GAME_END is entered: wait for the write, don't race it.
+  - wait_for: {match: {k: evt, type: ctx, key: CURRENT_ROUND, value: 2}, timeout_s: 10}
+  - assert: {no_errors: true}

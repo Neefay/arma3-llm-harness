@@ -1,0 +1,13 @@
+# Seed scenario 5: a headless client joining after GAME started (JIP) initialises without errors
+# and receives the replayed state.
+name: JIP headless client
+mission: rounds_framework
+steps:
+  - wait_for: {match: {k: evt, type: fsm, dir: enter, state: GAME}, timeout_s: 90}
+  - hc_start: {}
+  - exec: {code: "BRMH_MACHINE", target: hcs, expect: "HC"}
+  # Reported, not asserted: an HC joining this mission mid-game reports didJIP = false (2.22).
+  - exec: {code: "[didJIP, CBA_missionTime]", target: hcs}
+  - exec: {code: "not isNil 'fnc_getFSMState'", target: hcs, expect: true}
+  - sleep: 3
+  - assert: {no_errors: true}

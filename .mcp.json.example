@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "arma": {
+      "command": "C:/projects/other/arma-harness/host/.venv/Scripts/arma-harness-mcp.exe",
+      "args": []
+    }
+  }
+}

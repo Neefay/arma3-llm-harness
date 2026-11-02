@@ -1,0 +1,13 @@
+# Seed scenario 1: the mission boots headless, visits every state up to GAME in order, without errors.
+name: boot
+mission: rounds_framework
+steps:
+  - wait_for: {match: {k: evt, type: attached}, timeout_s: 60}
+  - wait_for: {match: {k: evt, type: fsm, dir: enter, state: GAME}, timeout_s: 90}
+  - assert:
+      sequence:
+        match: {k: evt, type: fsm, dir: enter}
+        field: state
+        expect: [PREINIT, INIT, SETUP, READY, GAME]
+  - assert: {context: {key: CONTROLLER_INITIALIZED, equals: true}}
+  - assert: {no_errors: true}

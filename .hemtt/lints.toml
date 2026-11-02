@@ -1,0 +1,4 @@
+# Project convention (Nife's style): constants are prefixed SCREAMING_SNAKE globals set once
+# (BRMH_VERSION, BRMH_MACHINE, ...). Mutable state is lowerCamel with the brmh_ prefix.
+[sqf.var_all_caps]
+options.ignore = ["BRMH_*"]

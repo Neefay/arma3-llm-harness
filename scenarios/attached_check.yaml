@@ -1,0 +1,17 @@
+# Certifies a game the harness is connected to, end to end. Meant for `arma-harness attach` on your own
+# game (SP / Eden preview / hosting MP, with @Pythia and @brmh loaded), but works on any active run.
+# Run it after attaching:  arma-harness scenario attached_check
+# Every step passing means: bridge, SQF round trip, error attribution, scheduled code, GUI reading,
+# the Rust extension, and in-engine screenshots all work in that game. The screenshot path is in the report.
+name: attached game check
+steps:
+  - assert: {sqf: "isServer"}                       # requests enter on the hub (your machine in SP/Eden)
+  - exec: {code: "BRMH_VERSION", expect: "0.2.0"}   # the deployed probe is the expected build
+  - exec: {code: "_this # 0 * _this # 1", args: [6, 7], expect: 42}
+  - exec: {code: "private _x = 1/0; 'continues'", expect_error: "Zero divisor", expect_aborted: false}
+  - exec: {code: "sleep 0.3; 'slept'", scheduled: true, expect: "slept"}
+  - exec: {code: "hasInterface", target: interface, expect: true}
+  - exec: {code: "(\"brmh\" callExtension [\"ping\", [\"check\"]]) # 0", target: interface, expect: "pong:check"}
+  - exec: {code: "count ([true, 300, true] call BRMH_fnc_guiText) > 0", target: interface, expect: true}
+  - snapshot: {max_width: 1280}                     # fails on a black frame (loading screen, minimised window)
+  - assert: {event: {k: err, text: {$re: "Zero divisor"}}}

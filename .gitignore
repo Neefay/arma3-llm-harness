@@ -1,0 +1,31 @@
+# build outputs
+/.hemttout/
+
+
+/releases/
+/brmh_x64.dll
+brmh_ext/target/
+
+# python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# local
+*.log
+/captures/
+
+# personal config
+harness.local.toml
+.mcp.json
+
+# LLM-adjacent working material (plans, research notes, brainstorms, agent config)
+docs/BACKLOG.md
+docs/IDEAS.md
+docs/RESEARCH.md
+CLAUDE.md
+CLAUDE.local.md
+.claude/

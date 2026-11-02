@@ -1,0 +1,26 @@
+# Seed scenario 3: when every scoring target of a team is hit, the round ends with ALL_TARGETS
+# (CHECK_ALL_TARGETS_HIT, polled every second) before the time limit.
+name: all-targets round
+mission: rounds_framework
+start:
+  overrides: {ROUND_DURATION: 60, MAX_ROUNDS: 2}
+steps:
+  - wait_for: {match: {k: evt, type: fsm, dir: enter, state: GAME}, timeout_s: 90}
+  - sleep: 1
+  # Mark every active target as hit, the way the hit handler does (HIT_EVENT on the target).
+  - exec:
+      code: |
+        private _targets = GAME_CONTROLLER call ["#GET_CONTEXT_VALUE", ["ACTIVE_TARGETS"]];
+        private _marked = 0;
+        {
+            private _team = _x;
+            {
+                _x setVariable ["HIT_EVENT", [diag_tickTime, 10, 50, [objNull, _team]], true];
+                _marked = _marked + 1;
+            } forEach _y;
+        } forEach _targets;
+        _marked > 0
+      expect: true
+  - wait_for: {match: {k: evt, type: fsm, dir: enter, state: ROUND_END}, timeout_s: 15}
+  - assert: {context: {key: ROUNDS_DATA, match: {0.ENDING_REASON: ALL_TARGETS}}}
+  - assert: {no_errors: true}

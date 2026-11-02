@@ -1,0 +1,25 @@
+name = "BRMH Harness"
+author = "Nife"
+prefix = "brmh"
+mainprefix = "x"
+
+[version]
+major = 0
+minor = 2
+patch = 0
+git_hash = 0
+
+[files]
+include = [
+    "mod.cpp",
+    "LICENSE",
+    "brmh_x64.dll",   # copied in by tools/build.py from brmh_ext/target/release
+    "python/**",      # Pythia package (folder with $PYTHIA$ next to addons/)
+]
+exclude = [
+    "python/**/__pycache__/**",
+    "python/tests/**",
+]
+
+[properties]
+author = "Nife"

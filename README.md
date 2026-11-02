@@ -1,0 +1,164 @@
+# arma-harness
+
+Drive and observe Arma 3 from tools and LLM agents (Claude Code over MCP):
+- boot missions on an isolated local dedicated server, with headless clients and a rendering client;
+- run SQF on any machine, with script errors attributed to the request that caused them;
+- stream structured events;
+- take in-engine screenshots (GUI included) and terrain maps;
+- hot-reload mission code;
+- run declarative test scenarios.
+
+**Dev only.** Everything binds to 127.0.0.1, the server runs in LAN mode without BattlEye, and the in-game probe stays inert unless the harness wrote a session file for that exact game process.
+
+```
+Claude Code ──MCP stdio──▶ arma-harness-mcp (host/, Python 3.11+)
+                             │ HTTP 127.0.0.1:<ephemeral> + per-run token
+                             ▼
+  arma3server_x64.exe  ◀── @brmh mod: Pythia bridge (python/) + SQF probe (addons/main) + brmh_x64.dll (brmh_ext/)
+   hub: routes requests to machines over CBA events, gathers results and events
+     ├── headless clients (arma3server_x64 -client)
+     └── rendering client (arma3_x64): in-engine frame capture via the Rust extension
+```
+
+See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for how it works and the engine facts it relies on.
+
+---
+
+## Requirements
+
+- **Windows 10/11** and **Arma 3 2.22+** (Steam), with these Workshop mods: **CBA_A3**, **Pythia**, plus whatever your mission needs (rounds_framework needs **ace**).
+- **To build:**
+  - Rust ≥ 1.90 (`rustup update stable`);
+  - Python ≥ 3.11;
+  - [HEMTT](https://hemtt.dev) 1.23+: `tools/build.py` uses `$HEMTT`, then `hemtt` on `PATH`, then `%LOCALAPPDATA%\arma-harness\tools\hemtt-*\hemtt.exe`.
+
+## Install and build
+
+```powershell
+cd host
+python -m venv .venv
+.venv\Scripts\python -m pip install -e ".[dev]"
+cd ..
+host\.venv\Scripts\python tools\build.py --check   # cargo + hemtt -> %LOCALAPPDATA%\arma-harness\mods\@brmh, then all offline tests
+```
+
+**Runtime folder.** Everything the harness writes at runtime lives in `%LOCALAPPDATA%\arma-harness\` (override with `BRMH_HOME`), never in the repo or the Arma install:
+
+| Folder | Holds |
+|---|---|
+| `mods\@brmh` | the built mod |
+| `server_root\` | the isolated server: a copied server exe, junctions to the install's data folders, its own `MPMissions` |
+| `runs\<id>\` | per-run `server.cfg`, profiles (RPTs) and scenario reports |
+| `sessions\` | per-process session and port files |
+| `captures\` | snapshots and maps |
+| `logs\audit.jsonl` | every executed request |
+| `logs\brmh_ext.log`, `logs\bridge-<pid>.log` | the Rust extension's log; Python errors inside the game |
+
+> `server_root\` contains **directory junctions into the Arma install**. Never delete it with a tool that follows junctions. Use `rmdir` on each junction, or `arma_harness.serverroot.remove()`.
+
+## Use from Claude Code
+
+To register the server for sessions started in this repo, copy `.mcp.json.example` to `.mcp.json`, adjusting the path to where you cloned the repo. To use it from another project, for example your mission repo:
+
+```powershell
+claude mcp add arma -- <repo>/host/.venv/Scripts/arma-harness-mcp.exe
+```
+
+The game processes survive MCP server restarts: they are started through WMI, outside the MCP client's job object.
+
+### Tools
+
+| Tool | What it does |
+|---|---|
+| `arma_status` | Run state, processes, bridge health, connected machines |
+| `arma_start(mission, hcs, client, overrides)` | Boot a mission profile from `harness.toml`. `client=true` opens a rendering game window. `overrides` sets mission context values before the first round. |
+| `arma_stop` | Stop the run (or detach from an attached game) |
+| `arma_hc_start`, `arma_client_start` | Add a headless client (for example, JIP) or a rendering client to a running server |
+| `arma_attach(pid?)` | Attach to a game you started yourself (SP, Eden preview, hosted MP) with `@Pythia` and `@brmh` loaded |
+| `arma_exec(code, target, args, scheduled)` | Run SQF. `target` is `server`, `clients`, `hcs`, `all`, `interface`, `owner:N` or `player:<name>`. Returns per-machine results and attributed errors (`aborted` when an error stopped the code). |
+| `arma_events(since, kinds, types, wait_s)` | Cursor-based event stream: `evt` (types `fsm`, `ctx`, `cmd`, `ctrl_evt`, `gui`, `attached`), `err`, `res`, `hello`, `bye`, `ext`, `mission` |
+| `arma_wait_for(match, since, timeout_s)` | Block until an event matches, e.g. `{"k":"evt","type":"fsm","dir":"enter","state":"GAME"}`. Supports the operators `$in`, `$re`, `$contains`, `$gt`, `$exists`, … |
+| `arma_errors` | Script errors from every machine: request id, file, line, nearby code, stack |
+| `arma_rpt(machine, grep)` | Raw RPT lines (`server`, `hc1`, `client1`, …) |
+| `arma_snapshot(camera_pos, camera_target)` | In-engine screenshot, GUI included, optionally from a temporary camera. Returns the image and warns about black frames. |
+| `arma_gui_text` | Readable text of visible controls on interface machines. Display 46 is the mission HUD; others may be background displays (main menu, role assignment). |
+| `arma_map` | Terrain map as SVG, plus named locations in world coordinates (works headless) |
+| `arma_reload(path, function?)` | Hot-reload a file from the mission source folder. Refuses files with load-time side effects unless `force`. |
+| `arma_run_scenario(path)` | Run a YAML scenario; returns pass/fail and writes a markdown report |
+| `rounds_state`, `rounds_context_get` / `rounds_context_set`, `rounds_fire_event`, `rounds_gui` | The rounds framework, through its own accessors |
+
+### CLI
+
+The CLI mirrors the tools and prints JSON. Examples:
+
+```powershell
+$h = "host\.venv\Scripts\arma-harness.exe"
+& $h start --mission rounds_framework --hcs 1 --client --override ROUND_DURATION=4
+& $h exec "count allUnits" --target all
+& $h wait '{"k":"evt","type":"fsm","dir":"enter","state":"ROUND_END"}' --timeout 60
+& $h snapshot --camera 4480,3800,25 --look 4500,3820,0
+& $h scenario timeout_round
+& $h stop
+```
+
+## Missions and adapters
+
+**Mission profiles** give each mission a name, plus its source folder, its server, client and headless-client mods, and its adapters. They are read from these files, in order:
+1. `harness.toml` (checked in): the `selftest` profile and a commented example;
+2. `harness.local.toml` next to it (git-ignored): your own missions and `[harness] default_mission`;
+3. `%LOCALAPPDATA%\arma-harness\harness.toml`;
+4. `$BRMH_CONFIG`.
+
+Later files replace earlier profiles of the same name.
+
+A run **copies** the mission into the server root, adding `skipLobby`, `briefing = 0` and `allowFunctionsRecompile` to the copy only.
+- **Why copy:** the engine locks every file it reads, so running from the live folder would block your editor.
+- **Headless clients** need `HeadlessClient_F` slots in `mission.sqm`.
+
+**Adapters** add mission-specific observers and tools. `rounds_framework` contributes three things:
+- **Hooks:** it changes no framework code, and emits these event types:
+  - `fsm`, from the FSM's CBA state events;
+  - `ctx`, from a wrapper around `#SET_CONTEXT_VALUE`;
+  - `ctrl_evt`, from the server's `CTRL_EVENT_SEQ` events;
+  - `cmd`, from the command registry event on every machine;
+  - `gui`, from wrappers around `fnc_GUIAction` and `fnc_GUIEvent` on interface machines.
+- **Overrides:** it applies `overrides` before the first round.
+- **Tools:** it adds the `rounds_*` tools.
+
+The hooks are installed at **preInit**, through the bridge's boot payload, so no state transition is missed.
+
+## Scenarios
+
+YAML files in `scenarios/` are the regression suite, and also the mission QA bot:
+
+```yaml
+name: timeout round
+mission: rounds_framework
+start: {overrides: {ROUND_DURATION: 4, MAX_ROUNDS: 2}}
+steps:
+  - wait_for: {match: {k: evt, type: fsm, dir: enter, state: ROUND_END}, timeout_s: 120}
+  - assert: {context: {key: ROUNDS_DATA, match: {0.ENDING_REASON: TIME_LIMIT, 0.END_TIME: {$gt: 0}}}}
+  - assert: {no_errors: true}
+```
+
+- **Step kinds:** `wait_for`, `exec` (`expect`, `expect_error`, `expect_owners`), `assert` (`context`, `sqf`, `event`, `sequence`, `no_errors`), `sleep`, `snapshot`, `hc_start`, `client_start`, `fire_event`, `context_set`, `reload`.
+- **Scenarios in the repo:**
+  - `selftest`: the harness itself, on the bundled mission;
+  - `attached_check`: certifies whatever game is attached or running;
+  - `boot`, `timeout_round`, `all_targets` and `jip`: the rounds framework's seed scenarios, which need a `rounds_framework` profile.
+
+## Tests
+
+| Command | Covers |
+|---|---|
+| `tools/build.py --check` | `cargo test`, `hemtt check`, the bridge tests under Pythia's embedded Python 3.10, `pytest` and `ruff` |
+| CI (`.github/workflows/ci.yml`) | The same offline checks on a Windows runner: Rust `fmt` + `clippy -D warnings` + tests, ruff + pytest, the bridge on Python 3.10, `hemtt check` |
+| `host/tests/live_attach.py` | Attach mode (needs the game) |
+| `scenarios/` | The live suite (needs the game) |
+
+## Safety
+
+- **Network:** loopback only, with a random per-run token checked in constant time. The server config sets `loopback = 1` (LAN mode, off Steam's server list) and `BattlEye = 0`.
+- **Activation:** the probe activates only for a game process whose PID has a session file in the harness home. Loading the mod alone does nothing.
+- **Audit:** every SQF request is logged to `logs\audit.jsonl`.
+- **Scope:** for your own machine and servers only. Never load `@brmh` on public servers.
