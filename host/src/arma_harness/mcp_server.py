@@ -59,7 +59,9 @@ def safe(fn):
 @server.tool()
 @safe
 def arma_status() -> dict:
-    """Run state: mode, mission, processes, bridge health, connected machines (owner ids, kinds)."""
+    """Run state: mode, mission, processes, bridge health, connected machines (owner ids, kinds), and
+    `listener`: chat_observer_installed (per machine), listen_call_waiting_now, and messages to Claude
+    since the last arma_listen started (unread if no call is waiting)."""
     return h().status()
 
 
@@ -181,12 +183,18 @@ def arma_map(contours: bool = True, trees: bool = False) -> dict:
 
 @server.tool()
 @safe
-def arma_listen(name: str = "claude", since: int | None = None, timeout_s: float = 600) -> dict:
+def arma_listen(name: str = "claude", since: int | None = None, timeout_s: float = 60) -> dict:
     """Wait for a player to type a chat message addressed to you ("claude, ...", "@claude ...", "hey
     claude ..."). Returns the message, the kills since `since`, and `next`: pass it back as `since` on the
     following call so nothing said meanwhile is missed. Reply with arma_say; look with arma_view and
-    arma_snapshot."""
-    return h().listen(name=name, since=since, timeout=timeout_s)
+    arma_snapshot.
+    This is NOT a background service: you are listening only while this call is running. found=false just
+    means the timeout passed with no message; it does not prove anything works. To answer "is the
+    listener on?", use arma_status -> listener (observer installed per machine, a call waiting now,
+    unread messages).
+    The call BLOCKS for up to timeout_s seconds (default 60, max 300); you can do nothing else meanwhile.
+    timeout_s=0 checks for messages and returns at once (no waiting)."""
+    return h().listen(name=name, since=since, timeout=max(0.0, min(float(timeout_s), 300.0)))
 
 
 @server.tool()

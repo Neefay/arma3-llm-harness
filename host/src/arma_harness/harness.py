@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import os
 import re
 import secrets
 import socket
@@ -185,7 +186,7 @@ class Harness:
                 f"-profiles={run_dir / 'server'}", "-name=server", "-autoInit", "-noSound",
                 f"-mod={';'.join(mods)}"]
         merged = {**profile.overrides, **(overrides or {})}
-        boot = adapters.boot_items(profile.adapters, merged)
+        boot = adapters.boot_items(profile.adapters, merged) + [_observer_boot_item()]
         pid = procutil.spawn(args, root)
         # Written right after spawn: the hub only checks for it once the mission is loading.
         self._write_session(pid, token, boot)
@@ -266,7 +267,7 @@ class Harness:
             pid = candidates[0].pid
         token = secrets.token_hex(16)
         names = adapters_ or []
-        self._write_session(pid, token, adapters.boot_items(names, overrides or {}))
+        self._write_session(pid, token, adapters.boot_items(names, overrides or {}) + [_observer_boot_item()])
         st = RunState(run_id=time.strftime("%Y%m%d-%H%M%S"), mode="attached", mission="", folder="",
                       token=token, bridge_pid=pid, adapters=names, overrides=overrides or {},
                       procs=[Proc(pid, "attached", "attached", "", "")], started=time.time())
@@ -309,6 +310,7 @@ class Harness:
             b = self.bridge()
             out["bridge"] = b.status()
             out["machines"] = self.machines(b)
+            out["listener"] = self.listener_status(b)
         except (BridgeError, HarnessError) as e:
             out["bridge_error"] = str(e)
         return out
@@ -465,6 +467,51 @@ class Harness:
             raise HarnessError(f"could not install observers: {obs}")
         b = self.bridge()
         start = b.cursor() if since is None else since
+        self._listen_state({"pid": os.getpid(), "name": name, "since": start, "started": time.time(),
+                            "deadline": time.time() + timeout, "finished": None, "next": None})
+        try:
+            return self._listen(b, name, start, timeout, ack)
+        finally:
+            state = self._listen_state()
+            if state.get("pid") == os.getpid():
+                state["finished"] = time.time()
+                self._listen_state(state)
+
+    def _listen_state(self, state: dict | None = None) -> dict:
+        """Last listen call (any process): lets status say whether someone is listening right now."""
+        path = self.home.sessions / "listen.json"
+        if state is not None:
+            path.write_text(json.dumps(state), encoding="utf-8")
+            return state
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+
+    def listener_status(self, b: Bridge) -> dict:
+        """Deterministic answer to "is the listener on?": the chat observer per interface machine (it
+        captures messages whether or not anyone listens), whether a listen call is waiting now, and
+        how many messages addressed to Claude arrived since the last listen call started."""
+        obs = b.exec('not isNil "brmh_observeChatEh"', "interface", timeout=5)
+        observers = {str(r.get("o")): r.get("r") for r in obs.get("results") or []}
+        state = self._listen_state()
+        waiting = bool(state) and state.get("finished") is None and time.time() < state.get("deadline", 0) \
+            and procutil.alive(state.get("pid", 0))
+        name = state.get("name", "claude")
+        rx = re.compile(rf"(?i)^\s*(@|hey\s+|ok\s+)?{re.escape(name)}\b")
+        since = state.get("since", b.cursor())
+        evs = b.events(since=since, limit=5000).get("events", [])
+        unread = [e.get("text") for e in evs if e.get("type") == "chat" and rx.search(e.get("text") or "")]
+        return {
+            "chat_observer_installed": observers or "no interface machine connected",
+            "listen_call_waiting_now": waiting,
+            "last_listen": state or None,
+            "messages_since_last_listen_started": unread[-5:],
+            "meaning": "Chat is captured by the observer; it is only READ when an arma_listen call is made. "
+                       "Nobody is listening unless listen_call_waiting_now is true.",
+        }
+
+    def _listen(self, b: Bridge, name: str, start: int, timeout: float, ack: str | None) -> dict:
         rx = rf"(?i)^\s*(@|hey\s+|ok\s+)?{re.escape(name)}\b"
         is_chat = matcher({"k": "evt", "type": "chat", "text": {"$re": rx}})
         # A mission restart removes the observers: reinstall them once the player's machine is back
@@ -508,6 +555,14 @@ class Harness:
         """What the player's camera sees, as data: player and world state plus on-screen buildings,
         vehicles and units with screen coordinates, positions and line-of-sight. Pair with a snapshot."""
         return self.exec(_snippet("view.sqf"), target, timeout=10, args=[radius, max_objects], strip=False)
+
+
+def _observer_boot_item() -> dict:
+    """Boot payload entry (runs at every mission start, on the server) that installs the chat and kill
+    observers on every machine, including players who join later (remoteExec JIP queue). So chat is
+    always captured, whether or not a listen call is waiting."""
+    code = '[[], compile (_this # 0)] remoteExec ["call", 0, "brmh_observers"]; true'
+    return {"code": code, "target": "server", "args": [_snippet("observe.sqf")], "label": "observers"}
 
 
 _ACK_SQF = """hintSilent parseText format ["<t color='#f28c26'>%1</t> %2", _this # 0, _this # 1]"""

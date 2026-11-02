@@ -22,6 +22,12 @@ source = "missions/brmh_demo.Altis"
 mods = ["@CBA_A3", "@Pythia", "@brmh"]
 client_mods = ["@CBA_A3", "@brmh"]
 
+[missions.demo_vr]
+# The same demo on the VR map (small download, fast load), with a hamlet built by initServer.sqf.
+source = "missions/brmh_demo.VR"
+mods = ["@CBA_A3", "@Pythia", "@brmh"]
+client_mods = ["@CBA_A3", "@brmh"]
+
 # Example profile for your own mission:
 #
 # [missions.my_mission]
