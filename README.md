@@ -1,17 +1,21 @@
 # arma-harness
 
-Drive and observe Arma 3 from tools and LLM agents (Claude Code over MCP):
-- boot missions on an isolated local dedicated server, with headless clients and a rendering client;
+Drive and observe Arma 3 from LLM agents and scripts. The harness is a standard MCP server, so it works with any MCP-capable agent (Claude Code, Codex, OpenCode, Gemini CLI, Cursor, VS Code, ...), and everything is also a command-line tool that prints JSON. With it you can:
+- boot missions on an isolated local dedicated server, with headless clients and a rendering client, or attach to a game you're playing;
 - run SQF on any machine, with script errors attributed to the request that caused them;
 - stream structured events;
 - take in-engine screenshots (GUI included) and terrain maps;
+- talk to the agent from in-game chat and have it act on the world ([demo](docs/DEMO.md));
 - hot-reload mission code;
 - run declarative test scenarios.
+
+Agents get their instructions from [`AGENTS.md`](AGENTS.md): rules, where code runs, the chat loop and tested recipes.
 
 **Dev only.** Everything binds to 127.0.0.1, the server runs in LAN mode without BattlEye, and the in-game probe stays inert unless the harness wrote a session file for that exact game process.
 
 ```
-Claude Code ──MCP stdio──▶ arma-harness-mcp (host/, Python 3.11+)
+any MCP agent ──MCP stdio──▶ arma-harness-mcp (host/, Python 3.11+)
+scripts / CLI ─────────────▶ arma-harness (same operations, JSON out)
                              │ HTTP 127.0.0.1:<ephemeral> + per-run token
                              ▼
   arma3server_x64.exe  ◀── @brmh mod: Pythia bridge (python/) + SQF probe (addons/main) + brmh_x64.dll (brmh_ext/)
@@ -63,7 +67,7 @@ host\.venv\Scripts\arma-harness.exe scenario selftest
 2. Start a mission as host: an Eden preview, singleplayer, or Play → Multiplayer → host.
 3. Once you are in the mission, run `host\.venv\Scripts\arma-harness.exe attach`, then `arma-harness scenario attached_check` to certify it.
 
-To talk to Claude from in-game chat, see the demo: [`docs/DEMO.md`](docs/DEMO.md).
+To talk to your agent from in-game chat, see the demo: [`docs/DEMO.md`](docs/DEMO.md).
 
 ### If something goes wrong
 
@@ -142,7 +146,8 @@ The game processes survive MCP server restarts: they are started through WMI, ou
 
 | Tool | What it does |
 |---|---|
-| `arma_status` | Run state, processes, bridge health, connected machines |
+| `arma_guide` | The agent cheat sheet ([`AGENTS.md`](AGENTS.md)), for clients that don't load instruction files |
+| `arma_status` | Run state, processes, bridge health, connected machines, and `listener` (chat observer installed, a listen call waiting, unread messages) |
 | `arma_start(mission, hcs, client, overrides)` | Boot a mission profile from `harness.toml`. `client=true` opens a rendering game window. `overrides` sets mission context values before the first round. |
 | `arma_stop` | Stop the run (or detach from an attached game) |
 | `arma_hc_start`, `arma_client_start` | Add a headless client (for example, JIP) or a rendering client to a running server |
@@ -155,8 +160,8 @@ The game processes survive MCP server restarts: they are started through WMI, ou
 | `arma_snapshot(camera_pos, camera_target)` | In-engine screenshot, GUI included, optionally from a temporary camera. Returns the image and warns about black frames. |
 | `arma_gui_text` | Readable text of visible controls on interface machines. Display 46 is the mission HUD; others may be background displays (main menu, role assignment). |
 | `arma_map` | Terrain map as SVG, plus named locations in world coordinates (works headless) |
-| `arma_listen(since)` | Wait for a player to type a chat message addressed to Claude ("claude, ..."). Shows an instant "thinking..." hint; returns the message, kills since `since`, and the next cursor. See [docs/DEMO.md](docs/DEMO.md). |
-| `arma_say(text, hint?)` | Reply in game: a chat line on Claude's own radio channel, optionally also a hint box |
+| `arma_listen(since, timeout_s, name)` | Wait for a player to type a chat message addressed to the agent (`claude, ...` by default; `name` changes it). Shows an instant "thinking..." hint; returns the message, kills since `since`, and the next cursor. Blocks for up to `timeout_s` (default 25, under client tool timeouts); `0` checks without waiting. Chat is captured between calls, so nothing is missed. See [docs/DEMO.md](docs/DEMO.md). |
+| `arma_say(text, sender?, hint?)` | Reply in game: a chat line on the agent's own radio channel (`sender`, default "Claude"), optionally also a hint box |
 | `arma_view(radius)` | The player's view as data: position, grid, world time and weather, and on-screen buildings, vehicles and units with screen coordinates, line of sight and building positions |
 | `arma_reload(path, function?)` | Hot-reload a file from the mission source folder. Refuses files with load-time side effects unless `force`. |
 | `arma_run_scenario(path)` | Run a YAML scenario; returns pass/fail and writes a markdown report |
@@ -164,7 +169,7 @@ The game processes survive MCP server restarts: they are started through WMI, ou
 
 ### CLI
 
-The CLI mirrors the tools and prints JSON. Examples:
+The CLI mirrors the tools and prints JSON, so agents without MCP (or plain scripts) can use it too. `--help` lists every command. Examples:
 
 ```powershell
 $h = "host\.venv\Scripts\arma-harness.exe"
@@ -173,6 +178,10 @@ $h = "host\.venv\Scripts\arma-harness.exe"
 & $h wait '{"k":"evt","type":"fsm","dir":"enter","state":"ROUND_END"}' --timeout 60
 & $h snapshot --camera 4480,3800,25 --look 4500,3820,0
 & $h scenario timeout_round
+& $h listen --since 0 --timeout 25      # wait for a chat message to the agent
+& $h say "On it." --sender Codex
+& $h guide                              # the agent cheat sheet
+& $h setup-agents codex opencode --dry-run
 & $h stop
 ```
 
