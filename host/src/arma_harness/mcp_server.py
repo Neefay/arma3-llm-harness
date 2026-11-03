@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import functools
 import json
+import os
 import traceback
 from typing import Any
 
@@ -11,7 +12,7 @@ from mcp.server.mcpserver import Image, MCPServer
 from . import agents, scenario
 from .adapters import rounds_framework as rounds
 from .bridge import BridgeError
-from .harness import Harness, HarnessError
+from .harness import Harness, HarnessError, check_agent_name
 
 INSTRUCTIONS = """\
 Arma 3 dev harness. Typical flow:
@@ -25,7 +26,8 @@ Arma 3 dev harness. Typical flow:
    Events: k=evt (type=fsm|ctx|attached from the rounds adapter), k=err (script errors), k=res, k=hello.
 4. See: arma_snapshot (in-engine screenshot incl. GUI, optional camera position), arma_gui_text,
    arma_map (terrain SVG + named locations).
-5. Conversation: arma_listen waits for a player's chat message to you, arma_say replies in game,
+5. Conversation: arma_set_name picks the name players call you by (default Claude); arma_listen
+   waits for a player's chat message to you, arma_say replies in game,
    arma_view gives the player's view as data (with screen coordinates of what is on screen).
 6. arma_reload hot-reloads a mission file from the source folder; arma_run_scenario runs a YAML test.
 7. arma_stop when done. The game keeps running if this MCP server restarts.
@@ -34,6 +36,9 @@ rounds_* tools read the rounds framework through its own accessors.
 
 server = MCPServer(name="arma", instructions=INSTRUCTIONS)
 _harness: Harness | None = None
+# This session's name: what players type in game ("Zeus, ..."), and the sender of its replies.
+# Set with arma_set_name, or BRMH_AGENT_NAME when the client starts the server.
+_agent_name = os.environ.get("BRMH_AGENT_NAME", "").strip() or "Claude"
 
 
 def h() -> Harness:
@@ -190,28 +195,42 @@ def arma_map(contours: bool = True, trees: bool = False) -> dict:
 
 @server.tool()
 @safe
-def arma_listen(name: str = "claude", since: int | None = None, timeout_s: float = 25) -> dict:
-    """Wait for a player to type a chat message addressed to you ("claude, ...", "@claude ...", "hey
-    claude ..."). Returns the message, the kills since `since`, and `next`: pass it back as `since` on the
-    following call so nothing said meanwhile is missed. Reply with arma_say; look with arma_view and
-    arma_snapshot.
-    This is NOT a background service: you are listening only while this call is running. found=false just
-    means the timeout passed with no message; it does not prove anything works. To answer "is the
-    listener on?", use arma_status -> listener (observer installed per machine, a call waiting now,
-    unread messages).
-    The call BLOCKS for up to timeout_s seconds (default 25, max 300); you can do nothing else meanwhile.
-    Keep timeout_s below your client's tool-call timeout (Codex: 60 s by default) or the client
-    cancels the call. Chat is captured while you are not listening, so short calls lose nothing.
-    timeout_s=0 checks for messages and returns at once (no waiting)."""
-    return h().listen(name=name, since=since, timeout=max(0.0, min(float(timeout_s), 300.0)))
+def arma_set_name(name: str, force: bool = False) -> dict:
+    """Choose the name this session answers to in game, e.g. "Zeus": players then type "Zeus, spawn me a
+    car", and your replies show as "Zeus: ..." in your own colour. Several sessions can listen at once,
+    each under its own name; "everyone, ..." reaches all of them. Refused if another live session holds
+    the name (force=true only if that session is gone). Default name: Claude."""
+    global _agent_name
+    claimed = h().claim_name(check_agent_name(name), force=force)
+    _agent_name = claimed["name"]
+    return {"ok": True, **claimed}
 
 
 @server.tool()
 @safe
-def arma_say(text: str, sender: str = "Claude", hint: bool = False, target: str = "interface") -> dict:
-    """Show players a chat line "<sender>: <text>" in its own colour. hint=true also shows a hint box
-    (for longer answers). Keep lines short: the chat feed shows about one sentence comfortably."""
-    return h().say(text, sender=sender, hint=hint, target=target)
+def arma_listen(since: int | None = None, timeout_s: float = 25, name: str | None = None) -> dict:
+    """Wait for a player to type a chat message addressed to you: your name (see arma_set_name; default
+    "Claude") at the start, as in "zeus, ...", "@zeus ...", "hey zeus ...", or "everyone, ...". Returns
+    the message, the kills since `since`, and `next`: pass it back as `since` on the following call so
+    nothing said meanwhile is missed. Reply with arma_say; look with arma_view and arma_snapshot.
+    This is NOT a background service: you are listening only while this call is running. found=false just
+    means the timeout passed with no message; it does not prove anything works. To answer "is the
+    listener on?", use arma_status -> listener (observer per machine; per named session: a call waiting
+    now, unread messages).
+    The call BLOCKS for up to timeout_s seconds (default 25, max 300); you can do nothing else meanwhile.
+    Keep timeout_s below your client's tool-call timeout (Codex: 60 s by default) or the client
+    cancels the call. Chat is captured while you are not listening, so short calls lose nothing.
+    timeout_s=0 checks for messages and returns at once (no waiting)."""
+    return h().listen(name=name or _agent_name, since=since, timeout=max(0.0, min(float(timeout_s), 300.0)))
+
+
+@server.tool()
+@safe
+def arma_say(text: str, hint: bool = False, target: str = "interface", sender: str | None = None) -> dict:
+    """Show players a chat line "<your name>: <text>" in your colour (sender defaults to your session
+    name, see arma_set_name). hint=true also shows a hint box (for longer answers). Keep lines short:
+    the chat feed shows about one sentence comfortably."""
+    return h().say(text, sender=sender or _agent_name, hint=hint, target=target)
 
 
 @server.tool()

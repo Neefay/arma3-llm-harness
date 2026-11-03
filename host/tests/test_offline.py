@@ -231,3 +231,54 @@ def test_setup_agents_never_overwrites(tmp_path, monkeypatch):
     forced = agents.setup(["claude"], force=True)["clients"]["claude"]["result"]
     assert "kept as .bak" in forced
     assert (tmp_path / ".mcp.json.bak").read_text(encoding="utf-8") == '{"mine": true}'
+
+
+def test_agent_names_and_addressing():
+    from arma_harness.harness import HarnessError, _address_rx, agent_color, check_agent_name
+
+    assert check_agent_name(" Zeus ") == "Zeus"
+    for bad in ["", "two words", "9lives", "everyone", "x" * 25]:
+        with pytest.raises(HarnessError):
+            check_agent_name(bad)
+    rx = _address_rx("Zeus")
+    for text in ["Zeus, spawn me a car", "zeus spawn", "@zeus hi", "hey Zeus, hi", "everyone, report"]:
+        assert rx.search(text), text
+    for text in ["zeusy, hi", "claude, hi", "tell zeus hi", "everyones"]:
+        assert not rx.search(text), text
+    assert agent_color("Claude") == [0.95, 0.55, 0.15, 1]
+    assert agent_color("Zeus") == agent_color("zeus") != agent_color("Claude")
+
+
+def test_claim_name_refuses_live_holder(tmp_path, monkeypatch, no_arma):
+    import json
+    import os
+
+    from arma_harness.harness import Harness, HarnessError
+
+    monkeypatch.setenv("BRMH_HOME", str(tmp_path))
+    h = Harness()
+    assert h.claim_name("Zeus")["name"] == "Zeus"
+    assert h.claim_name("Zeus")["name"] == "Zeus"  # same process: fine
+    held = h._listener_file("Zeus")
+    state = json.loads(held.read_text(encoding="utf-8"))
+    state["pid"] = os.getppid()  # a different, live process
+    held.write_text(json.dumps(state), encoding="utf-8")
+    with pytest.raises(HarnessError, match="taken"):
+        h.claim_name("zeus")
+    assert h.claim_name("Zeus", force=True)["name"] == "Zeus"
+    state["pid"] = 999999  # a dead process: free to take
+    held.write_text(json.dumps(state), encoding="utf-8")
+    assert h.claim_name("Zeus")["name"] == "Zeus"
+    assert h.claim_name("Athena")["others"] == ["Zeus"]
+
+
+def test_claimed_names_get_distinct_colors(tmp_path, monkeypatch, no_arma):
+    from arma_harness.harness import Harness, agent_color
+
+    monkeypatch.setenv("BRMH_HOME", str(tmp_path))
+    h = Harness()
+    names = ["Zeus", "Hermes", "Athena", "Ares", "Apollo"]
+    colors = [h.claim_name(n)["color"] for n in names]
+    assert len({tuple(c) for c in colors}) == len(names)
+    assert h.agent_color("Hermes") == colors[1]
+    assert h.agent_color("Unclaimed") == agent_color("Unclaimed")

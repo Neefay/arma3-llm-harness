@@ -147,7 +147,7 @@ The game processes survive MCP server restarts: they are started through WMI, ou
 | Tool | What it does |
 |---|---|
 | `arma_guide` | The agent cheat sheet ([`AGENTS.md`](AGENTS.md)), for clients that don't load instruction files |
-| `arma_status` | Run state, processes, bridge health, connected machines, and `listener` (chat observer installed, a listen call waiting, unread messages) |
+| `arma_status` | Run state, processes, bridge health, connected machines, and `listener` (chat observer installed; per named session: alive, a listen call waiting, unread messages) |
 | `arma_start(mission, hcs, client, overrides)` | Boot a mission profile from `harness.toml`. `client=true` opens a rendering game window. `overrides` sets mission context values before the first round. |
 | `arma_stop` | Stop the run (or detach from an attached game) |
 | `arma_hc_start`, `arma_client_start` | Add a headless client (for example, JIP) or a rendering client to a running server |
@@ -160,8 +160,9 @@ The game processes survive MCP server restarts: they are started through WMI, ou
 | `arma_snapshot(camera_pos, camera_target)` | In-engine screenshot, GUI included, optionally from a temporary camera. Returns the image and warns about black frames. |
 | `arma_gui_text` | Readable text of visible controls on interface machines. Display 46 is the mission HUD; others may be background displays (main menu, role assignment). |
 | `arma_map` | Terrain map as SVG, plus named locations in world coordinates (works headless) |
-| `arma_listen(since, timeout_s, name)` | Wait for a player to type a chat message addressed to the agent (`claude, ...` by default; `name` changes it). Shows an instant "thinking..." hint; returns the message, kills since `since`, and the next cursor. Blocks for up to `timeout_s` (default 25, under client tool timeouts); `0` checks without waiting. Chat is captured between calls, so nothing is missed. See [docs/DEMO.md](docs/DEMO.md). |
-| `arma_say(text, sender?, hint?)` | Reply in game: a chat line on the agent's own radio channel (`sender`, default "Claude"), optionally also a hint box |
+| `arma_set_name(name)` | The name this session answers to in game, e.g. "Zeus" (default "Claude", or `BRMH_AGENT_NAME`). Several sessions can listen at once, each under its own name and colour; `everyone, ...` reaches all of them. A name held by another live session is refused. |
+| `arma_listen(since, timeout_s)` | Wait for a player to type a chat message addressed to this session (`zeus, ...`, `@zeus ...`, `hey zeus ...`, or `everyone, ...`). Shows an instant "thinking..." hint; returns the message, kills since `since`, and the next cursor. Blocks for up to `timeout_s` (default 25, under client tool timeouts); `0` checks without waiting. Chat is captured between calls, so nothing is missed. See [docs/DEMO.md](docs/DEMO.md). |
+| `arma_say(text, hint?)` | Reply in game as this session: a chat line on its own radio channel and colour, optionally also a hint box |
 | `arma_view(radius)` | The player's view as data: position, grid, world time and weather, and on-screen buildings, vehicles and units with screen coordinates, line of sight and building positions |
 | `arma_reload(path, function?)` | Hot-reload a file from the mission source folder. Refuses files with load-time side effects unless `force`. |
 | `arma_run_scenario(path)` | Run a YAML scenario; returns pass/fail and writes a markdown report |
@@ -178,8 +179,8 @@ $h = "host\.venv\Scripts\arma-harness.exe"
 & $h wait '{"k":"evt","type":"fsm","dir":"enter","state":"ROUND_END"}' --timeout 60
 & $h snapshot --camera 4480,3800,25 --look 4500,3820,0
 & $h scenario timeout_round
-& $h listen --since 0 --timeout 25      # wait for a chat message to the agent
-& $h say "On it." --sender Codex
+& $h listen --name Zeus --since 0 --timeout 25   # wait for "Zeus, ..." (or "everyone, ...")
+& $h say "On it." --sender Zeus
 & $h guide                              # the agent cheat sheet
 & $h setup-agents codex opencode --dry-run
 & $h stop

@@ -35,7 +35,10 @@ You control a running Arma 3 game through the `arma_*` MCP tools. This page is e
 6. arma_listen(since=<next from step 1>)   <- ALWAYS pass `next` back
 ```
 
-- Players address you by starting a chat message with your name: `claude`, `@claude` or `hey claude` by default. To answer to another name, pass it everywhere: `arma_listen(name="codex")` and `arma_say(text, sender="Codex")`. Use the same name the user tells players.
+- **Your name.** Players address you by starting a chat message with your name: `zeus, ...`, `@zeus ...` or `hey zeus ...` (any case). The default is `Claude`. When the user says something like "listen as Zeus", call `arma_set_name("Zeus")` first. After that `arma_listen` and `arma_say` use the name by themselves: your replies show as "Zeus: ..." in your own colour.
+  - Several sessions (other agents, other windows) can listen at once, each under its own name. A message reaches only the session it names. `everyone, ...` reaches all of them, so answer it too, briefly.
+  - If `arma_set_name` says the name is taken, another live session is using it: tell the user and ask for another name. Use `force=true` only if the user says that session is gone.
+  - Names are one word, starting with a letter. `everyone` is reserved.
 - **There is no background listener.** You are listening only while an `arma_listen` call is running. When it returns, you are deaf until you call it again. So after every reply, call it again: never end your turn while the user expects you to keep listening.
 - `arma_listen` **blocks you** for up to `timeout_s` seconds (default 25, max 300): you can't do or say anything until it returns. `found: false` means the time ran out with no message: call it again with `since` = the `next` it returned. It does **not** prove that anything works.
 - **Keep `timeout_s` below your client's tool timeout**, or the client kills the call and you see an error instead of a result (Codex: 60 s by default). The default 25 is safe everywhere. If a listen call errors with a timeout, retry with a smaller `timeout_s`, not a larger one.
@@ -44,9 +47,11 @@ You control a running Arma 3 game through the `arma_*` MCP tools. This page is e
 - Before starting a listen loop, tell the user in one line: "Listening for in-game chat; stop me when you want me back."
 - **"Is the listener on?"** Call `arma_status` and read `listener`; never answer from an `arma_listen` result:
   - `chat_observer_installed: {"2": true}`: the game is capturing chat (installed automatically at attach and on every mission start). `false` or missing: say so, and call `arma_listen` (it installs it).
-  - `listen_call_waiting_now`: true only while a listen call is running. If false, say plainly "I'm not listening right now; I will start", then call `arma_listen`.
-  - `messages_since_last_listen_started`: messages to you that may be unread. If you see any, handle them (call `arma_listen` with `since` = `last_listen.since`).
-  - Report these three facts as they are. Do not add "working" or "OK" on top.
+  - `sessions`: one entry per name that has listened. Find **your** name.
+    - `listen_call_waiting_now`: true only while a listen call is running. If false, say plainly "I'm not listening right now; I will start", then call `arma_listen`.
+    - `messages_since_last_listen_started`: messages to you that may be unread. If you see any, handle them (call `arma_listen` with `since` = `last_listen_since`).
+    - `session_alive: false` is a session that has ended (its name is free).
+  - Report these facts as they are. Do not add "working" or "OK" on top.
 - `kills` lists deaths since the last call (`victim`, `killer`, `weapon`, `distance`). Use it for "what happened?".
 - If a tool returns `bridge unreachable`, the game was closed or detached. Stop and tell the user.
 

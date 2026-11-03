@@ -1,11 +1,11 @@
 /*
 	Show a message to players (comments are stripped by the host).
-	_this: [text, sender, hint, channel]
+	_this: [text, sender, hint, channel, color ("#rrggbb", the sender's colour)]
 	channel is a custom radio channel made by say_channel.sqf on the server (radioChannelCreate is
 	server-only), so the line reads "<sender>: <text>" in the chat feed in its own colour. 0 falls back
 	to systemChat. "hint" also shows the text as a hint box (for longer answers).
 */
-params [["_text", "", [""]], ["_sender", "Claude", [""]], ["_hint", false, [true]], ["_channel", 0, [0]]];
+params [["_text", "", [""]], ["_sender", "Claude", [""]], ["_hint", false, [true]], ["_channel", 0, [0]], ["_color", "#f28c26", [""]]];
 if (not hasInterface) exitWith {
 	false
 };
@@ -19,7 +19,7 @@ if (_channel > 0) then {
 	systemChat format ["%1: %2", _sender, _text];
 };
 if (_hint) then {
-	hintSilent parseText format ["<t size='1.1' color='#f28c26'>%1</t><br/>%2", _sender, _text];
+	hintSilent parseText format ["<t size='1.1' color='%3'>%1</t><br/>%2", _sender, _text, _color];
 } else {
 	// Clears a "thinking..." acknowledgement left by the host's listen.
 	hintSilent "";

@@ -456,31 +456,16 @@ class Harness:
         after a mission restart, so callers re-run this rather than track it."""
         return self.exec(_snippet("observe.sqf"), "all", timeout=5, strip=False)
 
-    def listen(self, name: str = "claude", since: int | None = None, timeout: float = 600,
-               ack: str | None = "thinking...") -> dict:
-        """Block until a player types a chat message addressed to ``name`` ("claude, ...", "@claude ...",
-        "hey claude ...", any case). Returns the message, the kills since ``since``, and the cursor to
-        pass back next time so nothing said in between is missed. ``ack`` is shown at once as a hint on
-        the sender's machine, so players see the message landed while the reply is being worked out."""
-        obs = self.observe()
-        if not obs.get("ok"):
-            raise HarnessError(f"could not install observers: {obs}")
-        b = self.bridge()
-        start = b.cursor() if since is None else since
-        self._listen_state({"pid": os.getpid(), "name": name, "since": start, "started": time.time(),
-                            "deadline": time.time() + timeout, "finished": None, "next": None})
-        try:
-            return self._listen(b, name, start, timeout, ack)
-        finally:
-            state = self._listen_state()
-            if state.get("pid") == os.getpid():
-                state["finished"] = time.time()
-                self._listen_state(state)
+    # Several agent sessions can listen at once, each under its own name ("Zeus, spawn me a car").
+    # Each name has a registry file in sessions/listeners/, owned by the process that claimed it.
 
-    def _listen_state(self, state: dict | None = None) -> dict:
-        """Last listen call (any process): lets status say whether someone is listening right now."""
-        path = self.home.sessions / "listen.json"
+    def _listener_file(self, name: str) -> Path:
+        return self.home.sessions / "listeners" / f"{name.lower()}.json"
+
+    def _listener(self, name: str, state: dict | None = None) -> dict:
+        path = self._listener_file(name)
         if state is not None:
+            path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(json.dumps(state), encoding="utf-8")
             return state
         try:
@@ -488,41 +473,102 @@ class Harness:
         except (OSError, ValueError):
             return {}
 
+    def claim_name(self, name: str, force: bool = False) -> dict:
+        """Register this process as the session answering to ``name``. Refused if another live process
+        holds it (two sessions answering the same name would both act on every message)."""
+        name = check_agent_name(name)
+        held = self._listener(name)
+        pid = held.get("pid")
+        if pid and pid != os.getpid() and procutil.alive(pid) and not force:
+            raise HarnessError(f"name {name!r} is taken by another live session (pid {pid}); pick another "
+                               "name, or pass force=true if that session is gone")
+        others = [x for x in self._listeners() if x["name"].lower() != name.lower()]
+        state = {"name": name, "pid": os.getpid(), "claimed": time.time(), "since": None, "started": None,
+                 "deadline": None, "finished": None,
+                 "color": held.get("color") or _free_color(name, [x.get("color") for x in others])}
+        if held.get("pid") == os.getpid():
+            state.update({k: held.get(k) for k in ("since", "started", "deadline", "finished")})
+        self._listener(name, state)
+        return {"name": name, "color": state["color"], "others": [x["name"] for x in others]}
+
+    def agent_color(self, name: str) -> list[float]:
+        """The colour a claimed name keeps (distinct from the other sessions'), else the default pick."""
+        return self._listener(name).get("color") or agent_color(name)
+
+    def _listeners(self) -> list[dict]:
+        folder = self.home.sessions / "listeners"
+        out = []
+        for f in sorted(folder.glob("*.json")) if folder.exists() else []:
+            try:
+                out.append(json.loads(f.read_text(encoding="utf-8")))
+            except (OSError, ValueError):
+                continue
+        return [x for x in out if x.get("name")]
+
+    def listen(self, name: str = "Claude", since: int | None = None, timeout: float = 25,
+               ack: str | None = "thinking...") -> dict:
+        """Block until a player types a chat message addressed to ``name`` ("zeus, ...", "@zeus ...",
+        "hey zeus ...", any case) or to everyone ("everyone, ..."). Returns the message, the kills since
+        ``since``, and the cursor to pass back next time so nothing said in between is missed. ``ack``
+        is shown at once as a hint on the sender's machine, so players see the message landed while the
+        reply is being worked out."""
+        self.claim_name(name)
+        obs = self.observe()
+        if not obs.get("ok"):
+            raise HarnessError(f"could not install observers: {obs}")
+        b = self.bridge()
+        start = b.cursor() if since is None else since
+        state = self._listener(name)
+        state.update({"since": start, "started": time.time(), "deadline": time.time() + timeout, "finished": None})
+        self._listener(name, state)
+        try:
+            return self._listen(b, name, start, timeout, ack)
+        finally:
+            state = self._listener(name)
+            if state.get("pid") == os.getpid():
+                state["finished"] = time.time()
+                self._listener(name, state)
+
     def listener_status(self, b: Bridge) -> dict:
         """Deterministic answer to "is the listener on?": the chat observer per interface machine (it
-        captures messages whether or not anyone listens), whether a listen call is waiting now, and
-        how many messages addressed to Claude arrived since the last listen call started."""
+        captures messages whether or not anyone listens) and, per named session, whether its process is
+        alive, whether a listen call is waiting now, and messages to it since its last listen started."""
         obs = b.exec('not isNil "brmh_observeChatEh"', "interface", timeout=5)
         observers = {str(r.get("o")): r.get("r") for r in obs.get("results") or []}
-        state = self._listen_state()
-        waiting = bool(state) and state.get("finished") is None and time.time() < state.get("deadline", 0) \
-            and procutil.alive(state.get("pid", 0))
-        name = state.get("name", "claude")
-        rx = re.compile(rf"(?i)^\s*(@|hey\s+|ok\s+)?{re.escape(name)}\b")
-        since = state.get("since", b.cursor())
-        evs = b.events(since=since, limit=5000).get("events", [])
-        unread = [e.get("text") for e in evs if e.get("type") == "chat" and rx.search(e.get("text") or "")]
+        sessions = []
+        for st in self._listeners():
+            alive = procutil.alive(st.get("pid", 0))
+            waiting = alive and st.get("started") is not None and st.get("finished") is None \
+                and time.time() < (st.get("deadline") or 0)
+            unread = []
+            if st.get("since") is not None:
+                rx = _address_rx(st["name"])
+                evs = b.events(since=st["since"], limit=5000).get("events", [])
+                unread = [e.get("text") for e in evs if e.get("type") == "chat" and rx.search(e.get("text") or "")]
+            sessions.append({"name": st["name"], "session_alive": alive, "listen_call_waiting_now": waiting,
+                             "last_listen_since": st.get("since"), "messages_since_last_listen_started": unread[-5:]})
         return {
             "chat_observer_installed": observers or "no interface machine connected",
-            "listen_call_waiting_now": waiting,
-            "last_listen": state or None,
-            "messages_since_last_listen_started": unread[-5:],
-            "meaning": "Chat is captured by the observer; it is only READ when an arma_listen call is made. "
-                       "Nobody is listening unless listen_call_waiting_now is true.",
+            "sessions": sessions,
+            "meaning": "Chat is captured by the observer; a session only READS it while its arma_listen call "
+                       "runs. A name is listening only if its listen_call_waiting_now is true.",
         }
 
     def _listen(self, b: Bridge, name: str, start: int, timeout: float, ack: str | None) -> dict:
-        rx = rf"(?i)^\s*(@|hey\s+|ok\s+)?{re.escape(name)}\b"
+        rx = _address_rx(name).pattern
         is_chat = matcher({"k": "evt", "type": "chat", "text": {"$re": rx}})
         # A mission restart removes the observers: reinstall them once the player's machine is back
         # (its hello), and keep waiting.
         is_restart = matcher({"k": "mission", "state": "start"})
         is_back = matcher({"k": "hello", "iface": True})
         deadline = time.time() + timeout
-        cursor, ev, restarted = start, None, False
-        while ev is None and time.time() < deadline:
+        cursor, ev, restarted, first = start, None, False, True
+        # Always look at least once: with timeout 0 the deadline has already passed, and that call is
+        # meant to check what is waiting, not to skip the check.
+        while ev is None and (first or time.time() < deadline):
+            first = False
             hit, cursor = b.wait_for(lambda e, r=restarted: is_chat(e) or is_restart(e) or (r and is_back(e)),
-                                     cursor, deadline - time.time())
+                                     cursor, max(0.0, deadline - time.time()))
             if hit is None:
                 break
             if is_restart(hit):
@@ -536,7 +582,8 @@ class Harness:
         nxt = cursor
         if ev is not None and ack:
             with contextlib.suppress(HarnessError, BridgeError):
-                self.exec(_ACK_SQF, f"owner:{ev.get('o')}", timeout=3, args=[name.capitalize(), ack], strip=False)
+                self.exec(_ACK_SQF, f"owner:{ev.get('o')}", timeout=3,
+                          args=[name, ack, _hex(self.agent_color(name))], strip=False)
         between = b.events(since=start, limit=5000).get("events", [])
         kills = [e for e in between if e.get("k") == "evt" and e.get("type") == "killed"
                  and (ev is None or e.get("seq", 0) < ev.get("seq", 0))]
@@ -544,12 +591,14 @@ class Harness:
 
     def say(self, text: str, sender: str = "Claude", hint: bool = False, target: str = "interface") -> dict:
         """Show a chat line "<sender>: <text>" (own colour) to players; hint=true also shows a hint box."""
-        made = self.exec(_snippet("say_channel.sqf"), "server", timeout=5, args=[sender], strip=False)
+        sender = check_agent_name(sender)
+        made = self.exec(_snippet("say_channel.sqf"), "server", timeout=5, args=[sender, self.agent_color(sender)],
+                         strip=False)
         channel = (made.get("results") or [{}])[0].get("r")
         if not isinstance(channel, int | float):
             channel = 0
-        return self.exec(_snippet("say.sqf"), target, timeout=5, args=[text, sender, hint, int(channel)],
-                         strip=False)
+        return self.exec(_snippet("say.sqf"), target, timeout=5,
+                         args=[text, sender, hint, int(channel), _hex(self.agent_color(sender))], strip=False)
 
     def view(self, radius: float = 300, max_objects: int = 40, target: str = "interface") -> dict:
         """What the player's camera sees, as data: player and world state plus on-screen buildings,
@@ -565,7 +614,45 @@ def _observer_boot_item() -> dict:
     return {"code": code, "target": "server", "args": [_snippet("observe.sqf")], "label": "observers"}
 
 
-_ACK_SQF = """hintSilent parseText format ["<t color='#f28c26'>%1</t> %2", _this # 0, _this # 1]"""
+_ACK_SQF = """hintSilent parseText format ["<t color='%3'>%1</t> %2", _this # 0, _this # 1, _this # 2]"""
+
+# Chat colours for agent names (RGBA): "Claude" keeps the original orange, other names get a stable
+# pick from the rest, so each agent's lines are told apart at a glance.
+_PALETTE = [[0.95, 0.55, 0.15, 1], [0.35, 0.75, 1.0, 1], [0.55, 0.9, 0.35, 1], [0.95, 0.4, 0.75, 1],
+            [1.0, 0.85, 0.25, 1], [0.7, 0.55, 1.0, 1], [0.3, 0.9, 0.8, 1], [1.0, 0.45, 0.4, 1]]
+
+
+def check_agent_name(name: str) -> str:
+    """Agent names are what players type ("Zeus, ..."): one word, letters first, at most 24 chars."""
+    name = (name or "").strip()
+    if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,23}", name):
+        raise HarnessError(f"bad agent name {name!r}: one word, starting with a letter (letters, digits, - _)")
+    if name.lower() == "everyone":
+        raise HarnessError("'everyone' is reserved: it addresses all listening sessions")
+    return name
+
+
+def agent_color(name: str) -> list[float]:
+    if name.lower() == "claude":
+        return _PALETTE[0]
+    return _PALETTE[1 + sum(name.lower().encode()) % (len(_PALETTE) - 1)]
+
+
+def _free_color(name: str, taken: list) -> list[float]:
+    """The name's default colour if no other session uses it, else the first unused one."""
+    want = agent_color(name)
+    if want not in taken:
+        return want
+    return next((c for c in _PALETTE[1:] if c not in taken), want)
+
+
+def _hex(rgba: list[float]) -> str:
+    return "#" + "".join(f"{round(c * 255):02x}" for c in rgba[:3])
+
+
+def _address_rx(name: str) -> re.Pattern:
+    """A chat line addressed to ``name`` (or to everyone): "zeus, ...", "@zeus ...", "hey zeus ..."."""
+    return re.compile(rf"(?i)^\s*(@|hey\s+|ok\s+)?({re.escape(name)}|everyone)\b")
 
 
 def _compact_errors(errors: list[dict], keep: int = 10) -> list[dict]:

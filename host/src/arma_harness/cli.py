@@ -86,7 +86,7 @@ def main(argv: list[str] | None = None) -> int:
     sa.add_argument("--dry-run", action="store_true")
     sub.add_parser("observe", help="install the chat and kill observers")
     li = sub.add_parser("listen", help="wait for a chat message addressed to Claude")
-    li.add_argument("--name", default="claude")
+    li.add_argument("--name", default="Claude")
     li.add_argument("--since", type=int)
     li.add_argument("--timeout", type=float, default=25)
     sy = sub.add_parser("say", help="show a chat line from Claude to players")
