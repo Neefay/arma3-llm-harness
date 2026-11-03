@@ -16,7 +16,7 @@ That is the part a heuristic mission script can't do.
    - Use **Play → Play in Multiplayer** and host a LAN game; the harness is built around a server.
    - You spawn as a squad leader with two AI squadmates, on a slope 250 m north-east of Athira, facing the town.
 3. **Attach the harness:** `host\.venv\Scripts\arma-harness.exe attach`. Optionally run `arma-harness scenario attached_check`.
-4. **Tell Claude Code to start listening.** It loops on `arma_listen` (or `arma-harness listen --since <next>`): it handles each message, replies with `arma_say`, and listens again.
+4. **Tell your agent to start listening** (Claude Code, Codex, or any client set up with `arma-harness setup-agents`). It loops on `arma_listen` (or `arma-harness listen --since <next>`): it handles each message, replies with `arma_say`, and listens again.
 
 Talk to Claude by starting a chat message (any channel) with `claude`, `@claude` or `hey claude`. A "Claude thinking..." hint appears at once. The answer takes 10 to 40 seconds, so cut the waits in the edit.
 
@@ -38,7 +38,7 @@ Talk to Claude by starting a chat message (any channel) with `claude`, `@claude`
 ## Recording tips
 
 - Record the game window with your usual recorder (OBS or ShadowPlay). The harness only captures frames for Claude.
-- Keep the Claude Code terminal visible in a corner if you want to show the "how".
+- Keep the agent's terminal visible in a corner if you want to show the "how".
 - Type one sentence per message. The chat feed shows roughly one line of reply comfortably; longer answers go to a hint box.
 
 ## How it works

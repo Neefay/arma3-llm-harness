@@ -36,7 +36,7 @@ About 15 minutes, most of it downloads and the first build. All commands are Pow
 | Python 3.11+ | [python.org](https://www.python.org/downloads/) (tick "Add to PATH") |
 | Rust | [rustup.rs](https://rustup.rs), then `rustup update stable` |
 | HEMTT 1.23+ | `winget install BrettMayson.HEMTT`, or download it from [hemtt.dev](https://hemtt.dev) |
-| Claude Code (optional, for the LLM side) | [docs](https://docs.claude.com/en/docs/claude-code) |
+| An MCP-capable agent (optional, for the LLM side): Claude Code, Codex, OpenCode, Gemini CLI, Cursor, VS Code | see [Use from an agent](#use-from-an-agent) |
 
 **2. Build**
 
@@ -56,7 +56,7 @@ The last line builds the mod into `%LOCALAPPDATA%\arma-harness\mods\@brmh` and r
 host\.venv\Scripts\arma-harness.exe scenario selftest
 ```
 
-**4. Connect Claude Code.** Copy `.mcp.json.example` to `.mcp.json` and fix the path inside it, then start `claude` in this folder. It now has the `arma_*` tools. Try: *"Start the selftest mission with a client and take a snapshot."*
+**4. Connect your agent.** Run `host\.venv\Scripts\arma-harness.exe setup-agents`. It writes the project MCP config for Claude Code, Codex, OpenCode, Gemini CLI, Cursor and VS Code, pointing at this clone, and never overwrites a file you already have. Then start your agent in this folder (`claude`, `codex`, `opencode`, `gemini`, ...). It now has the `arma_*` tools, and reads [`AGENTS.md`](AGENTS.md), the agent cheat sheet. Try: *"Start the selftest mission with a client and take a snapshot."*
 
 **5. Use it in your own game (optional).**
 1. In the Arma 3 Launcher, add the local mod `%LOCALAPPDATA%\arma-harness\mods\@brmh` (Mods → ⋯ → Add local mod), enable it with CBA_A3 and Pythia, and **turn BattlEye off**.
@@ -109,13 +109,32 @@ host\.venv\Scripts\python tools\build.py --check   # cargo + hemtt -> %LOCALAPPD
 
 > `server_root\` contains **directory junctions into the Arma install**. Never delete it with a tool that follows junctions. Use `rmdir` on each junction, or `arma_harness.serverroot.remove()`.
 
-## Use from Claude Code
+## Use from an agent
 
-To register the server for sessions started in this repo, copy `.mcp.json.example` to `.mcp.json`, adjusting the path to where you cloned the repo. To use it from another project, for example your mission repo:
+The harness is a standard MCP server (stdio), so any MCP-capable agent can drive it. Two pieces:
 
-```powershell
-claude mcp add arma -- <repo>/host/.venv/Scripts/arma-harness-mcp.exe
-```
+1. **The MCP server config.** `arma-harness setup-agents [claude codex opencode gemini cursor vscode]` writes the project-scoped file each client reads, with absolute paths to this clone:
+
+   | Client | File written | Instructions it reads |
+   |---|---|---|
+   | Claude Code | `.mcp.json` | `CLAUDE.md`, which imports `AGENTS.md` |
+   | Codex | `.codex/config.toml` (project must be trusted), with `tool_timeout_sec` raised | `AGENTS.md` natively |
+   | Gemini CLI | `.gemini/settings.json`, which also sets `context.fileName` to `AGENTS.md` | `AGENTS.md` |
+   | Cursor | `.cursor/mcp.json` | `AGENTS.md` natively |
+   | OpenCode | `opencode.json` (current schema: a `local` server under `mcp`, with `timeout` raised) | `AGENTS.md` natively (it ignores `CLAUDE.md` when `AGENTS.md` exists) |
+   | VS Code (Copilot agent mode) | `.vscode/mcp.json` | `AGENTS.md` (setting `chat.useAgentsMdFile`) |
+
+   **OpenCode 2** uses a different layout: servers sit under `mcp.servers`, and timeouts are split into `startup`, `catalog` and `execution` (tool calls default to 12 hours, so nothing needs raising). If your OpenCode rejects the generated file, use:
+
+   ```json
+   { "$schema": "https://opencode.ai/config.json",
+     "mcp": { "servers": { "arma": { "type": "local", "command": ["<repo>/host/.venv/Scripts/arma-harness-mcp.exe"], "cwd": "<repo>" } } } }
+   ```
+
+   These files are personal and git-ignored. A file that already exists is left alone unless you pass `--force` (the old one is kept as `.bak`); `--dry-run` shows what would be written. To use the harness from another project, for example your mission repo, register the same command there: `<repo>/host/.venv/Scripts/arma-harness-mcp.exe`.
+2. **The agent instructions.** [`AGENTS.md`](AGENTS.md) is the cheat sheet: rules, where code runs, the chat loop and tested recipes. Agents that don't load instruction files can get it from the `arma_guide` tool, or from `arma-harness guide` on the command line. Agents without MCP can use the CLI directly: every tool is a subcommand that prints JSON.
+
+**Tool-call timeouts.** Clients cancel tool calls that run too long (Codex's default is 60 s). `arma_listen` waits 25 s by default for that reason. Chat is captured in game whether or not a call is waiting, so short, repeated calls lose nothing.
 
 The game processes survive MCP server restarts: they are started through WMI, outside the MCP client's job object.
 

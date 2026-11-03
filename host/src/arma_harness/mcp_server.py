@@ -8,7 +8,7 @@ from typing import Any
 
 from mcp.server.mcpserver import Image, MCPServer
 
-from . import scenario
+from . import agents, scenario
 from .adapters import rounds_framework as rounds
 from .bridge import BridgeError
 from .harness import Harness, HarnessError
@@ -54,6 +54,13 @@ def safe(fn):
         except Exception as e:  # keep the server alive; report with context
             return {"ok": False, "error": f"{type(e).__name__}: {e}", "trace": traceback.format_exc()[-1500:]}
     return wrapper
+
+
+@server.tool()
+def arma_guide() -> str:
+    """The agent cheat sheet (AGENTS.md): golden rules, where code runs, the in-game chat loop, and tested
+    SQF recipes. Read it once at the start of a session, before using the other arma_* tools."""
+    return agents.guide()
 
 
 @server.tool()
@@ -183,7 +190,7 @@ def arma_map(contours: bool = True, trees: bool = False) -> dict:
 
 @server.tool()
 @safe
-def arma_listen(name: str = "claude", since: int | None = None, timeout_s: float = 60) -> dict:
+def arma_listen(name: str = "claude", since: int | None = None, timeout_s: float = 25) -> dict:
     """Wait for a player to type a chat message addressed to you ("claude, ...", "@claude ...", "hey
     claude ..."). Returns the message, the kills since `since`, and `next`: pass it back as `since` on the
     following call so nothing said meanwhile is missed. Reply with arma_say; look with arma_view and
@@ -192,7 +199,9 @@ def arma_listen(name: str = "claude", since: int | None = None, timeout_s: float
     means the timeout passed with no message; it does not prove anything works. To answer "is the
     listener on?", use arma_status -> listener (observer installed per machine, a call waiting now,
     unread messages).
-    The call BLOCKS for up to timeout_s seconds (default 60, max 300); you can do nothing else meanwhile.
+    The call BLOCKS for up to timeout_s seconds (default 25, max 300); you can do nothing else meanwhile.
+    Keep timeout_s below your client's tool-call timeout (Codex: 60 s by default) or the client
+    cancels the call. Chat is captured while you are not listening, so short calls lose nothing.
     timeout_s=0 checks for messages and returns at once (no waiting)."""
     return h().listen(name=name, since=since, timeout=max(0.0, min(float(timeout_s), 300.0)))
 

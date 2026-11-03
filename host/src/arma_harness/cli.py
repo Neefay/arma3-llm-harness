@@ -15,7 +15,7 @@ import json
 import sys
 from pathlib import Path
 
-from . import scenario
+from . import agents, scenario
 from .adapters import rounds_framework as rounds
 from .bridge import BridgeError
 from .harness import Harness, HarnessError
@@ -79,11 +79,16 @@ def main(argv: list[str] | None = None) -> int:
     g.add_argument("--target", default="interface")
     g.add_argument("--all", action="store_true", help="include controls without text")
     sub.add_parser("map")
+    sub.add_parser("guide", help="print the agent cheat sheet (AGENTS.md)")
+    sa = sub.add_parser("setup-agents", help="write project MCP config for agent clients (never overwrites)")
+    sa.add_argument("clients", nargs="*", help="claude codex gemini cursor opencode vscode (default: all)")
+    sa.add_argument("--force", action="store_true", help="replace differing files (old kept as .bak)")
+    sa.add_argument("--dry-run", action="store_true")
     sub.add_parser("observe", help="install the chat and kill observers")
     li = sub.add_parser("listen", help="wait for a chat message addressed to Claude")
     li.add_argument("--name", default="claude")
     li.add_argument("--since", type=int)
-    li.add_argument("--timeout", type=float, default=600)
+    li.add_argument("--timeout", type=float, default=25)
     sy = sub.add_parser("say", help="show a chat line from Claude to players")
     sy.add_argument("text")
     sy.add_argument("--sender", default="Claude")
@@ -106,6 +111,10 @@ def main(argv: list[str] | None = None) -> int:
     rs.add_argument("arg", nargs="*")
 
     args = p.parse_args(argv)
+    if args.cmd == "guide":
+        sys.stdout.reconfigure(encoding="utf-8")
+        print(agents.guide())
+        return 0
     h = Harness()
     try:
         out = _dispatch(h, args)
@@ -155,6 +164,8 @@ def _dispatch(h: Harness, a):
             return h.map_svg()
         case "observe":
             return h.observe()
+        case "setup-agents":
+            return agents.setup(a.clients or None, force=a.force, dry_run=a.dry_run)
         case "listen":
             return h.listen(name=a.name, since=a.since, timeout=a.timeout)
         case "say":

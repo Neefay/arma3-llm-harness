@@ -18,14 +18,19 @@ __pycache__/
 *.log
 /captures/
 
-# personal config
+# personal config (agent MCP configs hold absolute paths: written by `arma-harness setup-agents`)
 harness.local.toml
 .mcp.json
+.codex/
+.gemini/
+.cursor/mcp.json
+.vscode/mcp.json
+/opencode.json
+*.bak
 
 # LLM-adjacent working material (plans, research notes, brainstorms, agent config)
 docs/BACKLOG.md
 docs/IDEAS.md
 docs/RESEARCH.md
-CLAUDE.md
 CLAUDE.local.md
 .claude/

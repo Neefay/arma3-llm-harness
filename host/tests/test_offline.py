@@ -211,3 +211,23 @@ def test_host_client_against_game_bridge(tmp_path: Path, monkeypatch):
     finally:
         stop.set()
         hub.stop()
+
+
+def test_setup_agents_never_overwrites(tmp_path, monkeypatch):
+    from arma_harness import agents
+
+    monkeypatch.setattr(agents, "REPO_ROOT", tmp_path)
+    mine = tmp_path / ".mcp.json"
+    mine.write_text('{"mine": true}', encoding="utf-8")
+    out = agents.setup()["clients"]
+    assert "left alone" in out["claude"]["result"]
+    assert mine.read_text(encoding="utf-8") == '{"mine": true}'
+    assert out["codex"]["result"] == "written"
+    assert "tool_timeout_sec" in (tmp_path / ".codex" / "config.toml").read_text(encoding="utf-8")
+    assert agents.setup(["codex"])["clients"]["codex"]["result"] == "already up to date"
+    import json
+    oc = json.loads((tmp_path / "opencode.json").read_text(encoding="utf-8"))
+    assert oc["mcp"]["arma"]["type"] == "local" and oc["mcp"]["arma"]["command"][0].endswith("arma-harness-mcp.exe")
+    forced = agents.setup(["claude"], force=True)["clients"]["claude"]["result"]
+    assert "kept as .bak" in forced
+    assert (tmp_path / ".mcp.json.bak").read_text(encoding="utf-8") == '{"mine": true}'
