@@ -33,71 +33,73 @@
 body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.4 var(--body); }
 
 /* Stacked by default, for phones and small windows. */
-.page { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; padding-block: 10px 20px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
-.chip { font: 600 11px/1.2 var(--body); padding: 0 5px; border: 1px solid currentColor; white-space: nowrap; display: inline-block; }
-.chip.llm { color: var(--violet); }
-.chip.script { color: var(--amber); }
-.stage { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
-.left { display: grid; gap: 6px; min-width: 0; }
-.maps { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: 8px; }
+.page { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; padding-block: 12px 24px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+.chip, .result { --tone: var(--dim); font: 600 11.5px/1 var(--body); letter-spacing: .02em; padding: 4px 9px 4px 8px; border-radius: 999px; color: var(--tone); background: color-mix(in srgb, var(--tone) 14%, transparent); white-space: nowrap; display: inline-flex; align-items: center; gap: 6px; vertical-align: 1px; }
+.chip::before, .result::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: none; }
+.chip.llm { --tone: var(--violet); }
+.chip.script { --tone: var(--amber); }
+.stage { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; }
+.left { display: grid; gap: 8px; min-width: 0; }
+.maps { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: 10px; }
 figure { margin: 0; background: var(--panel); min-width: 0; }
-figcaption { padding: 3px 8px 2px; display: grid; gap: 0; }
+figcaption { padding: 6px 10px 5px; display: grid; gap: 2px; }
 .title { font: 600 15px/1.25 var(--display); display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 0 8px; }
 .title small { font: 400 11.5px var(--body); color: var(--dim); }
 .belief .title > span { color: var(--blue); }
 .truth .title > span { color: var(--red); }
-.key { display: flex; flex-wrap: wrap; gap: 0 9px; font-size: 11px; line-height: 1.4; color: var(--dim); }
+.key { display: flex; flex-wrap: wrap; gap: 1px 12px; font-size: 11px; line-height: 1.4; color: var(--dim); }
 .key span { white-space: nowrap; }
 .key svg { width: 13px; height: 10px; vertical-align: -1px; margin-right: 3px; fill: none; stroke-width: 1.6; }
 figure canvas { display: block; width: 100%; aspect-ratio: 1; max-width: 100%; cursor: grab; touch-action: pan-y; }
 figure canvas:active { cursor: grabbing; }
-.timeline { background: var(--panel); padding: 4px 8px 3px; display: flex; flex-direction: column; gap: 2px; min-height: 0; }
+.timeline { background: var(--panel); padding: 7px 10px 6px; display: flex; flex-direction: column; gap: 4px; min-height: 0; }
 .timeline canvas { width: 100%; height: 86px; display: block; cursor: pointer; touch-action: none; }
-.legend { display: flex; flex-wrap: wrap; gap: 0 12px; color: var(--dim); font-size: 11.5px; line-height: 1.35; }
+.legend { display: flex; flex-wrap: wrap; gap: 1px 16px; color: var(--dim); font-size: 11.5px; line-height: 1.35; }
 .legend i { display: inline-block; width: 9px; height: 9px; margin-right: 4px; vertical-align: -1px; }
 .legend b { color: var(--text); font-variant-numeric: tabular-nums; }
-.controls { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; background: var(--panel); padding: 3px 8px; }
-button { font: 600 12.5px var(--body); color: var(--text); background: var(--panel2); border: 1px solid var(--line); padding: 3px 9px; cursor: pointer; }
+.controls { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; background: var(--panel); padding: 6px 10px; }
+button { font: 600 12.5px var(--body); color: var(--text); background: var(--panel2); border: 1px solid var(--line); padding: 4px 11px; cursor: pointer; }
 button:hover { border-color: var(--dim); }
 button:focus-visible, select:focus-visible, canvas:focus-visible, .row:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
 button[aria-pressed="true"] { background: var(--blue); color: var(--on-accent); border-color: var(--blue); }
 #clock { font: 700 19px var(--mono); font-variant-numeric: tabular-nums; min-width: 7ch; }
-.chips { display: flex; gap: 3px; flex-wrap: wrap; }
-.chips button { font-size: 12px; padding: 2px 7px; font-weight: 500; }
+.chips { display: flex; gap: 4px; flex-wrap: wrap; }
+.chips button { font-size: 12px; padding: 3px 9px; font-weight: 500; }
 
 /* Stacked, the rail's parts join the stage's own grid, so that the heading and the dropdown can come before the maps. */
 .rail { display: contents; }
-.head { order: -1; min-width: 0; background: var(--panel); padding: 6px 10px; display: grid; gap: 4px; border-bottom: 1px solid var(--line); }
+.head { order: -1; min-width: 0; background: var(--panel); padding: 10px 12px; display: grid; gap: 8px; border-bottom: 1px solid var(--line); }
 #picker { flex: 1 1 100%; min-width: 0; max-width: 100%; font: 600 16px/1.2 var(--display); color: var(--text); background: var(--panel2); border: 1px solid var(--line); padding: 3px 6px; cursor: pointer; text-overflow: ellipsis; }
-.headline { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 2px 8px; }
+.headline { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-start; gap: 6px 8px; }
 h1 { font: 600 16px/1.2 var(--display); margin: 0; }
-.result { font: 600 13px/1.3 var(--display); padding: 0 7px; border: 1px solid var(--line); white-space: nowrap; }
-.result.win { color: var(--green); border-color: var(--green); }
-.result.loss { color: var(--red); border-color: var(--red); }
-#who { flex: 1 1 200px; min-width: 0; margin: 0; font-size: 12.5px; line-height: 1.35; }
-.score { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px 6px; margin: 0; }
+.result { font-size: 11.5px; }
+.result.win { --tone: var(--green); }
+.result.loss { --tone: var(--red); }
+#who { display: contents; }
+.whotext { order: 2; flex: 1 1 100%; min-width: 0; font-size: 12.5px; line-height: 1.5; color: var(--dim); }
+.score { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px 10px; margin: 0; }
 .score div { display: flex; flex-direction: column; justify-content: flex-end; min-width: 0; }
-.score dt { color: var(--dim); font-size: 10.5px; line-height: 1.1; }
+.score dt { color: var(--dim); font-size: 10.5px; line-height: 1.2; margin-bottom: 1px; }
 .score dd { margin: 0; font: 600 14.5px/1.25 var(--display); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .tabs { display: flex; background: var(--panel); margin-bottom: -8px; border-bottom: 1px solid var(--line); overflow-x: auto; flex: none; }
-.tabs button { flex: 1 0 auto; background: none; border: 0; border-bottom: 2px solid transparent; padding: 5px 5px 4px; font: 600 12.5px var(--body); color: var(--dim); }
+.tabs button { flex: 1 0 auto; background: none; border: 0; border-bottom: 2px solid transparent; padding: 8px 3px 7px; font: 600 12.5px var(--body); color: var(--dim); }
 .tabs button:hover { color: var(--text); }
 .tabs button[aria-selected="true"] { color: var(--text); border-bottom-color: var(--blue); }
 .pane { display: flex; flex-direction: column; background: var(--panel); min-height: 0; flex: 1 1 auto; max-height: 70vh; }
-.pane.flow { display: block; overflow-y: auto; padding-bottom: 8px; }
-.bar { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 2px 8px; padding: 4px 10px; font-size: 12px; color: var(--dim); flex: none; border-bottom: 1px solid var(--panel2); }
-h3 { font: 600 14px/1.25 var(--display); margin: 0; padding: 7px 10px 2px; }
+.pane.flow { display: block; overflow-y: auto; padding-bottom: 12px; }
+.bar { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 4px 10px; padding: 7px 12px; font-size: 12px; color: var(--dim); flex: none; border-bottom: 1px solid var(--panel2); }
+h3 { font: 600 14px/1.25 var(--display); margin: 0; padding: 12px 12px 4px; }
 .scroll { overflow-x: auto; }
 table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
-th { text-align: left; color: var(--dim); font-weight: 500; padding: 3px 6px; border-bottom: 1px solid var(--line); vertical-align: bottom; }
-td { padding: 3px 6px; border-bottom: 1px solid var(--panel2); vertical-align: top; }
+th { text-align: left; color: var(--dim); font-weight: 500; padding: 5px 8px; border-bottom: 1px solid var(--line); vertical-align: bottom; }
+td { padding: 5px 8px; border-bottom: 1px solid var(--panel2); vertical-align: top; }
 td.num { font-variant-numeric: tabular-nums; }
-th:first-child, td:first-child { padding-left: 10px; }
+th:first-child, td:first-child { padding-left: 12px; }
 .gap { color: var(--amber); font-weight: 600; }
 .dead { color: var(--red); font-weight: 600; }
 .ok { color: var(--green); font-weight: 600; }
 .list { flex: 1 1 auto; min-height: 0; overflow-y: auto; position: relative; }
-.row { display: grid; grid-template-columns: 42px minmax(0, 1fr); gap: 6px; padding: 3px 10px 3px 7px; border: 0; border-bottom: 1px solid var(--panel2); border-left: 3px solid transparent; cursor: pointer; background: none; width: 100%; text-align: left; color: inherit; font: 12.5px/1.35 var(--body); }
+.row { display: grid; grid-template-columns: 42px minmax(0, 1fr); gap: 8px; padding: 5px 12px 5px 9px; border: 0; border-bottom: 1px solid var(--panel2); border-left: 3px solid transparent; cursor: pointer; background: none; width: 100%; text-align: left; color: inherit; font: 12.5px/1.35 var(--body); }
 .row:hover { background: var(--panel2); border-color: transparent; border-bottom-color: var(--panel2); }
 .row .t { font: 11.5px/1.5 var(--mono); color: var(--dim); }
 .row.future { opacity: .4; }
@@ -108,19 +110,19 @@ th:first-child, td:first-child { padding-left: 10px; }
 .row.silent .text { color: var(--amber); font-style: italic; }
 .who { font-weight: 600; }
 .meta { color: var(--dim); font-size: 12px; font-weight: 400; }
-.note { color: var(--dim); font-size: 12.5px; line-height: 1.4; padding: 4px 10px; margin: 0; }
+.note { color: var(--dim); font-size: 12.5px; line-height: 1.45; padding: 6px 12px; margin: 0; }
 .plain { color: var(--text); }
 .notes { white-space: pre-wrap; font: 12px/1.45 var(--mono); }
-.said { padding: 4px 10px 0; margin: 0; white-space: pre-wrap; font-size: 12.5px; }
+.said { padding: 6px 12px 2px; margin: 0; line-height: 1.45; white-space: pre-wrap; font-size: 12.5px; }
 .did { color: var(--amber); }
-.measures { margin: 0; padding: 2px 10px 4px; display: grid; gap: 4px; font-size: 12.5px; line-height: 1.35; }
+.measures { margin: 0; padding: 4px 12px 6px; display: grid; gap: 6px; font-size: 12.5px; line-height: 1.35; }
 .measures dt { font-weight: 600; display: inline; }
 .measures dd { margin: 0; display: inline; color: var(--dim); }
 .measures div { min-width: 0; }
-.marks { list-style: none; margin: 0; padding: 2px 10px; display: grid; gap: 3px; font-size: 12.5px; line-height: 1.35; }
+.marks { list-style: none; margin: 0; padding: 4px 12px; display: grid; gap: 5px; font-size: 12.5px; line-height: 1.35; }
 .compare th:not(:first-child), .compare td:not(:first-child) { min-width: 78px; }
 .compare td:first-child { color: var(--dim); }
-.compare th button { font: 600 12px/1.2 var(--display); text-align: left; padding: 2px 4px; width: 100%; background: none; border: 1px solid transparent; color: var(--text); }
+.compare th button { font: 600 12px/1.2 var(--display); text-align: left; padding: 3px 6px; width: 100%; background: none; border: 1px solid transparent; color: var(--text); }
 .compare th button:hover { border-color: var(--line); }
 .compare .sel { background: var(--panel2); }
 .compare th.sel button { color: var(--blue); }
@@ -130,8 +132,8 @@ th:first-child, td:first-child { padding-left: 10px; }
    above and below a map in its column. Lists scroll inside the rail. */
 @media (min-width: 1100px) and (min-height: 560px) {
   html, body { height: 100%; }
-  .page { height: 100%; grid-template-rows: minmax(0, 1fr); padding-block: 6px; }
-  .stage { container-type: size; min-height: 0; grid-template-columns: auto minmax(0, 1fr); gap: 8px; --chrome: 170px; --rail-min: 340px; }
+  .page { height: 100%; grid-template-rows: minmax(0, 1fr); padding-block: 10px; }
+  .stage { container-type: size; min-height: 0; grid-template-columns: auto minmax(0, 1fr); gap: 8px; --chrome: 210px; --rail-min: 340px; }
   .stage > * { --map: min(100cqh - var(--chrome), (100cqw - var(--rail-min) - 16px) / 2); }
   .left { width: calc(2 * var(--map) + 8px); min-width: min(760px, 100cqw - var(--rail-min)); height: 100%; min-height: 0; grid-template-rows: auto minmax(0, 1fr) auto; }
   .maps { grid-template-columns: var(--map) var(--map); justify-content: center; }
@@ -142,8 +144,8 @@ th:first-child, td:first-child { padding-left: 10px; }
   .pane { max-height: none; flex: 1 1 0; }
 }
 /* Smaller maps wrap their keys onto a second line. */
-@media (min-width: 1100px) and (min-height: 560px) and (max-height: 705px) { .stage { --chrome: 186px; } }
-@media (min-width: 1100px) and (max-width: 1200px) and (min-height: 560px) { .stage { --chrome: 212px; } }
+@media (min-width: 1100px) and (min-height: 560px) and (max-height: 705px) { .stage { --chrome: 232px; } }
+@media (min-width: 1100px) and (max-width: 1200px) and (min-height: 560px) { .stage { --chrome: 256px; } }
 </style>
 </head>
 <body>
@@ -218,15 +220,15 @@ th:first-child, td:first-child { padding-left: 10px; }
         <dl class="score" id="score"></dl>
       </div>
       <div class="tabs" role="tablist" aria-label="Details" id="tabs">
-        <button type="button" role="tab" data-pane="reality" aria-selected="true">Reality</button>
-        <button type="button" role="tab" data-pane="commander" aria-selected="false">Commander</button>
+        <button type="button" role="tab" data-pane="commander" aria-selected="true">Commander</button>
+        <button type="button" role="tab" data-pane="reality" aria-selected="false">Reality</button>
         <button type="button" role="tab" data-pane="radio" aria-selected="false">Radio</button>
         <button type="button" role="tab" data-pane="deaths" aria-selected="false">Deaths</button>
         <button type="button" role="tab" data-pane="turns" aria-selected="false">Turns</button>
         <button type="button" role="tab" data-pane="compare" aria-selected="false" id="compareTab">Compare</button>
       </div>
 
-      <section class="pane flow" id="pane-reality" role="tabpanel">
+      <section class="pane flow" id="pane-reality" role="tabpanel" hidden>
         <p class="note plain" id="mission"></p>
         <h3>How wrong was its picture?</h3>
         <dl class="measures" id="measures"></dl>
@@ -236,7 +238,7 @@ th:first-child, td:first-child { padding-left: 10px; }
         <p class="note" id="record"></p>
       </section>
 
-      <section class="pane flow" id="pane-commander" role="tabpanel" hidden>
+      <section class="pane flow" id="pane-commander" role="tabpanel">
         <h3>THOUGHTS</h3>
         <p class="said" id="turnSaid" hidden></p>
         <p class="note" id="noWords" hidden></p>
@@ -312,7 +314,7 @@ const verdict = ended => /achieved/i.test(ended || "") ? "Won" : /time limit/i.t
 const title = battle => battle.label || battle.name || "Battle";
 
 let D = null, duration = 1, alive = [], peak = 1, killTimes = [];
-let now = 0, playing = false, speed = 5, follow = true, hideRoutine = false, last = 0, tab = "reality";
+let now = 0, playing = false, speed = 5, follow = true, hideRoutine = false, last = 0, tab = "commander";
 
 // One view for both maps, fitted to everything that happened, so the two can be compared by eye.
 const view = { cx: 0, cy: 0, half: 500 }, whole = { ...view };
@@ -744,8 +746,8 @@ function whoShort(battle) {
 
 function whoLong(battle) {
   const model = battle.commander.model;
-  return model ? `${whoShort(battle)} Commanded by ${esc(model)}, an AI model.`
-    : `${whoShort(battle)} A script commanded this battle, with no AI model. The records hold no model session for it.`;
+  return model ? `${whoShort(battle)}<span class="whotext">Commanded by ${esc(model)}, an AI model.</span>`
+    : `${whoShort(battle)}<span class="whotext">A script commanded this battle, with no AI model. The records hold no model session for it.</span>`;
 }
 
 function renderPicker() {
@@ -814,7 +816,7 @@ function show(battle, t) {
   killTimes = D.kills.map(k => k.t);
   fitWhole();
   renderBattle();
-  now = t == null ? duration : Math.max(0, Math.min(duration, t));
+  now = t == null ? 0 : Math.max(0, Math.min(duration, t));
   $("play").textContent = now >= duration ? "Replay" : "Play";
   draw();
 }

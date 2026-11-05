@@ -334,6 +334,13 @@ def test_a_site_holds_each_battle_under_its_label_and_opens_on_the_first(battle,
     assert aar.DATA_SLOT not in out.read_text(encoding="utf-8")
 
 
+def test_the_page_opens_at_the_start_on_the_commander_tab(battle):
+    page = aar.render(aar.battle_data(battle))
+    assert 'tab = "commander"' in page and "now = t == null ? 0 :" in page
+    assert page.index('data-pane="commander"') < page.index('data-pane="reality"')
+    assert 'id="pane-reality" role="tabpanel" hidden' in page
+
+
 def test_the_page_chooses_battles_from_a_dropdown_under_the_owners_labels(battle):
     page = aar.render(aar.battle_data(battle))
     assert '<select id="picker"' in page and 'class="pick"' not in page
