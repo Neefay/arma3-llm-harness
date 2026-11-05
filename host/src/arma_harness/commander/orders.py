@@ -179,6 +179,8 @@ def _fire(to, legs, types, posture, stations, world_size, vehicles) -> dict:
     observer = leg.get("observer")
     if observer is not None and observer not in stations:
         raise Invalid(f"Unknown observer {observer!r}. See commander_roster.")
+    if observer is not None and not stations[observer].get("spotter"):
+        raise Invalid(f"{observer} isn't trained to correct fire. See commander_roster.")
     return {"to": to, "mode": "fire", "engine_legs": [[keys, aim, ammo, rounds, radius]], "posture": posture,
             "route": None, "words": f"Copy, fire mission, {rounds} {ammo} at grid {grid}.",
             "mission": {"aim": aim, "grid": grid, "ammo": ammo, "rounds": rounds, "radius": radius,

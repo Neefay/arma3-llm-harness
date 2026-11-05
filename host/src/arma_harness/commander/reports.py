@@ -26,6 +26,11 @@ STUCK_MIN_M = 20
 ON_STATION_M = 30
 NEAR_BUILDING_M = 25
 COMBAT_RECENT_S = 30  # a squad stays "in combat" this long after its last casualty
+UNDER_FIRE_M = 100  # shells this close are the squad's own problem
+EXPLOSIONS_M = 400  # and this far off, just something to mention
+UNDER_FIRE_QUIET_S = 20  # how long shelling has to stop before it's a new burst
+EXPLOSIONS_REPEAT_S = 60
+SPLASH_QUIET_S = 4  # a spotter reports this long after the last round of a burst lands
 COMBAT_SUPPRESSION = 0.05  # average of getSuppression across the squad, 0 to 1
 # How long a squad takes to get a report out, by how suppressed it is on average: (below this, seconds).
 REPORT_DELAYS = ((0.1, 5.0), (0.4, 15.0), (math.inf, 30.0))
@@ -313,13 +318,20 @@ class Tracker:
     gunners: dict[str, str] = field(default_factory=dict)
     gunners_alive: int = 0
     fire_said: dict[str, str] = field(default_factory=dict)
+    spotter: bool = False
+    impacts: list[dict] = field(default_factory=list)
+    noted: int = 0
+    shelled_at: float = -1
+    explosions_at: float = -1
+    no_view_said: list[str] = field(default_factory=list)
 
     def in_combat(self, packet: dict, now: float) -> bool:
-        """From what the engine measures: a fresh enemy contact, being suppressed, or casualties just now. Behaviour
-        isn't used. It stays COMBAT for 35 s after a fight, and a commander can order it. Shells landing nearby move
-        none of these."""
+        """From what the engine measures: a fresh enemy contact, being suppressed, casualties just now, or shells
+        landing close, which move none of the others. Behaviour isn't used. It stays COMBAT for 35 s after a fight, and
+        a commander can order it."""
         hurt_recently = self.hurt_at >= 0 and now - self.hurt_at < COMBAT_RECENT_S
-        return hurt_recently or (packet.get("suppression") or 0) >= COMBAT_SUPPRESSION \
+        shelled = self.shelled_at >= 0 and now - self.shelled_at < COMBAT_RECENT_S
+        return hurt_recently or shelled or (packet.get("suppression") or 0) >= COMBAT_SUPPRESSION \
             or bool(contact_groups(packet, CONTACT_FRESH_S))
 
     def update(self, packet: dict, route: dict | None, now: float, buildings: list[dict] | None = None) -> list[Report]:
@@ -338,7 +350,56 @@ class Tracker:
         out += self._stuck(packet, route, now)
         out += self._boarding(packet)
         out += self._missions(packet)
+        out += self._heard_impacts(packet, now)
         return [_without_own_grid(report) for report in out] if self.in_combat(packet, now) else out
+
+    def _heard_impacts(self, packet: dict, now: float) -> list[Report]:
+        """Every shell, whoever fired it. No station can tell whose they were, and none ever says."""
+        out = []
+        new = [row for row in self.impacts[self.noted:] if "smoke" not in row["ammo"].lower()]
+        self.noted = len(self.impacts)
+        close = [row for row in new if row["distance"] < UNDER_FIRE_M]
+        if close:
+            nearest = min(close, key=lambda row: row["distance"])
+            if self.shelled_at < 0 or nearest["t"] - self.shelled_at >= UNDER_FIRE_QUIET_S:
+                metres = max(10, _offset(nearest["distance"]))
+                out.append(Report(PRIORITY, f"Under indirect fire, explosions about {metres} m "
+                                            f"{compass(nearest['dx'], nearest['dy'])}."))
+            self.shelled_at = max(row["t"] for row in close)
+        elif new and not (self.spotter and any(row["seen"] for row in new)):  # a spotter's about to say exactly where
+            nearest = min(new, key=lambda row: row["distance"])
+            recently = self.explosions_at >= 0 and now - self.explosions_at < EXPLOSIONS_REPEAT_S
+            shelled = self.shelled_at >= 0 and now - self.shelled_at < UNDER_FIRE_QUIET_S
+            if nearest["distance"] < EXPLOSIONS_M and not recently and not shelled:
+                self.explosions_at = now
+                out.append(Report(ROUTINE, f"Explosions to the {compass(nearest['dx'], nearest['dy'])}, "
+                                           f"{rough_range(nearest['distance'])}."))
+        if self.impacts and now - self.impacts[-1]["t"] >= SPLASH_QUIET_S:
+            if self.spotter:
+                out += self._spotted(packet)
+            self.impacts, self.noted = [], 0
+        return out
+
+    def _spotted(self, packet: dict) -> list[Report]:
+        watched = [row for row in self.impacts if row["observer"]]
+        seen = [row for row in (watched or self.impacts) if row["seen"]]
+        if watched and seen:
+            return [Report(PRIORITY, _splash_words(seen, packet))]
+        if watched:
+            order = watched[0]["order"]
+            if order in self.no_view_said:
+                return []
+            self.no_view_said.append(order)
+            return [Report(PRIORITY, "Can't observe. No view of the fall of shot.")]
+        if seen:
+            x = sum(row["pos"][0] for row in seen) / len(seen)
+            y = sum(row["pos"][1] for row in seen) / len(seen)
+            dx = sum(row["dx"] for row in seen) / len(seen)
+            dy = sum(row["dy"] for row in seen) / len(seen)
+            away = max(50, round(math.hypot(dx, dy) / 50) * 50)
+            return [Report(ROUTINE, f"Splash seen, grid {int(x / 100):03d} {int(y / 100):03d}, "
+                                    f"about {away} m {compass(dx, dy)} of us.")]
+        return []
 
     def _missions(self, packet: dict) -> list[Report]:
         out = []
@@ -537,6 +598,34 @@ def _gun_left(packet: dict, gun: str, word: str) -> str:
         if key == gun:
             return f" {dict(ammo).get(word, 0)} {word} left."
     return ""
+
+
+def _offset(metres: float) -> int:
+    """What an observer can call by eye: to 10 m up close, to 50 m beyond that."""
+    metres = abs(metres)
+    step = 10 if metres < 100 else 50
+    return round(metres / step) * step
+
+
+def _splash_words(rows: list[dict], packet: dict) -> str:
+    """Where a burst landed, against the enemy this spotter believes is there, or failing that the grid it was given.
+    An offset from the aim alone would be no help if the aim is what's wrong."""
+    x = sum(row["pos"][0] for row in rows) / len(rows)
+    y = sum(row["pos"][1] for row in rows) / len(rows)
+    fresh = [c for c in packet.get("contacts") or [] if c["age_s"] <= CONTACT_FRESH_S]
+    if fresh:
+        ref = min(fresh, key=lambda c: math.dist(c["pos"], [x, y]))["pos"]
+        name = "the enemy"
+    else:
+        ref, name = rows[0]["aim"], "your grid"
+    north, east = _offset(y - ref[1]), _offset(x - ref[0])
+    parts = []
+    if north:
+        parts.append(f"{north} m {'north' if y > ref[1] else 'south'}")
+    if east:
+        parts.append(f"{east} m {'east' if x > ref[0] else 'west'}")
+    where = f"Splash {', '.join(parts)} of {name}." if parts else f"Splash on {name}."
+    return f"{where} {_rounds(len(rows))} seen."
 
 
 def _mission_words(row: list, packet: dict) -> str | None:

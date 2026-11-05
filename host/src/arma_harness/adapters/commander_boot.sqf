@@ -1134,28 +1134,36 @@ brmh_cmd_fnc_trackGun = {
 				["side", str _side],
 				["ammo", typeOf _shell],
 				["pos", [_pos # 0, _pos # 1]],
-				["seen", [_pos] call brmh_cmd_fnc_whoSaw]
+				["heard", [_pos] call brmh_cmd_fnc_whoHeard]
 			]] call BRMH_fnc_emit;
 		}];
 	}];
 };
 
-// Who could see an impact at the moment it landed. Later, the dust and smoke of it hide the next one.
-brmh_cmd_fnc_whoSaw = {
+// How far an impact was from each station's nearest man, and whether it could see it land. It has to be right then,
+// because dust and smoke hide the next one for free. Rows are [callsign, metres, dx, dy, seen].
+brmh_cmd_fnc_whoHeard = {
 	params ["_pos"];
+	private _ground = [_pos # 0, _pos # 1];
 	private _point = _pos vectorAdd [0, 0, 1];
-	private _out = [];
+	private _rows = [];
 	{
 		private _alive = (units _y) select {
-			alive _x and {
-				_x distance2D [_pos # 0, _pos # 1] < 1500
-			}
+			alive _x
 		};
-		if ([_alive select [0, 4], objNull, _point] call brmh_cmd_fnc_canSee) then {
-			_out pushBack _x;
+		if (_alive isNotEqualTo []) then {
+			private _near = [_alive, [], {
+				_x distance2D _ground
+			}] call BIS_fnc_sortBy;
+			private _from = getPosATL (_near # 0);
+			private _metres = (_near # 0) distance2D _ground;
+			private _seen = _metres < 1500 and {
+				[_near select [0, 4], objNull, _point] call brmh_cmd_fnc_canSee
+			};
+			_rows pushBack [_x, _metres, (_ground # 0) - (_from # 0), (_ground # 1) - (_from # 1), _seen];
 		};
 	} forEach brmh_cmd_stations;
-	_out
+	_rows
 };
 
 brmh_cmd_fnc_gunsOf = {

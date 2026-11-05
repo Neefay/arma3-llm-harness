@@ -70,6 +70,7 @@ class Runtime:
         self.ended_at: float | None = saved.get("ended_at")
         self.restarted: bool = saved.get("restarted", False)
         self.outbox: list[dict] = saved.get("outbox", [])
+        self.fire_orders: dict[str, dict] = saved.get("fire_orders", {})
         self.destroyed: dict[str, float] = saved.get("destroyed", {})
         self.vehicles: dict[str, dict] = saved.get("vehicles") or {
             vehicle["id"]: {"id": vehicle["id"], "key": vehicle["id"], "name": vehicle["name"], "at": vehicle["at"],
@@ -155,13 +156,15 @@ class Runtime:
         if kind == "killed":
             self._kill(event)
             return
-        if kind not in ("cmd_tick", "cmd_report", "cmd_truth"):
+        if kind not in ("cmd_tick", "cmd_report", "cmd_truth", "cmd_impact"):
             return
         self.mission_t, self.seen_at = float(event.get("t", 0)), self.wall()
         if kind == "cmd_report":
             self._packet(event)
         elif kind == "cmd_truth":
             self._truth(event)
+        elif kind == "cmd_impact":
+            self._impact(event)
         self.dirty = True
 
     def _vehicle_id(self, key: str) -> str:
@@ -270,7 +273,7 @@ class Runtime:
         self.packets[callsign] = packet
         if self.t0 is None or self.ended:
             return
-        tracker = self.trackers.setdefault(callsign, Tracker())
+        tracker = self._tracker(callsign)
         said = tracker.update(packet, self.routes.get(callsign), packet["t"], self.buildings)
         in_combat = tracker.in_combat(packet, packet["t"])
         for report in said:
@@ -295,6 +298,31 @@ class Runtime:
         if self.t0 is None or self.restarted or rel < 0:
             return False
         return self.ended_at is None or rel <= self.ended_at + RECORD_AFTER_END_S
+
+    def _tracker(self, callsign: str) -> Tracker:
+        if callsign not in self.trackers:
+            self.trackers[callsign] = Tracker(spotter=self.scenario.stations[callsign].get("spotter", False))
+        return self.trackers[callsign]
+
+    def _impact(self, event: dict) -> None:
+        """A real shell landed. What each station makes of it comes out in its reports, and the truth of it goes only to
+        the review."""
+        t = float(event.get("t", 0))
+        if not self._in_battle(t):
+            return
+        order = self.fire_orders.get(event.get("order") or "") or {}
+        ammo, pos = event.get("ammo") or "", event.get("pos")
+        self.records.shell({"t": round(self.rel(t), 1), "order": event.get("order") or None, "gun": event.get("gun"),
+                            "side": event.get("side"), "ammo": ammo, "pos": pos, "aim": order.get("aim"),
+                            "heard": event.get("heard")})
+        if self.t0 is None or self.ended:
+            return
+        for callsign, distance, dx, dy, seen in event.get("heard") or []:
+            if callsign in self.scenario.stations:
+                self._tracker(callsign).impacts.append({
+                    "t": t, "pos": pos, "ammo": ammo, "distance": distance, "dx": dx, "dy": dy, "seen": seen,
+                    "order": event.get("order") or "", "aim": order.get("aim"),
+                    "observer": order.get("observer") == callsign})
 
     def _truth(self, event: dict) -> None:
         if not self._in_battle(float(event.get("t", 0))):
@@ -536,7 +564,7 @@ class Runtime:
         self.records.save_state({
             "t0": self.t0, "turn": self.turn, "cursor": self.cursor, "delivered": self.delivered,
             "ended": self.ended, "ended_at": self.ended_at, "restarted": self.restarted, "outbox": self.outbox,
-            "destroyed": self.destroyed, "vehicles": self.vehicles,
+            "destroyed": self.destroyed, "vehicles": self.vehicles, "fire_orders": self.fire_orders,
             "success_at": self.success_at, "success_reason": self.success_reason,
             "next_id": self.next_id, "routes": self.routes, "schedules": self.schedules, "missed": self.missed,
             "markers": self.markers, "checked": self.checked, "last_checkin": self.last_checkin,
@@ -591,6 +619,7 @@ class Runtime:
                 heard = self.last_heard.get(station["callsign"])
                 stations.append({"callsign": station["callsign"], "role": station["role"],
                                  "capabilities": station["capabilities"],
+                                 "corrects_fire": station.get("spotter", False),
                                  "last_heard": _ago(self.now() - heard) if heard is not None else "not yet"})
             return {"stations": stations}
 
@@ -628,6 +657,7 @@ class Runtime:
         self._log_radio("HQ", callsign, f"{order_id}: {_order_words(request)}{suffix}", "order")
         self.records.append("orders", {"id": order_id, "t": round(self.rel(), 1), "request": request, "via": via})
         if mode == "fire":
+            self.fire_orders[order_id] = {"aim": checked["mission"]["aim"], "observer": checked["mission"]["observer"]}
             # What it believed when it fired, so a review can tell the fog from a bug if this kills its own men.
             self.records.append("fire_missions", {
                 "id": order_id, "t": round(self.rel(), 1), "by": callsign, **checked["mission"],

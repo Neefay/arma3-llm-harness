@@ -424,6 +424,53 @@ def play_fire(client: Client) -> list[str]:
     fired = 16 - int(left.split("V1: ")[1].split(" HE")[0])
     assert 1 <= fired < 8, left
 
+    # The engine's hidden target at each aim point is nobody's enemy.
+    assert not [text for text in log if "Contact" in text], log
+
+    # What other stations make of it. Bravo is 200 m from everything so far, and has been hearing it.
+    assert not [text for text in log if "Under indirect fire" in text], log
+    assert [text for text in log if "Explosions to the west, roughly 200 metres" in text], log
+    assert [text for text in log if "Splash seen, grid 028 020, about 200 m east of us." in text], log
+
+    # An assigned observer, and a round close enough to Bravo to be its problem.
+    result = client.request("tools/call", {"name": "commander_order", "arguments": {
+        "to": "Hammer", "legs": [{"type": "FIRE_MISSION", "at": "028 020", "observer": "Bravo"}]}})
+    assert result.get("isError") and "isn't trained" in result["content"][0]["text"], result
+    time.sleep(35)  # let the dust of the checked mission settle
+    fire(at="028 020", rounds=1, observer="Recon")
+    text = hear("seen.", 90)
+    assert "of your grid. 1 round seen." in text or "Splash on your grid" in text, text[-500:]
+    fire(at="0298 0205", rounds=1)
+    hear("Under indirect fire, explosions about", 90)
+
+    # Smoke is seen land too, and isn't called incoming.
+    time.sleep(15)
+    fire(at="028 020", ammo="SMOKE", rounds=1, observer="Recon")
+    assert "1 round seen." in hear("seen.", 90)
+
+    # Against the enemy it can see. Recon keeps sight of a man, and calls the round against where it thinks he is.
+    time.sleep(15)
+    in_game(harness, """
+    private _group = createGroup [east, true];
+    private _man = _group createUnit ["O_Soldier_F", [2800, 2050, 0], [], 0, "CAN_COLLIDE"];
+    _man disableAI "ALL";
+    _man allowDamage false;
+    [_man] spawn {
+    	params ["_man"];
+    	while {
+    		alive _man
+    	} do {
+    		(brmh_cmd_stations get "Recon") reveal [_man, 4];
+    		sleep 2;
+    	};
+    };
+    true
+    """)
+    hear("Contact", 40)
+    fire(at="0282 0205", rounds=1, observer="Recon")
+    text = hear("seen.", 90)
+    assert "of the enemy. 1 round seen." in text or "Splash on the enemy" in text, text[-500:]
+
     # The fourth silent failure: a Scorcher that says it can reach, and doesn't fire.
     fire(to="Anvil", at="040 050", rounds=2)
     text = hear("Unable, can't lay on that target.", 60)
@@ -435,8 +482,6 @@ def play_fire(client: Client) -> list[str]:
     hear("Unable, no gun crewed.", 30)
     fire(at="028 020", rounds=1, guns=["V1"])
     hear("Unable, no gunner on V1.", 30)
-    # The engine's hidden target at each aim point is nobody's enemy.
-    assert not [text for text in log if "Contact" in text], log
     return log
 
 

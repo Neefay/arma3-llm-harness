@@ -1406,7 +1406,8 @@ def test_the_runtime_sends_the_games_key_and_reports_the_commanders_id(tmp_path)
     assert "U7" not in " ".join(said_by(b)) and "On V2" in b.runtime.ask("Alpha", ["vehicles"])["replies"][0]["text"]
 
 
-FIRING = {"Hammer": {"capabilities": ["FIRE_MISSION", "CHECK_FIRE"]}, "Recon": {"capabilities": ["MOVE"]}}
+FIRING = {"Hammer": {"capabilities": ["FIRE_MISSION", "CHECK_FIRE"]},
+          "Recon": {"capabilities": ["MOVE"], "spotter": True}}
 
 
 def fire(**leg) -> dict:
@@ -1439,6 +1440,7 @@ def test_a_fire_mission_cant_be_called_on_a_token(at):
     ({"rounds": True}, "rounds must be"),
     ({"radius": 151}, "radius"),
     ({"observer": "Nobody"}, "Unknown observer"),
+    ({"observer": "Hammer"}, "isn't trained"),
     ({"guns": ["V9"]}, "vehicle list"),
 ])
 def test_bad_fire_missions_are_refused(leg, words):
@@ -1580,7 +1582,7 @@ def test_the_squads_gun_ammo_comes_with_its_own():
 
 def gunnery(tmp_path) -> Battle:
     capabilities = ["MOVE", "FIRE_MISSION", "CHECK_FIRE"]
-    station = {"callsign": "Alpha", "role": "x", "capabilities": capabilities, "at": "030 030"}
+    station = {"callsign": "Alpha", "role": "x", "capabilities": capabilities, "at": "030 030", "spotter": True}
     b = Battle(tmp_path, stations=[station])
     b.runtime = Runtime(b.game, b.scenario, b.records, lambda text, meta: b.wakes.append((text, meta)), world_size=8192,
                         clock=lambda: b.wall, vehicles=[{"id": "V1", "name": "Mk6 Mortar", "at": "030 030"}])
@@ -1629,6 +1631,162 @@ def test_a_marker_can_hold_a_commanders_eight_figure_working(tmp_path):
     assert b.runtime.map_image(center="E1", radius=100)["png"].startswith(b"\x89PNG")
     b.runtime.order({"to": "Alpha", "legs": [{"type": "MOVE", "at": "E1"}]})
     assert b.game.calls[-1][1][3][0][1] == [4125.0, 4155.0]
+
+
+def land(b, t, pos=(3050, 3350), distance=300, dx=0, dy=300, seen=False, order="", who="Alpha", ammo="Sh_82mm_AMOS"):
+    b.t = t
+    b.game.emit(type="cmd_impact", t=t, pos=list(pos), gun="V1", order=order, side="WEST", ammo=ammo,
+                heard=[[who, distance, dx, dy, seen]])
+
+
+def spotting(tmp_path, spotter=True) -> Battle:
+    capabilities = ["MOVE", "FIRE_MISSION", "CHECK_FIRE"]
+    station = {"callsign": "Alpha", "role": "x", "capabilities": capabilities, "at": "030 030", "spotter": spotter}
+    b = Battle(tmp_path, stations=[station])
+    b.start()
+    b.runtime.end_turn("x", messages_only=True)
+    return b
+
+
+def latest(b) -> list[str]:
+    return [row["text"] for row in b.records.read("radio") if row["from"] != "HQ"]
+
+
+def test_shells_close_by_are_under_fire_once_per_burst(tmp_path):
+    b = spotting(tmp_path, spotter=False)
+    land(b, 102, distance=52, dx=0, dy=52)
+    b.advance(102)
+    land(b, 104, distance=30, dx=30, dy=0)
+    b.advance(104)
+    assert b.runtime._in_combat("Alpha")  # shells landing move nothing else the engine measures
+    b.advance(120)
+    land(b, 150, distance=60, dx=-60, dy=0)  # long enough to be a new burst
+    b.advance(150)
+    b.advance(190)
+    said = latest(b)
+    assert said == ["Under indirect fire, explosions about 50 m north.",
+                    "Under indirect fire, explosions about 60 m west."]
+    assert not b.runtime._in_combat("Alpha")  # and it's over, 40 s on
+
+
+def test_shells_further_off_are_mentioned_at_most_once_a_minute(tmp_path):
+    b = spotting(tmp_path, spotter=False)
+    land(b, 102, distance=210, dx=0, dy=-210)
+    b.advance(102)
+    land(b, 120, distance=210, dx=0, dy=-210)
+    b.advance(120)
+    land(b, 170, distance=390, dx=390, dy=0)
+    b.advance(170)
+    assert latest(b) == ["Explosions to the south, roughly 200 metres.", "Explosions to the east, roughly 400 metres."]
+    assert not b.runtime._in_combat("Alpha")
+
+
+def test_shells_further_than_earshot_and_smoke_say_nothing(tmp_path):
+    b = spotting(tmp_path, spotter=False)
+    land(b, 102, distance=420, dx=0, dy=420)
+    land(b, 103, distance=40, dx=0, dy=40, ammo="Smoke_82mm_AMOS_White")
+    b.advance(103)
+    b.advance(120)
+    assert latest(b) == [] and not b.runtime._in_combat("Alpha")
+
+
+def test_nobody_says_whose_shells_they_were(tmp_path):
+    b = spotting(tmp_path, spotter=False)
+    b.runtime.order({"to": "Alpha", "legs": [{"type": "FIRE_MISSION", "at": "030 030"}]})
+    land(b, 102, distance=40, order="O-0001")
+    b.advance(102, order="O-0001")
+    b.advance(150, order="O-0001")
+    for words in latest(b):
+        assert "friendly" not in words.lower() and "our" not in words.lower().split()
+
+
+def test_a_commanders_observer_calls_the_fall_of_shot_against_the_grid(tmp_path):
+    b = spotting(tmp_path)
+    b.runtime.order({"to": "Alpha", "legs": [{"type": "FIRE_MISSION", "at": "030 030", "observer": "Alpha"}]})
+    b.advance(102, order="O-0001")
+    land(b, 110, pos=(3112, 3027), order="O-0001", seen=True)
+    land(b, 112, pos=(3088, 3033), order="O-0001", seen=True)
+    land(b, 113, pos=(3400, 3400), order="O-0001", seen=False)  # lost in the dust of the others
+    b.advance(114, order="O-0001")
+    assert not [w for w in latest(b) if "Splash" in w]
+    b.advance(118, order="O-0001")
+    assert "Splash 20 m south, 50 m east of your grid. 2 rounds seen." in latest(b)
+
+
+def test_an_observer_calls_against_the_enemy_it_can_see(tmp_path):
+    b = spotting(tmp_path)
+    b.runtime.order({"to": "Alpha", "legs": [{"type": "FIRE_MISSION", "at": "030 030", "observer": "Alpha"}]})
+    land(b, 110, pos=(3150, 3240), order="O-0001", seen=True)
+    near, far = contact(3120, 3200), contact(2000, 2000)
+    b.advance(115, order="O-0001", contacts=[far, near])
+    b.advance(200, order="O-0001", contacts=[])
+    assert "Splash 40 m north, 30 m east of the enemy. 1 round seen." in latest(b)
+
+
+def test_an_observer_can_be_dead_on(tmp_path):
+    b = spotting(tmp_path)
+    b.runtime.order({"to": "Alpha", "legs": [{"type": "FIRE_MISSION", "at": "030 030", "observer": "Alpha"}]})
+    land(b, 110, pos=(3052, 3047), order="O-0001", seen=True)
+    b.advance(115, order="O-0001")
+    assert "Splash on your grid. 1 round seen." in latest(b)
+
+
+def test_offsets_are_called_by_eye():
+    assert [reports._offset(m) for m in (4, 6, 94, 96, 122, 138, -67)] == [0, 10, 90, 100, 100, 150, 70]
+
+
+def test_an_observer_with_no_view_says_so_once(tmp_path):
+    b = spotting(tmp_path)
+    b.runtime.order({"to": "Alpha", "legs": [{"type": "FIRE_MISSION", "at": "030 030", "observer": "Alpha"}]})
+    land(b, 110, order="O-0001", distance=900, seen=False)
+    b.advance(115, order="O-0001")
+    land(b, 130, order="O-0001", distance=900, seen=False)
+    b.advance(135, order="O-0001")
+    assert latest(b).count("Can't observe. No view of the fall of shot.") == 1
+
+
+def test_a_spotter_not_assigned_says_what_it_saw(tmp_path):
+    b = spotting(tmp_path)
+    land(b, 110, pos=(3160, 3370), distance=340, dx=110, dy=320, seen=True)
+    b.advance(111)
+    assert latest(b) == []  # it won't say "explosions" as well
+    b.advance(115)
+    assert latest(b) == ["Splash seen, grid 031 033, about 350 m north of us."]
+
+
+def test_only_a_spotter_reports_where_a_round_fell(tmp_path):
+    b = spotting(tmp_path, spotter=False)
+    land(b, 110, distance=340, dx=0, dy=340, seen=True)
+    b.advance(111)
+    b.advance(120)
+    assert latest(b) == ["Explosions to the north, roughly 350 metres."]
+
+
+def test_shells_land_in_the_truth_not_on_the_radio(tmp_path):
+    b = spotting(tmp_path)
+    b.runtime.order({"to": "Alpha", "legs": [{"type": "FIRE_MISSION", "at": "030 030", "observer": "Alpha"}]})
+    land(b, 110, pos=(3112, 3027), order="O-0001", seen=True)
+    b.advance(115, order="O-0001")
+    row = b.records.read_shells()[0]
+    assert row["pos"] == [3112, 3027] and row["aim"] == [3050.0, 3050.0] and row["order"] == "O-0001"
+    assert row["gun"] == "V1" and row["t"] == 110 - b.runtime.t0 and row["heard"][0][0] == "Alpha"
+    assert "Sh_82mm" not in json.dumps(b.records.read("radio"))
+
+
+def test_the_roster_says_who_can_correct_fire(tmp_path):
+    assert spotting(tmp_path).runtime.roster()["stations"][0]["corrects_fire"] is True
+
+
+def test_impact_reports_survive_a_restart_of_the_host(tmp_path):
+    b = spotting(tmp_path)
+    b.runtime.order({"to": "Alpha", "legs": [{"type": "FIRE_MISSION", "at": "030 030", "observer": "Alpha"}]})
+    land(b, 110, order="O-0001", pos=(3050, 3050), seen=True)
+    b.advance(111, order="O-0001")
+    b.runtime.save()
+    b.runtime = b.new_runtime()
+    assert b.runtime.trackers["Alpha"].spotter is True and b.runtime.fire_orders["O-0001"]["observer"] == "Alpha"
+    b.advance(116, order="O-0001")
+    assert "Splash on your grid. 1 round seen." in latest(b)
 
 
 def in_the_fight(tmp_path) -> Battle:

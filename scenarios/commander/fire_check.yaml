@@ -20,6 +20,17 @@ stations:
     at: "020 051"
     units: 2
     crew: { V2: gunner }
+  - callsign: Recon
+    role: forward observers
+    capabilities: [MOVE]
+    at: "026 020"
+    units: 2
+    spotter: true
+  - callsign: Bravo
+    role: infantry squad near the target
+    capabilities: [MOVE]
+    at: "030 020"
+    units: 4
   - callsign: Alpha
     role: infantry squad, with no gun
     capabilities: [MOVE, FIRE_MISSION, CHECK_FIRE]
