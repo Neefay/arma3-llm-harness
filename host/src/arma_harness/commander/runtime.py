@@ -12,6 +12,7 @@ import time
 from dataclasses import asdict
 from typing import Protocol
 
+from . import map as map_mod
 from . import orders as orders_mod
 from . import reports
 from .orders import Invalid, format_time, parse_grid, parse_time
@@ -45,9 +46,10 @@ class Game(Protocol):
 
 class Runtime:
     def __init__(self, game: Game, scenario: Scenario, records: Records, deliver, world_size: float = 0,
-                 clock=time.monotonic):
+                 clock=time.monotonic, buildings: list[dict] | None = None):
         self.game, self.scenario, self.records, self.deliver = game, scenario, records, deliver
         self.world_size = world_size
+        self.buildings = buildings or []
         self.wall = clock
         self.lock = threading.RLock()
         self.mission_t: float | None = None
@@ -68,6 +70,8 @@ class Runtime:
         self.next_id: dict[str, int] = saved.get("next_id", {})
         self.schedules: dict[str, dict] = saved.get("schedules", {})
         self.missed: dict[str, int] = saved.get("missed", {})
+        self.checked: dict[str, float] = saved.get("checked", {})
+        self.last_checkin: dict[str, str] = saved.get("last_checkin", {})
         self.markers: dict[str, dict] = saved.get("markers", {
             m["id"]: {"id": m["id"], "kind": m.get("kind", "note"), "at": m["at"], "label": m.get("label", ""),
                       "confidence": "", "sources": [], "expires": None, "t": None}
@@ -159,13 +163,16 @@ class Runtime:
             return
         packet = {key: event.get(key) for key in (
             "callsign", "pos", "grid", "dir", "speed", "alive", "wounded", "baseline", "leader", "rounds",
-            "rounds_baseline", "behaviour", "combat_mode", "order", "unable", "leg", "legs", "clearing", "contacts")}
+            "rounds_baseline", "behaviour", "combat_mode", "order", "unable", "leg", "legs", "clearing", "cleared",
+            "placed", "contacts")}
         packet["t"] = float(event.get("t", 0))
         self.packets[callsign] = packet
         if self.t0 is None or self.ended:
             return
         tracker = self.trackers.setdefault(callsign, Tracker())
-        for report in tracker.update(packet, self.routes.get(callsign), packet["t"]):
+        for report in tracker.update(packet, self.routes.get(callsign), packet["t"], self.buildings):
+            if report.checked:
+                self.checked[report.checked] = packet["t"]
             self._say(callsign, report.text, report.precedence, report.grid, packet["t"])
 
     def _truth(self, event: dict) -> None:
@@ -331,6 +338,10 @@ class Runtime:
             when = f"last heard {_ago(self.now() - heard)}" if heard is not None else "not heard yet"
             lines.append(f"{callsign}  {when}")
         lines += self._map_lines()
+        if self.checked:
+            lines += ["", "BUILDINGS CHECKED"]
+            lines += ["  ".join(f"{building} {_ago(self.now() - t).replace(' ago', '')}"
+                                for building, t in sorted(self.checked.items(), key=lambda item: item[1]))]
         if self.schedules:
             lines += ["", "SCHEDULED"]
             for entry in sorted(self.schedules.values(), key=lambda e: e["due"]):
@@ -383,7 +394,7 @@ class Runtime:
             "t0": self.t0, "turn": self.turn, "cursor": self.cursor, "delivered": self.delivered,
             "ended": self.ended, "success_at": self.success_at, "success_reason": self.success_reason,
             "next_id": self.next_id, "routes": self.routes, "schedules": self.schedules, "missed": self.missed,
-            "markers": self.markers,
+            "markers": self.markers, "checked": self.checked, "last_checkin": self.last_checkin,
             "last_heard": self.last_heard,
             "positions": self.positions, "events_done": self.events_done, "turn_row": self.turn_row,
             "trackers": {k: asdict(v) for k, v in self.trackers.items()}, "wake": asdict(self.wake),
@@ -421,6 +432,8 @@ class Runtime:
                 "roster": self.roster()["stations"],
                 "markers": [{"id": m["id"], "kind": m["kind"], "label": m.get("label"), "at": m["at"]}
                             for m in self.markers.values()],
+                "buildings": [{"id": b["id"], "type": b["name"], "grid": b["at"], "positions": b["positions"]}
+                              for b in self.buildings],
                 "ended": self.ended or None,
             }
 
@@ -443,7 +456,7 @@ class Runtime:
             return {"order": order_id, "sent": True}
 
     def _send_order(self, request: dict, via: str = "") -> str:
-        checked = orders_mod.validate(request, self.scenario.stations, self.markers, self.world_size)
+        checked = orders_mod.validate(request, self.scenario.stations, self.markers, self.world_size, self.buildings)
         order_id = self._id("O")
         callsign = checked["to"]
         previous = self.routes.get(callsign)
@@ -480,7 +493,7 @@ class Runtime:
         if packet is None or self.now() - packet["t"] > PACKET_FRESH_S:
             return None, None
         grid = format_grid(packet["grid"]) if topics is None or "position" in topics else None
-        return reports.answer(packet, self.routes.get(callsign), topics), grid
+        return reports.answer(packet, self.routes.get(callsign), topics, self.buildings), grid
 
     def ask(self, to: str, topics: list[str] | None = None) -> dict:
         with self.lock:
@@ -527,7 +540,7 @@ class Runtime:
             if kind == "wake" and not isinstance(what, str):
                 raise Invalid('A wake needs a note: {"wake": "why you want to wake"}.')
             if kind == "order":
-                orders_mod.validate(what, self.scenario.stations, self.markers, self.world_size)
+                orders_mod.validate(what, self.scenario.stations, self.markers, self.world_size, self.buildings)
             if kind == "ask":
                 self._ask_targets(what.get("to"), what.get("topics"))
             base = self.t0 or 0.0
@@ -568,7 +581,12 @@ class Runtime:
                 # Silence wakes nobody: it waits in the next briefing, under OVERDUE.
                 self._log_radio(callsign, "HQ", "No answer.", "no_answer")
                 self.missed[callsign] = self.missed.get(callsign, 0) + 1
+            elif self.last_checkin.get(f"{entry['id']}:{callsign}") == text:
+                # Nothing has changed, so it isn't worth a turn: the check-in still counts as being heard.
+                self._log_radio(callsign, "HQ", text, "checkin_unchanged")
+                self._heard(callsign, grid, self.now())
             else:
+                self.last_checkin[f"{entry['id']}:{callsign}"] = text
                 self._say(callsign, text, reports.ROUTINE, grid, self.now())
 
     def _advance(self, entry: dict | None) -> None:
@@ -602,6 +620,8 @@ class Runtime:
             marker_id = args.get("id")
             if marker_id is not None and not re.fullmatch(r"[A-Za-z0-9_-]{1,16}", str(marker_id)):
                 raise Invalid("A marker id is up to 16 letters, digits, - or _.")
+            if any(building["id"] == marker_id for building in self.buildings):
+                raise Invalid(f"{marker_id} is a building's id. Choose another for this marker.")
             existing = self.markers.get(marker_id, {})
             if not existing and not args.get("at"):
                 raise Invalid("A new marker needs at: a grid, or a list of grids for a line or area.")
@@ -646,6 +666,30 @@ class Runtime:
             self.dirty = True
             self.save()
             return {"ended": True, "mission_over": bool(self.ended)}
+
+    def map_image(self, center=None, radius=None) -> dict:
+        """The commander's map as a picture: what it has been told, and nothing else."""
+        with self.lock:
+            self._require_started()
+            ao = self.scenario.ao
+            if center:
+                known = {building["id"]: building for building in self.buildings}
+                place, _ = orders_mod.resolve_place(center, {**self.markers, **known}, self.world_size)
+            elif ao:
+                place = parse_grid(ao["at"], self.world_size)[0]
+            else:
+                place = [self.world_size / 2, self.world_size / 2]
+            size = float(radius or (ao or {}).get("radius", 500))
+            if not 50 <= size <= 5000:
+                raise Invalid("radius must be between 50 and 5000 metres.")
+            positions = {callsign: {"grid": place_["grid"], "age": _ago(self.now() - place_["t"])}
+                         for callsign, place_ in self.positions.items()}
+            caption = (f"{format_time(self.rel())}. Your beliefs and last reports, not live. Green: buildings checked. "
+                       f"Grid lines every {100 if size <= 800 else 500 if size <= 3000 else 1000} m.")
+            png = map_mod.render(place, size, self.buildings, list(self.markers.values()), positions, self.checked,
+                                 caption)
+            self._used()
+            return {"png": png, "text": caption}
 
     def brief(self) -> dict:
         with self.lock:

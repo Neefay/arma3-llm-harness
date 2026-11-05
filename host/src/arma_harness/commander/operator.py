@@ -90,11 +90,12 @@ def start(path: str, mode: str | None = None, harness: Harness | None = None, wa
                        "call brmh_cmd_fnc_enroll", "server", timeout=10,
                        args=[station["callsign"], scenario.side, station["units"], station["class"], at]))
     _spawn_enemies(h, scenario, world_size)
+    buildings = _list_buildings(h, scenario, world_size)
     attempt = _next_attempt(h.home, state.run_id)
     records_folder = h.home.runs / state.run_id / f"commander-{attempt}" / scenario.side
     records_folder.mkdir(parents=True, exist_ok=True)
     current = {"run": state.run_id, "attempt": attempt, "folder": str(records_folder), "scenario": raw,
-               "world_size": world_size}
+               "world_size": world_size, "buildings": buildings}
     _current_file(h.home).write_text(json.dumps(current, indent=2), encoding="utf-8")
     workspace = write_workspace(h.home)
     observer = None
@@ -104,6 +105,21 @@ def start(path: str, mode: str | None = None, harness: Harness | None = None, wa
             "attempt": attempt,
             "records": str(records_folder), "workspace": str(workspace), "launch": launch_command(workspace),
             "then": 'Accept the prompts, then type: start'}
+
+
+def _list_buildings(h: Harness, scenario: scenario_mod.Scenario, world_size: float) -> list[dict]:
+    """Numbers the enterable buildings in the area of operations, west to east. This is map knowledge: which
+    buildings exist, never who's in them."""
+    if not scenario.ao:
+        return []
+    at, _ = parse_grid(scenario.ao["at"], world_size)
+    _wait_for_buildings(h, at, scenario.ao["radius"])
+    rows = _result(h.exec("_this call brmh_cmd_fnc_listBuildings", "server", timeout=15,
+                          args=[at, scenario.ao["radius"]]))
+    rows = sorted(rows, key=lambda row: (round(row[0] / 50), row[1]))
+    return [{"id": f"B{index}", "pos": [row[0], row[1]], "at": f"{row[2][:3]} {row[2][3:]}", "name": row[3],
+             "positions": row[4], "width": row[5], "length": row[6], "dir": row[7]}
+            for index, row in enumerate(rows, start=1)]
 
 
 def _spawn_enemies(h: Harness, scenario: scenario_mod.Scenario, world_size: float) -> None:
@@ -173,7 +189,7 @@ def load_current(deliver) -> Runtime:
         raise HarnessError("no commander scenario is set up: run arma-harness commander start <scenario>")
     current = json.loads(file.read_text(encoding="utf-8"))
     return Runtime(HarnessGame(h), scenario_mod.build(current["scenario"]), Records(Path(current["folder"])), deliver,
-                   world_size=current["world_size"])
+                   world_size=current["world_size"], buildings=current.get("buildings"))
 
 
 def _load_records(home: Home) -> tuple[dict, Records]:

@@ -5,6 +5,7 @@ Keep TOOLS the complete list: a test fails if anything else appears. Errors here
 """
 from __future__ import annotations
 
+import base64
 import contextlib
 import json
 import sys
@@ -19,15 +20,21 @@ from .orders import Invalid
 # Delivered by the server, not as a CLAUDE.md: the tool lockdown denies Read, which also stops the client loading one.
 DOCTRINE = resources.files("arma_harness.commander").joinpath("doctrine.md").read_text(encoding="utf-8")
 
+ORDER_TYPES_HELP = (
+    "MOVE. HOLD: go there and stay. SEARCH: fight what's noticed in an area, without entering buildings. CLEAR: go "
+    "through the given buildings position by position. OCCUPY: move into a building and hold it. CORDON: spread out in "
+    "a ring around a place, radius default 30 m, and watch it. ATTACK: slow combat advance on a place. DEFEND: "
+    "garrison buildings around a place and hold. PATROL_AREA: patrol randomly around a place. SWEEP: search randomly, "
+    "including some buildings, until replaced. SENTRY: wait at a place until enemies appear, then continue. PATROL: "
+    "repeat a route. HALT. POSTURE: change settings only. The last six of the single-place orders run until replaced. "
+    "Each stands alone in an order, except MOVE, HOLD, SEARCH and SENTRY, which can be chained.")
 _STRING = {"type": "string"}
 _LEG = {
     "type": "object",
     "properties": {
-        "type": {"type": "string", "description": "MOVE, HOLD, SEARCH (engage what's noticed in an area, "
-                                                "without entering buildings), CLEAR (go through every building "
-                                                "within radius, default 100 m, at most 300 m, on its own), SENTRY, "
-                                                "PATROL, HALT or POSTURE"},
-        "at": {"description": "Grid such as '034 030', or a marker id. For PATROL, a list of them."},
+        "type": {"type": "string", "description": ORDER_TYPES_HELP},
+        "at": {"description": "Grid such as '034 030', a marker id, or a building id such as 'B3'. For PATROL, a "
+                              "list of them. For CLEAR, a list of building ids, or a place plus radius."},
         "radius": {"type": "number", "description": "Metres around the point"},
         "completion": {"type": "number", "description": "How close counts as arrived, in metres"},
         "hold_for": {"type": "string", "description": "Time to wait at the point, such as 1:30"},
@@ -84,6 +91,13 @@ TOOLS = [
     {"name": "commander_end_turn", "description": "End your turn, with a short note. Refused when no wake is set, "
      "unless messages_only is true, which means you'll wake only for incoming messages.", "inputSchema": {
         "type": "object", "properties": {"note": _STRING, "messages_only": {"type": "boolean"}}}},
+    {"name": "commander_map", "description": "A picture of your map: buildings with their ids, your markers and each "
+     "station's last reported position. It shows your beliefs and last reports, not the live battle. Use it for "
+     "geometry, such as routes and cordons. Your markers are already listed in every briefing as text.",
+     "inputSchema": {
+        "type": "object", "properties": {"center": {"type": "string", "description": "Grid, marker or building id. "
+                                                                                    "Default: the whole area"},
+                                         "radius": {"type": "number", "description": "Metres, 50 to 5000"}}}},
     {"name": "commander_brief", "description": "The current briefing, for catching up after losing track or resuming "
      "a session.", "inputSchema": {"type": "object", "properties": {}}},
     {"name": "commander_notes", "description": "Replace your notes, included in every briefing. Keep your plan and "
@@ -146,6 +160,8 @@ class Server:
             case "commander_schedule":
                 return runtime.schedule(args.get("do"), args.get("after"), args.get("at"), args.get("every"),
                                         args.get("count"), args.get("until"))
+            case "commander_map":
+                return runtime.map_image(args.get("center"), args.get("radius"))
             case "commander_mark":
                 return runtime.mark(args)
             case "commander_unmark":
@@ -167,6 +183,11 @@ class Server:
         is_error = False
         try:
             result = self.call(name, params.get("arguments") or {})
+            if name == "commander_map":
+                content = [{"type": "image", "data": base64.b64encode(result["png"]).decode(), "mimeType": "image/png"},
+                           {"type": "text", "text": result["text"]}]
+                self.send({"jsonrpc": "2.0", "id": request["id"], "result": {"content": content, "isError": False}})
+                return
             text = result.get("briefing") if name == "commander_brief" else json.dumps(result, ensure_ascii=False)
         except Invalid as exc:
             text, is_error = str(exc), True

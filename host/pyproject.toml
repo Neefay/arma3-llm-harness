@@ -9,6 +9,7 @@ description = "Drive and observe Arma 3 from tools and LLM agents (MCP): headles
 requires-python = ">=3.11"
 dependencies = [
     "mcp>=2.3,<3",
+    "pillow>=10.1",
     "psutil>=6",
     "pyyaml>=6",
 ]

@@ -23,7 +23,14 @@ STUCK_AFTER_S = 120
 STUCK_REPEAT_S = 180
 STUCK_MIN_M = 20
 ON_STATION_M = 30
+NEAR_BUILDING_M = 25
 DEFAULT_TOPICS = ["position", "task", "strength", "ammo", "contacts"]
+PLACING_ORDERS = {"OCCUPY", "CORDON"}
+TASK_ORDERS = {"ATTACK", "DEFEND", "PATROL_AREA", "SWEEP"}  # CBA tasks: they run until replaced, with no end to report
+SINGLE_LEG_ORDERS = {"CLEAR"} | PLACING_ORDERS | TASK_ORDERS
+LEG_VERBS = {"HOLD": "holding at", "SENTRY": "watching at", "SEARCH": "searching around", "OCCUPY": "occupying",
+             "CORDON": "setting a cordon around", "ATTACK": "attacking", "DEFEND": "defending",
+             "PATROL_AREA": "patrolling around", "SWEEP": "sweeping around"}
 
 
 def format_grid(grid: str) -> str:
@@ -81,24 +88,38 @@ def contact_groups(packet: dict, max_age: float = CONTACT_FORGOTTEN_S) -> list[d
         dx, dy = contact["pos"][0] - x, contact["pos"][1] - y
         direction = compass(dx, dy)
         entry = groups.setdefault(direction, {"direction": direction, "count": 0, "kinds": {}, "range": math.inf,
-                                              "age_s": math.inf})
+                                              "age_s": math.inf, "nearest": contact["pos"]})
         entry["count"] += 1
         entry["kinds"][contact["kind"]] = entry["kinds"].get(contact["kind"], 0) + 1
+        if math.hypot(dx, dy) < entry["range"]:
+            entry["nearest"] = contact["pos"]
         entry["range"] = min(entry["range"], math.hypot(dx, dy))
         entry["age_s"] = min(entry["age_s"], contact["age_s"])
     return sorted(groups.values(), key=lambda g: g["age_s"])
 
 
-def contact_phrase(group: dict) -> str:
+def contact_phrase(group: dict, buildings: list[dict] | None = None) -> str:
     kind = max(group["kinds"], key=group["kinds"].get)
     label = ("contact" if group["count"] == 1 else "contacts") if kind == "unknown" else kind
-    return f"{count_word(group['count'])} {label}, {group['direction']}, {rough_range(group['range'])}"
+    words = f"{count_word(group['count'])} {label}, {group['direction']}, {rough_range(group['range'])}"
+    nearby = _nearest_building(group.get("nearest"), buildings)
+    return f"{words}, near {nearby}" if nearby else words
+
+
+def _nearest_building(pos: list[float] | None, buildings: list[dict] | None) -> str | None:
+    """The numbered building the group believes a contact is at, from its own perceived position."""
+    if not pos or not buildings:
+        return None
+    best = min(buildings, key=lambda b: math.dist(b["pos"], pos))
+    return best["id"] if math.dist(best["pos"], pos) <= NEAR_BUILDING_M else None
 
 
 def remaining_distance(packet: dict, route: dict | None) -> float:
     """Metres left on the route, walking from here through the legs not yet reached."""
     if not route:
         return 0.0
+    if route["legs"] and route["legs"][0]["type"] in SINGLE_LEG_ORDERS:
+        return math.dist(packet["pos"], route["legs"][0]["pos"])
     points = [leg["pos"] for leg in route["legs"][packet.get("leg", 0):]]
     total, here = 0.0, packet["pos"]
     for point in points:
@@ -110,11 +131,14 @@ def remaining_distance(packet: dict, route: dict | None) -> float:
 def _current_leg(packet: dict, route: dict | None) -> dict | None:
     if not route or not route["legs"]:
         return None
+    if route["legs"][0]["type"] in SINGLE_LEG_ORDERS:  # these don't count waypoints the way a route does
+        return route["legs"][0]
     leg = packet.get("leg", 0)
     return route["legs"][leg] if 0 <= leg < len(route["legs"]) else None
 
 
-def answer(packet: dict, route: dict | None, topics: list[str] | None = None) -> str:
+def answer(packet: dict, route: dict | None, topics: list[str] | None = None,
+           buildings: list[dict] | None = None) -> str:
     """Words for a general SITREP or a specific question, from the group's latest packet."""
     parts = []
     for topic in topics or DEFAULT_TOPICS:
@@ -135,13 +159,17 @@ def answer(packet: dict, route: dict | None, topics: list[str] | None = None) ->
                 parts.append(f"Ammo {band}, {_AMMO_WORDS[band]}.")
             case "contacts":
                 groups = contact_groups(packet)
-                parts.append(" ".join(f"{contact_phrase(g).capitalize()}, {age_words(g['age_s'])}." for g in groups)
-                             if groups else "No contacts.")
+                parts.append(" ".join(f"{_sentence(contact_phrase(g, buildings))}, {age_words(g['age_s'])}."
+                                      for g in groups) if groups else "No contacts.")
             case "eta":
                 parts.append(_eta_words(packet, route))
             case _:
                 parts.append(f"Can't say about {topic}.")
     return " ".join(parts)
+
+
+def _sentence(words: str) -> str:
+    return words[:1].upper() + words[1:]  # str.capitalize would lower-case a building's id
 
 
 def _task_words(packet: dict, route: dict | None) -> str:
@@ -151,9 +179,17 @@ def _task_words(packet: dict, route: dict | None) -> str:
     if leg is None:
         return "No current orders."
     if leg["type"] == "CLEAR":
-        if packet.get("clearing", -1) == 0:
-            return f"Finished clearing around grid {leg['grid']}."
-        return f"Clearing buildings around grid {leg['grid']}."
+        ids = leg.get("ids", [])
+        left = [building for building in ids if building not in (packet.get("cleared") or [])]
+        if not left or packet.get("clearing", -1) == 0:
+            return f"Finished checking {', '.join(ids)}." if ids else "Nothing to check."
+        return f"Checking {', '.join(left)}."
+    if leg["type"] in PLACING_ORDERS:
+        if packet.get("placed") == 1:
+            return f"In position, {_place_words(leg)}."
+        return f"Moving into {leg.get('building')}." if leg["type"] == "OCCUPY" else f"Moving to cordon {_where(leg)}."
+    if leg["type"] in TASK_ORDERS:
+        return f"{_sentence(LEG_VERBS[leg['type']])} {_where(leg)}."
     distance = math.dist(packet["pos"], leg["pos"])
     if leg["type"] in ("HOLD", "SENTRY") and distance <= (leg.get("completion") or ON_STATION_M):
         return f"Holding at grid {format_grid(packet['grid'])}."
@@ -173,11 +209,20 @@ def _eta_words(packet: dict, route: dict | None) -> str:
     return f"About {minutes} {unit} to grid {route['legs'][-1]['grid']}, if unopposed."
 
 
+def _where(leg: dict) -> str:
+    return leg["building"] if leg.get("building") else f"grid {leg['grid']}"
+
+
+def _place_words(leg: dict) -> str:
+    return f"occupying {leg.get('building')}" if leg["type"] == "OCCUPY" else f"cordon around {_where(leg)}"
+
+
 @dataclass
 class Report:
     precedence: str
     text: str
     grid: str | None = None  # the group's own position, when the text states it
+    checked: str | None = None  # a numbered building the group has been through
 
 
 @dataclass
@@ -198,11 +243,12 @@ class Tracker:
     progress_pos: list[float] = field(default_factory=list)
     progress_t: float = -1.0
     stuck_said: float = -1.0
+    checked: list[str] = field(default_factory=list)
 
-    def update(self, packet: dict, route: dict | None, now: float) -> list[Report]:
+    def update(self, packet: dict, route: dict | None, now: float, buildings: list[dict] | None = None) -> list[Report]:
         out: list[Report] = []
         out += self._order(packet, route, now)
-        out += self._contacts(packet, now)
+        out += self._contacts(packet, now, buildings)
         out += self._casualties(packet, now)
         if self.leader and packet["leader"] != self.leader:
             out.append(Report(PRIORITY, f"Leader down, {packet['leader']} has command."))
@@ -229,17 +275,23 @@ class Tracker:
                 self.route_done = self.route_done and route.get("acknowledge") == "Copy."
                 out.append(Report(ROUTINE, route.get("acknowledge", "Copy.")))
             else:
-                self.leg, self.on_station, self.route_done = 0, [], False
+                self.leg, self.on_station, self.route_done, self.checked = 0, [], False, []
                 out.append(Report(ROUTINE, _acknowledgement(route, grid), grid if _is_stop(route) else None))
         if not route or self.route_done or route.get("kind") != "route":
             return out
         legs = route["legs"]
         if legs[0]["type"] == "CLEAR":
-            # Clearing uses no waypoints: the game side counts the positions left.
-            if packet.get("clearing", -1) == 0:
+            return out + self._clearing(packet, legs[0], grid)
+        if legs[0]["type"] in PLACING_ORDERS:
+            if packet.get("placed") == 1:
                 self.route_done = True
-                out.append(Report(ROUTINE, f"Finished clearing buildings around grid {legs[0]['grid']}, at grid "
-                                           f"{grid}.", grid))
+                out.append(Report(ROUTINE, f"In position, {_place_words(legs[0])}, at grid {grid}.", grid))
+            return out
+        if legs[0]["type"] in TASK_ORDERS:
+            if math.dist(packet["pos"], legs[0]["pos"]) <= max(legs[0].get("radius", 0), ON_STATION_M):
+                self.route_done = True
+                out.append(Report(ROUTINE, f"On the objective, {LEG_VERBS[legs[0]['type']]} {_where(legs[0])}, at "
+                                           f"grid {grid}.", grid))
             return out
         leg_now = packet.get("leg", 0)
         while self.leg < leg_now and self.leg < len(legs):
@@ -257,13 +309,29 @@ class Tracker:
             out.append(Report(ROUTINE, f"{words}, grid {grid}.", grid))
         return out
 
-    def _contacts(self, packet: dict, now: float) -> list[Report]:
+    def _clearing(self, packet: dict, leg: dict, grid: str) -> list[Report]:
+        """Going through buildings isn't proof of anything, so reports say what happened and not "all clear"."""
+        out = []
+        seen_nearby = bool(contact_groups(packet, CONTACT_FRESH_S))
+        for building in packet.get("cleared") or []:
+            if building not in self.checked:
+                self.checked.append(building)
+                result = "enemy still in the area" if seen_nearby else "nothing seen"
+                out.append(Report(ROUTINE, f"{building} checked, {result}.", checked=building))
+        if packet.get("clearing", -1) == 0:
+            self.route_done = True
+            ids = leg.get("ids", [])
+            words = f"Finished checking {', '.join(ids)}, at grid {grid}." if ids else "No known buildings there."
+            out.append(Report(ROUTINE, words, grid))
+        return out
+
+    def _contacts(self, packet: dict, now: float, buildings: list[dict] | None = None) -> list[Report]:
         fresh = contact_groups(packet, CONTACT_FRESH_S)
         if fresh:
             self.contact_seen = now
             signature = ";".join(f"{g['direction']}:{count_word(g['count'])}" for g in
                                  sorted(fresh, key=lambda g: g["direction"]))
-            summary = "; ".join(contact_phrase(g) for g in fresh)
+            summary = "; ".join(contact_phrase(g, buildings) for g in fresh)
             action = "Engaging" if packet.get("combat_mode") in ("YELLOW", "RED") else "Holding fire"
             if not self.contact_active:
                 self.contact_active, self.contact_signature, self.contact_said = True, signature, now
@@ -293,7 +361,7 @@ class Tracker:
     def _stuck(self, packet: dict, route: dict | None, now: float) -> list[Report]:
         current = _current_leg(packet, route)
         moving_order = current is not None and route.get("kind") in ("route", "patrol") and not self.route_done \
-            and current["type"] != "CLEAR"
+            and current["type"] not in ("CLEAR", "PATROL_AREA", "SWEEP", "DEFEND")
         arrived = current is not None and packet.get("leg", 0) in self.on_station
         if not moving_order or arrived or self.contact_active or not self.progress_pos:
             self.progress_pos, self.progress_t = list(packet["pos"]), now
@@ -325,9 +393,13 @@ def _acknowledgement(route: dict | None, grid: str) -> str:
 
 
 def leg_words(legs: list[dict]) -> str:
-    verbs = {"HOLD": "holding at", "SENTRY": "watching at", "SEARCH": "searching around",
-             "CLEAR": "clearing buildings around"}
-    return ", then ".join(f"{verbs.get(leg['type'], 'moving to')} grid {leg['grid']}" for leg in legs)
+    words = []
+    for leg in legs:
+        if leg["type"] == "CLEAR":
+            words.append(f"checking {', '.join(leg.get('ids', []))}" if leg.get("ids") else "checking the area")
+        else:
+            words.append(f"{LEG_VERBS.get(leg['type'], 'moving to')} {_where(leg)}")
+    return ", then ".join(words)
 
 
 def _finish_words(leg: dict, grid: str) -> str:

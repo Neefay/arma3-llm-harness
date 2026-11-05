@@ -4,28 +4,29 @@ name: take_the_village
 mission: commander
 time_limit: "20:00"
 spectator: true
+ao: { at: "041 041", radius: 400 }
 text: >
   Enemy forces of unknown strength hold the village around grid 041 041. Your force is about 500 metres to the south,
   around grid 041 035. Clear the village. You don't know where the enemy is, so find them before you commit.
 stations:
   - callsign: Alpha
     role: infantry squad
-    capabilities: [MOVE, HOLD, SEARCH, CLEAR, SENTRY, PATROL, HALT, POSTURE]
+    capabilities: [MOVE, HOLD, SEARCH, CLEAR, OCCUPY, CORDON, ATTACK, DEFEND, PATROL_AREA, SWEEP, SENTRY, PATROL, HALT, POSTURE]
     at: "039 035"
     units: 8
   - callsign: Bravo
     role: infantry squad
-    capabilities: [MOVE, HOLD, SEARCH, CLEAR, SENTRY, PATROL, HALT, POSTURE]
+    capabilities: [MOVE, HOLD, SEARCH, CLEAR, OCCUPY, CORDON, ATTACK, DEFEND, PATROL_AREA, SWEEP, SENTRY, PATROL, HALT, POSTURE]
     at: "041 035"
     units: 8
   - callsign: Charlie
     role: infantry squad
-    capabilities: [MOVE, HOLD, SEARCH, CLEAR, SENTRY, PATROL, HALT, POSTURE]
+    capabilities: [MOVE, HOLD, SEARCH, CLEAR, OCCUPY, CORDON, ATTACK, DEFEND, PATROL_AREA, SWEEP, SENTRY, PATROL, HALT, POSTURE]
     at: "043 035"
     units: 8
   - callsign: Recon
     role: scout team, small and easily lost
-    capabilities: [MOVE, HOLD, SENTRY, PATROL, HALT, POSTURE]
+    capabilities: [MOVE, HOLD, SENTRY, PATROL, PATROL_AREA, CORDON, HALT, POSTURE]
     at: "041 036"
     units: 3
     class: B_recon_F

@@ -27,6 +27,7 @@ class Scenario:
     enemies: list[dict] = field(default_factory=list)
     events: list[dict] = field(default_factory=list)
     spectator: bool = False
+    ao: dict = field(default_factory=dict)  # {at, radius}: the area whose buildings the commander is told about
     quiet_s: float = 3.0
     ceiling_s: float = 15.0
     mid_turn_messages: str = HOLD
@@ -71,5 +72,6 @@ def build(raw: dict) -> Scenario:
         time_limit_s=parse_time(raw["time_limit"]), stations=stations, side=raw.get("side", "west"),
         markers={m["id"]: m for m in raw.get("markers") or []}, success=raw.get("success") or {}, events=events,
         failure=raw.get("failure") or {}, enemies=enemies, spectator=bool(raw.get("spectator")),
+        ao=raw.get("ao") or {},
         quiet_s=debounce.get("quiet_s", 3.0), ceiling_s=debounce.get("ceiling_s", 15.0), mid_turn_messages=mode,
     )

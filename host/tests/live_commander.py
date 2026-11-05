@@ -7,6 +7,7 @@ running. It proves the plumbing. Whether a real LLM commands sensibly is a separ
 """
 from __future__ import annotations
 
+import base64
 import json
 import os
 import queue
@@ -174,6 +175,78 @@ def play_halt_and_resume(client: Client) -> list[str]:
     return seen
 
 
+def save_map(client: Client, label: str, **args) -> None:
+    """The commander's map, written where a person can look at it."""
+    result = client.request("tools/call", {"name": "commander_map", "arguments": args})
+    assert not result.get("isError"), result
+    file = Harness().home.captures / f"commander_map_{label}.png"
+    file.write_bytes(base64.b64decode(result["content"][0]["data"]))
+    print(f"    map {label}: {file}", flush=True)
+
+
+def timer_fired(wake: dict, note: str) -> bool:
+    """Whether this wake is that timer coming due: a pending one is also listed in every briefing."""
+    due = wake["content"].split("TIMERS DUE", 1)
+    return len(due) == 2 and note in due[1].split(chr(10) * 2, 1)[0]
+
+
+def play_orders(client: Client) -> list[str]:
+    """Every building and CBA order on a real game, and above all: can a later order get a squad back out of it?"""
+    brief = begin(client)
+    ids = [building["id"] for building in brief["buildings"]]
+    print("    buildings:", brief["buildings"], flush=True)
+    assert len(ids) >= 3, brief["buildings"]
+    save_map(client, "orders")
+    first, second = ids[0], ids[1]
+    # A 4-man squad takes minutes over a big building, and this checks the reporting, not their stamina.
+    smallest = [b["id"] for b in sorted(brief["buildings"], key=lambda b: b["positions"])[:2]]
+    orders = {"Occupy": {"type": "OCCUPY", "at": first}, "Cordon": {"type": "CORDON", "at": second, "radius": 25},
+              "Defend": {"type": "DEFEND", "at": "041 041", "radius": 120},
+              "Attack": {"type": "ATTACK", "at": "041 041", "radius": 80},
+              "Sweep": {"type": "SWEEP", "at": "041 041", "radius": 120},
+              "Patrol": {"type": "PATROL_AREA", "at": "043 041", "radius": 80},
+              "Clear": {"type": "CLEAR", "at": smallest}}
+    for callsign, leg in orders.items():
+        client.tool("commander_order", to=callsign, legs=[leg])
+    client.tool("commander_schedule", after="3:30", do={"wake": "Check that everyone got there"})
+    finish_turn(client, "All orders out")
+    seen = []
+    while True:
+        wake = next_wake(client)
+        seen.append(wake["content"])
+        finish_turn(client, "Read the traffic")
+        if timer_fired(wake, "Check that everyone got there"):
+            break
+    for callsign in orders:
+        print("    task:", client.tool("commander_ask", to=callsign, topics=["position", "task"]), flush=True)
+    save_map(client, "orders_after")
+    # Everybody leaves. DEFEND is the one that needs special handling to let go.
+    start = {r["from"]: r["text"] for r in client.tool("commander_ask", to="all", topics=["position"])["replies"]}
+    for callsign in orders:
+        client.tool("commander_order", to=callsign, legs=[{"type": "MOVE", "at": "041 034"}])
+    client.tool("commander_schedule", after="2:30", do={"wake": "Did everyone get out?"})
+    finish_turn(client, "All pulled out")
+    while True:
+        wake = next_wake(client)
+        seen.append(wake["content"])
+        finish_turn(client, "Read the traffic")
+        if timer_fired(wake, "Did everyone get out?"):
+            break
+    after = {r["from"]: r["text"] for r in client.tool("commander_ask", to="all", topics=["position"])["replies"]}
+    print("    pulled out, from:", start, "\n    to:", after, flush=True)
+    moved = [callsign for callsign in orders if start[callsign][:12] != after[callsign][:12]]
+    assert set(moved) == set(orders), f"still in place after a new order: {set(orders) - set(moved)}"
+    text = "\n".join(seen)
+    wanted = (f"Copy, occupying {first}", f"In position, occupying {first}",
+              f"Copy, setting a cordon around {second}", f"In position, cordon around {second}",
+              "Copy, defending grid 041 041", "Copy, attacking grid 041 041", "Copy, sweeping around grid 041 041",
+              f"{smallest[0]} checked, nothing seen", f"{smallest[1]} checked, nothing seen",
+              f"Finished checking {smallest[0]}, {smallest[1]}")
+    for expected in wanted:
+        assert expected in text, expected
+    return seen
+
+
 def snap(harness: Harness, label: str) -> None:
     try:
         print(f"    snapshot {label}: {harness.snapshot(max_width=1100)['path']}", flush=True)
@@ -184,7 +257,9 @@ def snap(harness: Harness, label: str) -> None:
 def play_village(client: Client) -> list[str]:
     """Plumbing for the combat scenario: timed attack, repeating check-in, markers, contact reports, an ending."""
     harness = Harness()
-    begin(client)
+    brief = begin(client)
+    assert len(brief["buildings"]) >= 5, brief["buildings"]
+    save_map(client, "village_start")
     snap(harness, "start")
     client.tool("commander_order", to="Recon", legs=[{"type": "MOVE", "at": "041 038"}], behaviour="STEALTH")
     client.tool("commander_mark", id="H1", kind="hypothesis", at="041 041", label="Enemy in village", confidence="low")
@@ -195,7 +270,7 @@ def play_village(client: Client) -> list[str]:
     client.tool("commander_schedule", every="1:00", do={"ask": {"to": "Recon", "topics": ["position", "contacts"]}})
     client.tool("commander_schedule", every="2:00", do={"wake": "Regular check"})
     finish_turn(client, "Recon forward, attack at 0:30")
-    seen, marked, clearing, deadline = [], 0, set(), time.time() + 19 * 60
+    seen, marked, clearing, deadline = [], 0, set(), time.time() + 25 * 60
     while time.time() < deadline:
         wake = next_wake(client, 240)
         seen.append(wake["content"])
@@ -217,11 +292,12 @@ def play_village(client: Client) -> list[str]:
                 print(f"    {callsign} ordered to clear", flush=True)
         finish_turn(client, "Read the traffic")
     snap(harness, "end")
+    save_map(client, "village_end")
     text = "\n".join(seen)
     assert "Contact," in text, "no contact report in the whole battle"
     assert "E1  enemy First contact  grid 041 040" in text or marked == 0
     assert "H1  hypothesis Enemy in village  grid 041 041  low" in text
-    assert "Copy, clearing buildings around grid 041 041" in text, "no squad was ordered to clear"
+    assert "checked, " in text, "no squad reported checking a building"
     return seen
 
 
@@ -248,6 +324,7 @@ def main() -> None:
                ("deliver mode, A to B", "poc_a_to_b", "deliver", lambda c: play_a_to_b(c, "deliver")),
                ("failure variant: Alpha lost", "poc_a_to_b_lost", "hold", play_lost),
                ("halt, posture and resume", "poc_a_to_b", "hold", play_halt_and_resume),
+               ("every order type", "orders_check", "hold", play_orders),
                ("combat: take the village", "take_the_village", "hold", play_village, True)]
     wanted = sys.argv[1:]  # words to match in battle names; none means all of them
     try:

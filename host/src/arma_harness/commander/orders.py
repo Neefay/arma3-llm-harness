@@ -1,6 +1,7 @@
 """Validating orders and scheduled times. Rejections state only what the roster and map already show."""
 from __future__ import annotations
 
+import math
 import re
 
 _GRID = re.compile(r"^\s*(\d{3})\s?(\d{3})\s*$")
@@ -10,10 +11,11 @@ SPEEDS = {"LIMITED", "NORMAL", "FULL"}
 FORMATIONS = {"COLUMN", "STAG COLUMN", "WEDGE", "ECH LEFT", "ECH RIGHT", "VEE", "LINE", "FILE", "DIAMOND"}
 BEHAVIOURS = {"CARELESS", "SAFE", "AWARE", "COMBAT", "STEALTH"}
 COMBAT_MODES = {"BLUE", "GREEN", "WHITE", "YELLOW", "RED"}
-LEG_TYPES = {"MOVE": "MOVE", "HOLD": "HOLD", "SEARCH": "SAD", "SENTRY": "SENTRY", "CLEAR": "CLEAR"}
-CLEAR_DEFAULT_RADIUS_M = 100
-CLEAR_MAX_RADIUS_M = 300
-ORDER_TYPES = set(LEG_TYPES) | {"PATROL", "HALT", "POSTURE"}
+LEG_TYPES = {"MOVE": "MOVE", "HOLD": "HOLD", "SEARCH": "SAD", "SENTRY": "SENTRY"}
+SINGLE_LEG = {"CLEAR", "OCCUPY", "CORDON", "ATTACK", "DEFEND", "PATROL_AREA", "SWEEP"}
+DEFAULT_RADIUS_M = {"CLEAR": 100, "CORDON": 30, "ATTACK": 80, "DEFEND": 100, "PATROL_AREA": 150, "SWEEP": 120}
+MAX_RADIUS_M = 300
+ORDER_TYPES = set(LEG_TYPES) | SINGLE_LEG | {"PATROL", "HALT", "POSTURE"}
 
 
 class Invalid(ValueError):
@@ -46,11 +48,17 @@ def parse_grid(text: str, world_size: float) -> tuple[list[float], str]:
 
 def _place(at, markers: dict[str, dict], world_size: float) -> tuple[list[float], str]:
     if isinstance(at, str) and at.strip() in markers:
+        if "pos" in markers[at.strip()]:  # a numbered building knows its exact position
+            return list(markers[at.strip()]["pos"]), markers[at.strip()]["at"]
         place = markers[at.strip()]["at"]
         if isinstance(place, list):
             raise Invalid(f"Marker {at.strip()} is a line or area. Give a grid instead.")
         return parse_grid(place, world_size)
     return parse_grid(at, world_size)
+
+
+def resolve_place(at, places: dict[str, dict], world_size: float) -> tuple[list[float], str]:
+    return _place(at, places, world_size)
 
 
 def _enum(value, allowed: set[str], label: str) -> str:
@@ -72,7 +80,8 @@ def _number(value, label: str) -> float:
     return number
 
 
-def validate(request: dict, stations: dict[str, dict], markers: dict[str, dict], world_size: float) -> dict:
+def validate(request: dict, stations: dict[str, dict], markers: dict[str, dict], world_size: float,
+             buildings: list[dict] | None = None) -> dict:
     """Check a commander_order request and build what the game side needs: {to, mode, engine_legs, posture, route}."""
     to = request.get("to")
     if to not in stations:
@@ -102,23 +111,62 @@ def validate(request: dict, stations: dict[str, dict], markers: dict[str, dict],
         if posture == ["", "", "", ""]:
             raise Invalid("POSTURE needs at least one setting.")
         return {"to": to, "mode": "posture", "engine_legs": [], "posture": posture, "route": None}
-    if "CLEAR" in types and len(types) > 1:
-        raise Invalid("CLEAR must be the only leg in an order. Move there first, or schedule it for later.")
+    single = SINGLE_LEG & set(types)
+    if single and len(types) > 1:
+        raise Invalid(f"{sorted(single)[0]} must be the only leg in an order. Move there first, or schedule it.")
+    known = {building["id"]: building for building in buildings or []}
+    if single:
+        return _single_leg(to, legs[0], types[0], posture, {**markers, **known}, world_size, known)
     if "PATROL" in types:
         return _patrol(to, legs, types, posture, markers, world_size)
     engine_legs, route_legs = [], []
     for leg, kind in zip(legs, types, strict=True):
-        pos, grid = _place(leg.get("at"), markers, world_size)
+        pos, grid = _place(leg.get("at"), {**markers, **known}, world_size)
         radius, completion = _number(leg.get("radius"), "radius"), _number(leg.get("completion"), "completion")
-        if kind == "CLEAR":
-            radius = radius or CLEAR_DEFAULT_RADIUS_M
-            if radius > CLEAR_MAX_RADIUS_M:
-                raise Invalid(f"CLEAR covers at most {CLEAR_MAX_RADIUS_M} metres.")
         hold_for = parse_time(leg["hold_for"]) if leg.get("hold_for") else 0
         engine_legs.append([LEG_TYPES[kind], pos, radius, completion, hold_for])
         route_legs.append({"type": kind, "pos": pos, "grid": grid, "completion": completion})
     return {"to": to, "mode": mode, "engine_legs": engine_legs, "posture": posture,
             "route": {"kind": "route", "legs": route_legs}}
+
+
+def _single_leg(to, leg, kind, posture, places, world_size, known) -> dict:
+    """Orders that aren't a route of waypoints: buildings, cordons and CBA tasks."""
+    at = leg.get("at")
+    radius = _number(leg.get("radius"), "radius") or DEFAULT_RADIUS_M.get(kind, 0)
+    if radius > MAX_RADIUS_M:
+        raise Invalid(f"{kind} covers at most {MAX_RADIUS_M} metres.")
+    if kind == "CLEAR":
+        return _clear(to, at, radius, posture, places, world_size, known)
+    if kind == "OCCUPY" and (not isinstance(at, str) or at.strip() not in known):
+        raise Invalid("OCCUPY needs a building id, such as B3. Your buildings are listed in commander_mission.")
+    pos, grid = _place(at, places, world_size)
+    building = at.strip() if isinstance(at, str) and at.strip() in known else None
+    return {"to": to, "mode": "replace", "engine_legs": [[kind, pos, radius, 0, 0]], "posture": posture,
+            "route": {"kind": "route", "legs": [{"type": kind, "pos": pos, "grid": grid, "completion": 0,
+                                                 "radius": radius, "building": building}]}}
+
+
+def _clear(to, at, radius, posture, places, world_size, known) -> dict:
+    """Clearing always works from numbered buildings, so reports can say which ones have been checked."""
+    if isinstance(at, list):
+        unknown = [item for item in at if item not in known]
+        if unknown or not at:
+            raise Invalid(f"CLEAR with a list needs building ids, and these aren't: {unknown}.")
+        chosen = [known[item] for item in at]
+        pos, grid = list(chosen[0]["pos"]), chosen[0]["at"]
+    elif isinstance(at, str) and at.strip() in known:
+        chosen = [known[at.strip()]]
+        pos, grid = list(chosen[0]["pos"]), chosen[0]["at"]
+    else:
+        pos, grid = _place(at, places, world_size)
+        chosen = sorted((b for b in known.values() if math.dist(b["pos"], pos) <= radius),
+                        key=lambda b: math.dist(b["pos"], pos))
+    ids = [building["id"] for building in chosen]
+    return {"to": to, "mode": "replace", "posture": posture,
+            "engine_legs": [["CLEAR", [[building["id"], building["pos"]] for building in chosen], 0, 0, 0]],
+            "route": {"kind": "route", "legs": [{"type": "CLEAR", "pos": pos, "grid": grid, "completion": 0,
+                                                 "ids": ids}]}}
 
 
 def _patrol(to, legs, types, posture, markers, world_size) -> dict:

@@ -123,6 +123,8 @@ brmh_cmd_fnc_packet = {
 		["leg", currentWaypoint _group],
 		["legs", count waypoints _group],
 		["clearing", _group getVariable ["brmh_cmd_clearLeft", -1]],
+		["cleared", _group getVariable ["brmh_cmd_cleared", []]],
+		["placed", _group getVariable ["brmh_cmd_placed", -1]],
 		["contacts", [_leader] call brmh_cmd_fnc_contacts]
 	]
 };
@@ -148,34 +150,55 @@ brmh_cmd_fnc_truth = {
 	["evt", createHashMapFromArray [["type", "cmd_truth"], ["groups", _groups]]] call BRMH_fnc_emit;
 };
 
+// Commander orders that aren't waypoints work from here, on each monitor step.
 brmh_cmd_fnc_startClearing = {
-	params ["_group", "_at", "_radius"];
-	private _spots = [];
+	params ["_group", "_buildings"];
+	private _total = 0;
 	{
-		_spots append (_x buildingPos -1);
-	} forEach nearestObjects [_at + [0], ["House"], _radius];
-	_group setVariable ["brmh_cmd_clearQueue", _spots];
-	_group setVariable ["brmh_cmd_clearLeft", count _spots];
+		_total = _total + count (nearestObject [(_x # 1) + [0], "House"] buildingPos -1);
+	} forEach _buildings;
+	_group setVariable ["brmh_cmd_clearQueue", +_buildings];
+	_group setVariable ["brmh_cmd_clearSpots", []];
+	_group setVariable ["brmh_cmd_clearCurrent", ""];
+	_group setVariable ["brmh_cmd_clearLeft", _total max 1];
+	_group setVariable ["brmh_cmd_cleared", []];
 	{
 		_x setVariable ["brmh_cmd_clearBy", 0];
 	} forEach units _group;
 };
 
+// AI won't register an enemy it walks past. Only what a soldier could plainly see from here counts, so it isn't a cheat.
+brmh_cmd_fnc_noticeNearby = {
+	params ["_soldier"];
+	private _side = side group _soldier;
+	{
+		if (alive _x and {
+			(_side getFriend side group _x) < 0.6
+		} and {
+			([_soldier, "VIEW", _x] checkVisibility [eyePos _soldier, eyePos _x]) > 0.3
+		}) then {
+			_soldier reveal [_x, 4];
+		};
+	} forEach (_soldier nearEntities ["CAManBase", 10]);
+};
+
 // AI won't enter buildings to look for enemies it can't see, so soldiers are walked through every position in turn.
 brmh_cmd_fnc_stepClearing = {
 	params ["_group"];
+	private _spots = _group getVariable ["brmh_cmd_clearSpots", []];
 	private _queue = _group getVariable ["brmh_cmd_clearQueue", []];
 	private _busy = 0;
 	{
 		private _soldier = _x;
+		[_soldier] call brmh_cmd_fnc_noticeNearby;
 		// A position can be unreachable, so nobody waits for one for long.
 		if (time < (_soldier getVariable ["brmh_cmd_clearBy", 0]) and {
 			not unitReady _soldier
 		}) then {
 			_busy = _busy + 1;
 		} else {
-			if (_queue isNotEqualTo []) then {
-				_soldier doMove (_queue deleteAt 0);
+			if (_spots isNotEqualTo []) then {
+				_soldier doMove (_spots deleteAt 0);
 				_soldier setVariable ["brmh_cmd_clearBy", time + 45];
 				_busy = _busy + 1;
 			};
@@ -183,15 +206,104 @@ brmh_cmd_fnc_stepClearing = {
 	} forEach ((units _group) select {
 		alive _x
 	});
-	_group setVariable ["brmh_cmd_clearLeft", count _queue + _busy];
-	if (_queue isEqualTo [] and {
+	if (_spots isEqualTo [] and {
 		_busy isEqualTo 0
 	}) then {
-		_group setVariable ["brmh_cmd_clearQueue", nil];
-		{
-			_x doFollow leader _group;
-		} forEach units _group;
+		private _current = _group getVariable ["brmh_cmd_clearCurrent", ""];
+		if (_current isNotEqualTo "") then {
+			(_group getVariable ["brmh_cmd_cleared", []]) pushBack _current;
+			_group setVariable ["brmh_cmd_clearCurrent", ""];
+		};
+		if (_queue isNotEqualTo []) then {
+			private _next = _queue deleteAt 0;
+			_group setVariable ["brmh_cmd_clearCurrent", _next # 0];
+			_group setVariable ["brmh_cmd_clearSpots", nearestObject [(_next # 1) + [0], "House"] buildingPos -1];
+		} else {
+			_group setVariable ["brmh_cmd_clearQueue", nil];
+			_group setVariable ["brmh_cmd_clearLeft", 0];
+			{
+				_x doFollow leader _group;
+			} forEach units _group;
+		};
 	};
+	if (not isNil {
+		_group getVariable "brmh_cmd_clearQueue"
+	}) then {
+		private _left = _busy + count (_group getVariable ["brmh_cmd_clearSpots", []]);
+		{
+			_left = _left + count (nearestObject [(_x # 1) + [0], "House"] buildingPos -1);
+		} forEach _queue;
+		_group setVariable ["brmh_cmd_clearLeft", _left max 1];
+	};
+};
+
+// OCCUPY and CORDON: each soldier gets a spot, walks there and stays.
+brmh_cmd_fnc_startPlacing = {
+	params ["_group", "_spots", "_watch"];
+	_group setVariable ["brmh_cmd_placeSpots", _spots];
+	_group setVariable ["brmh_cmd_placeWatch", _watch];
+	_group setVariable ["brmh_cmd_placeBy", time + 90];
+	_group setVariable ["brmh_cmd_placed", 0];
+	private _count = count _spots;
+	{
+		if (_count > 0) then {
+			_x doMove (_spots # (_forEachIndex mod _count));
+		};
+	} forEach ((units _group) select {
+		alive _x
+	});
+};
+
+brmh_cmd_fnc_stepPlacing = {
+	params ["_group"];
+	private _soldiers = (units _group) select {
+		alive _x
+	};
+	private _waiting = {
+		not unitReady _x
+	} count _soldiers;
+	if (_waiting isEqualTo 0 or time > (_group getVariable ["brmh_cmd_placeBy", 0])) then {
+		private _watch = _group getVariable ["brmh_cmd_placeWatch", []];
+		doStop _soldiers;
+		if (_watch isNotEqualTo []) then {
+			_soldiers doWatch _watch;
+		};
+		_group setVariable ["brmh_cmd_placed", 1];
+	};
+};
+
+// CBA's tasks handle the behaviour. They run until replaced, so the commander's next order has to undo them cleanly.
+brmh_cmd_fnc_startTask = {
+	params ["_group", "_type", "_at", "_radius"];
+	private _centre = _at + [0];
+	_group setVariable ["brmh_cmd_task", true];
+	switch (_type) do {
+		case "ATTACK": {
+			[_group, _centre, _radius, true] call CBA_fnc_taskAttack;
+		};
+		case "DEFEND": {
+			[_group, _centre, _radius, 3, false, 1] call CBA_fnc_taskDefend;
+		};
+		case "PATROL_AREA": {
+			[_group, _centre, _radius, 4] call CBA_fnc_taskPatrol;
+		};
+		case "SWEEP": {
+			[_group, [_centre, _radius, _radius, 0, false]] call CBA_fnc_taskSearchArea;
+		};
+	};
+};
+
+brmh_cmd_fnc_listBuildings = {
+	params [["_at", [], [[]], 2], ["_radius", 400, [0]]];
+	private _centre = _at + [0];
+	(nearestObjects [_centre, ["House"], _radius] select {
+		count (_x buildingPos -1) > 0
+	}) apply {
+		private _box = boundingBoxReal _x;
+		private _size = (_box # 1) vectorDiff (_box # 0);
+		private _position = getPosATL _x;
+		[_position # 0, _position # 1, mapGridPosition _position, getText (configOf _x >> "displayName"), count (_x buildingPos -1), _size # 0, _size # 1, getDir _x]
+	}
 };
 
 brmh_cmd_fnc_step = {
@@ -201,6 +313,9 @@ brmh_cmd_fnc_step = {
 			_y getVariable "brmh_cmd_clearQueue"
 		}) then {
 			[_y] call brmh_cmd_fnc_stepClearing;
+		};
+		if ((_y getVariable ["brmh_cmd_placed", -1]) isEqualTo 0) then {
+			[_y] call brmh_cmd_fnc_stepPlacing;
 		};
 	} forEach brmh_cmd_stations;
 	{
@@ -295,9 +410,19 @@ brmh_cmd_fnc_order = {
 	if (_mode isNotEqualTo "posture") then {
 		_group setVariable ["brmh_cmd_clearQueue", nil];
 		_group setVariable ["brmh_cmd_clearLeft", -1];
+		_group setVariable ["brmh_cmd_cleared", []];
+		_group setVariable ["brmh_cmd_placed", -1];
+		// DEFEND disables pathing and ATTACK leaves a group crawling in COMBAT. Spike-tested: without this, they ignore new orders.
+		{
+			_x enableAI "PATH";
+		} forEach units _group;
+		if (_group getVariable ["brmh_cmd_task", false]) then {
+			_group setVariable ["brmh_cmd_task", false];
+			_group setBehaviour "AWARE";
+		};
 	};
 	if ((_legs findIf {
-		(_x # 0) isNotEqualTo "CYCLE" and {
+		not ((_x # 0) in ["CYCLE", "CLEAR"]) and {
 			surfaceIsWater (_x # 1)
 		}
 	}) >= 0) exitWith {
@@ -325,7 +450,27 @@ brmh_cmd_fnc_order = {
 	{
 		_x params ["_type", "_at", "_radius", "_completion", "_holdFor"];
 		if (_type isEqualTo "CLEAR") then {
-			[_group, _at, _radius] call brmh_cmd_fnc_startClearing;
+			[_group, _at] call brmh_cmd_fnc_startClearing;
+			continue;
+		};
+		if (_type isEqualTo "OCCUPY") then {
+			private _spots = nearestObject [_at + [0], "House"] buildingPos -1;
+			[_group, _spots, []] call brmh_cmd_fnc_startPlacing;
+			continue;
+		};
+		if (_type isEqualTo "CORDON") then {
+			private _count = ({
+				alive _x
+			} count units _group) max 1;
+			private _ring = [];
+			for "_i" from 0 to (_count - 1) do {
+				_ring pushBack ((_at + [0]) getPos [_radius, 360 * _i / _count]);
+			};
+			[_group, _ring, _at + [0]] call brmh_cmd_fnc_startPlacing;
+			continue;
+		};
+		if (_type in ["ATTACK", "DEFEND", "PATROL_AREA", "SWEEP"]) then {
+			[_group, _type, _at, _radius] call brmh_cmd_fnc_startTask;
 			continue;
 		};
 		private _waypoint = _group addWaypoint [_at + [0], _radius];

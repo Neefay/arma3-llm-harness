@@ -106,16 +106,62 @@ def test_move_then_hold_at_the_same_grid_doesnt_report_passing_it():
     assert [r.text for r in said] == ["On station, grid 034 030."]
 
 
-def test_clear_reports_when_every_position_has_been_checked():
-    tracker = Tracker()
-    trip = route(("CLEAR", (4150, 4150), "041 041"))
-    said = tracker.update(packet(order="O-1", clearing=30, leg=0, legs=0), trip, 0)
-    assert [r.text for r in said] == ["Copy, clearing buildings around grid 041 041."]
-    assert reports.answer(packet(order="O-1", clearing=30), trip, ["task"]) == "Clearing buildings around grid 041 041."
-    assert tracker.update(packet(order="O-1", clearing=12, leg=0, legs=0), trip, 200) == []  # slow isn't stuck
-    done = tracker.update(packet(order="O-1", clearing=0, leg=0, legs=0, grid="041041"), trip, 300)
-    assert [r.text for r in done] == ["Finished clearing buildings around grid 041 041, at grid 041 041."]
-    assert tracker.update(packet(order="O-1", clearing=0, leg=0, legs=0), trip, 302) == []
+def clear_route(*ids) -> dict:
+    return {"kind": "route", "legs": [{"type": "CLEAR", "pos": [4150, 4150], "grid": "041 041", "completion": 0,
+                                       "ids": list(ids)}]}
+
+
+def test_clear_reports_each_building_and_never_claims_all_clear():
+    tracker, trip = Tracker(), clear_route("B1", "B3")
+    said = tracker.update(packet(order="O-1", clearing=30, cleared=[]), trip, 0)
+    assert [r.text for r in said] == ["Copy, checking B1, B3."]
+    assert reports.answer(packet(order="O-1", clearing=30, cleared=["B1"]), trip, ["task"]) == "Checking B3."
+    said = tracker.update(packet(order="O-1", clearing=12, cleared=["B1"]), trip, 200)  # slow isn't stuck
+    assert [(r.text, r.checked) for r in said] == [("B1 checked, nothing seen.", "B1")]
+    assert tracker.update(packet(order="O-1", clearing=12, cleared=["B1"]), trip, 202) == []
+    said = tracker.update(packet(order="O-1", clearing=0, cleared=["B1", "B3"], grid="041041",
+                                 contacts=[contact(3060, 3060)]), trip, 300)
+    assert "B3 checked, enemy still in the area." in [r.text for r in said]
+    assert "Finished checking B1, B3, at grid 041 041." in [r.text for r in said]
+    assert tracker.update(packet(order="O-1", clearing=0, cleared=["B1", "B3"]), trip, 302) == []
+
+
+def test_clear_with_no_buildings_says_so():
+    said = Tracker().update(packet(order="O-1", clearing=0), clear_route(), 0)
+    assert "No known buildings there." in [r.text for r in said]
+
+
+def test_contacts_near_a_numbered_building_say_which():
+    buildings = [{"id": "B3", "pos": [3260.0, 3260.0]}, {"id": "B4", "pos": [3700.0, 3700.0]}]
+    said = Tracker().update(packet(contacts=[contact(3250, 3250)]), None, 0, buildings)
+    assert said[0].text == "Contact, one infantry, north-east, roughly 300 metres, near B3. Engaging."
+    assert "near" not in Tracker().update(packet(contacts=[contact(3500, 3100)]), None, 0, buildings)[0].text
+    assert "near B3" in reports.answer(packet(contacts=[contact(3250, 3250)]), None, ["contacts"], buildings)
+
+
+def test_occupy_and_cordon_report_once_in_position():
+    leg = {"type": "OCCUPY", "pos": [3050, 3050], "grid": "030 030", "completion": 0, "radius": 0, "building": "B2"}
+    tracker, trip = Tracker(), {"kind": "route", "legs": [leg]}
+    assert tracker.update(packet(order="O-1", placed=0), trip, 0)[0].text == "Copy, occupying B2."
+    assert reports.answer(packet(order="O-1", placed=0), trip, ["task"]) == "Moving into B2."
+    assert tracker.update(packet(order="O-1", placed=0), trip, 5) == []
+    said = tracker.update(packet(order="O-1", placed=1), trip, 8)
+    assert [r.text for r in said] == ["In position, occupying B2, at grid 030 030."]
+    assert tracker.update(packet(order="O-1", placed=1), trip, 10) == []
+    ring = {"kind": "route", "legs": [{**leg, "type": "CORDON", "building": None}]}
+    said = Tracker().update(packet(order="O-1", placed=0), ring, 0)
+    assert said[0].text == "Copy, setting a cordon around grid 030 030."
+
+
+def test_cba_tasks_report_arriving_and_then_stay_quiet():
+    far = {"type": "SWEEP", "pos": [3650, 3050], "grid": "036 030", "completion": 0, "radius": 120, "building": None}
+    tracker, trip = Tracker(), {"kind": "route", "legs": [far]}
+    assert tracker.update(packet(order="O-1", leg=2, legs=5), trip, 0)[0].text == "Copy, sweeping around grid 036 030."
+    assert reports.answer(packet(order="O-1", leg=3, legs=5), trip, ["task"]) == "Sweeping around grid 036 030."
+    assert tracker.update(packet(order="O-1", leg=4, legs=5), trip, 300) == []  # not stuck: this order wanders
+    said = tracker.update(packet(order="O-1", leg=4, legs=5, pos=[3550, 3050], grid="035030"), trip, 310)
+    assert [r.text for r in said] == ["On the objective, sweeping around grid 036 030, at grid 035 030."]
+    assert tracker.update(packet(order="O-1", leg=5, legs=5, pos=[3550, 3050], grid="035030"), trip, 312) == []
 
 
 def test_unknown_contacts_read_properly():
@@ -322,15 +368,44 @@ def test_orders_rejected_only_for_what_the_roster_and_map_show(request_, message
         order(**request_)
 
 
-def test_clear_takes_a_radius_and_stands_alone():
-    stations = {"Alpha": {**STATIONS["Alpha"], "capabilities": ["CLEAR", "MOVE"]}}
-    clear = {"to": "Alpha", "legs": [{"type": "CLEAR", "at": "B"}]}
-    assert orders.validate(clear, stations, MARKERS, 8192)["engine_legs"][0][:3] == ["CLEAR", [3450.0, 3050.0], 100]
+ALL_TYPES = ["MOVE", "CLEAR", "OCCUPY", "CORDON", "ATTACK", "DEFEND", "PATROL_AREA", "SWEEP"]
+BUILDINGS = [{"id": "B1", "pos": [3460.0, 3060.0], "at": "034 030", "name": "House", "positions": 8},
+             {"id": "B2", "pos": [3500.0, 3060.0], "at": "035 030", "name": "Shop", "positions": 4},
+             {"id": "B3", "pos": [3900.0, 3900.0], "at": "039 039", "name": "House", "positions": 6}]
+
+
+def wide(**over) -> dict:
+    stations = {"Alpha": {**STATIONS["Alpha"], "capabilities": ALL_TYPES}}
+    return orders.validate({"to": "Alpha", **over}, stations, MARKERS, 8192, BUILDINGS)
+
+
+def test_clear_works_from_numbered_buildings():
+    assert wide(legs=[{"type": "CLEAR", "at": "B1"}])["route"]["legs"][0]["ids"] == ["B1"]
+    assert wide(legs=[{"type": "CLEAR", "at": ["B3", "B1"]}])["route"]["legs"][0]["ids"] == ["B3", "B1"]
+    near = wide(legs=[{"type": "CLEAR", "at": "034 030", "radius": 100}])
+    assert near["route"]["legs"][0]["ids"] == ["B1", "B2"]  # nearest first, and B3 is out of range
+    assert near["engine_legs"][0][0] == "CLEAR" and near["engine_legs"][0][1][0] == ["B1", [3460.0, 3060.0]]
+    assert wide(legs=[{"type": "CLEAR", "at": "010 010"}])["route"]["legs"][0]["ids"] == []
+    with pytest.raises(Invalid, match="aren't"):
+        wide(legs=[{"type": "CLEAR", "at": ["B9"]}])
     with pytest.raises(Invalid, match="at most 300"):
-        orders.validate({"to": "Alpha", "legs": [{"type": "CLEAR", "at": "B", "radius": 900}]}, stations, MARKERS, 8192)
+        wide(legs=[{"type": "CLEAR", "at": "B", "radius": 900}])
     with pytest.raises(Invalid, match="only leg"):
-        orders.validate({"to": "Alpha", "legs": [{"type": "CLEAR", "at": "B"}, {"type": "MOVE", "at": "B"}]}, stations,
-                        MARKERS, 8192)
+        wide(legs=[{"type": "CLEAR", "at": "B"}, {"type": "MOVE", "at": "B"}])
+
+
+def test_buildings_can_be_used_as_places_in_any_order():
+    assert wide(legs=[{"type": "MOVE", "at": "B2"}])["engine_legs"][0][1] == [3500.0, 3060.0]
+    occupy = wide(legs=[{"type": "OCCUPY", "at": "B2"}])
+    assert occupy["engine_legs"][0][0] == "OCCUPY" and occupy["route"]["legs"][0]["building"] == "B2"
+    with pytest.raises(Invalid, match="building id"):
+        wide(legs=[{"type": "OCCUPY", "at": "034 030"}])
+    assert wide(legs=[{"type": "CORDON", "at": "B3"}])["engine_legs"][0][2] == 30
+    sweep = wide(legs=[{"type": "SWEEP", "at": "B", "radius": 200}])
+    assert sweep["engine_legs"][0][:3] == ["SWEEP", [3450.0, 3050.0], 200]
+    assert wide(legs=[{"type": "DEFEND", "at": "B"}])["route"]["legs"][0]["radius"] == 100
+    with pytest.raises(Invalid, match="only leg"):
+        wide(legs=[{"type": "ATTACK", "at": "B"}, {"type": "MOVE", "at": "B"}])
 
 
 def test_patrol_adds_a_cycle_waypoint_and_halt_has_no_legs():
@@ -631,6 +706,27 @@ def test_timed_question_reply_wakes_and_silence_shows_as_overdue(tmp_path):
     assert "OVERDUE" not in b.runtime.brief()["briefing"]
 
 
+def test_check_in_with_nothing_new_doesnt_wake_the_commander(tmp_path):
+    b = Battle(tmp_path)
+    b.start()
+    b.runtime.schedule({"ask": {"to": "Alpha", "topics": ["position", "contacts"]}}, every="0:30")
+    b.runtime.end_turn("x", messages_only=True)
+    b.advance(130, order="")
+    b.silent(134)
+    assert len(b.wakes) == 1  # the first answer is news
+    b.runtime.end_turn("x", messages_only=True)
+    b.advance(160, order="")
+    b.silent(164)
+    b.advance(190, order="")
+    b.silent(194)
+    assert len(b.wakes) == 1  # the same words again aren't
+    assert b.records.read("radio")[-1]["kind"] == "checkin_unchanged"
+    assert b.runtime.last_heard["Alpha"] == 190
+    b.advance(220, order="", contacts=[contact()])
+    b.silent(224)
+    assert len(b.wakes) == 2 and "Contact" in b.wakes[1][0]
+
+
 def test_repeating_wake_comes_back_until_its_count_runs_out(tmp_path):
     b = Battle(tmp_path)
     b.start()
@@ -721,6 +817,48 @@ def test_enemies_stay_out_of_everything_the_commander_sees(tmp_path):
     b.silent(102)
     seen = json.dumps(brief) + b.runtime.brief()["briefing"] + json.dumps(b.runtime.roster())
     assert "East 1" not in seen and "East 2" not in seen and "garrison" not in seen
+
+
+def with_buildings(tmp_path) -> Battle:
+    station = {"callsign": "Alpha", "role": "infantry", "capabilities": ALL_TYPES, "at": "030 030"}
+    b = Battle(tmp_path, stations=[station], ao={"at": "034 030", "radius": 400})
+    b.runtime.buildings = BUILDINGS
+    return b
+
+
+def test_buildings_appear_in_the_brief_and_checked_ones_are_remembered(tmp_path):
+    b = with_buildings(tmp_path)
+    brief = b.start()
+    assert brief["buildings"][0] == {"id": "B1", "type": "House", "grid": "034 030", "positions": 8}
+    b.runtime.order({"to": "Alpha", "legs": [{"type": "CLEAR", "at": ["B1", "B2"]}]})
+    assert b.game.calls[-1][1][3][0][1] == [["B1", [3460.0, 3060.0]], ["B2", [3500.0, 3060.0]]]
+    b.runtime.end_turn("x", messages_only=True)
+    b.advance(102, order="O-0001", clearing=10, cleared=["B1"])
+    b.silent(106)
+    assert "B1 checked, nothing seen." in b.wakes[0][0] and "BUILDINGS CHECKED\nB1 4 s" in b.wakes[0][0]
+    with pytest.raises(Invalid, match="building's id"):
+        b.runtime.mark({"id": "B1", "at": "040 040"})
+
+
+def test_map_image_shows_only_what_the_commander_has(tmp_path):
+    from io import BytesIO
+
+    from PIL import Image
+
+    b = with_buildings(tmp_path)
+    b.start()
+    b.runtime.mark({"id": "E1", "kind": "enemy", "at": "036 031", "label": "Infantry", "confidence": "low"})
+    made = b.runtime.map_image()
+    image = Image.open(BytesIO(made["png"]))
+    assert image.size == (1000, 1000) and "not live" in made["text"]
+    assert Image.open(BytesIO(b.runtime.map_image(center="B3", radius=100)["png"])).size == (1000, 1000)
+    with pytest.raises(Invalid, match="radius"):
+        b.runtime.map_image(radius=5)
+    # Facts about the real battle change nothing in the picture.
+    before = b.runtime.map_image()["png"]
+    b.game.emit(type="cmd_truth", t=100, groups=[{"group": "East 1", "side": "EAST", "alive": 9, "pos": [3400, 3000]}])
+    b.runtime.step(0)
+    assert b.runtime.map_image()["png"] == before
 
 
 def test_bad_enemy_mode_is_refused():
@@ -883,7 +1021,7 @@ def test_state_survives_a_server_restart(tmp_path):
 def test_tool_list_is_exactly_the_allowlist():
     allowed = {"commander_mission", "commander_roster", "commander_order", "commander_ask", "commander_schedule",
                "commander_unschedule", "commander_end_turn", "commander_brief", "commander_notes", "commander_log",
-               "commander_mark", "commander_unmark"}
+               "commander_mark", "commander_unmark", "commander_map"}
     assert allowed == TOOL_NAMES
 
 
