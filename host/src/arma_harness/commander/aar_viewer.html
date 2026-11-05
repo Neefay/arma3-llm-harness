@@ -34,14 +34,6 @@ body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.4 var(
 
 /* Stacked by default, for phones and small windows. */
 .page { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; padding-block: 10px 20px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
-.top { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 16px; }
-h1 { font: 700 20px/1.15 var(--display); margin: 0; letter-spacing: .01em; }
-#intro { margin: 0; flex: 1 1 320px; min-width: 0; font-size: 13px; line-height: 1.35; max-width: 130ch; }
-.picker { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr)); gap: 6px; }
-.pick { display: grid; gap: 1px; text-align: left; padding: 4px 10px; font: 400 12px/1.3 var(--body); background: var(--panel); min-width: 0; }
-.pick b { font: 600 14px/1.25 var(--display); }
-.pick span.how { color: var(--dim); }
-.pick[aria-pressed="true"] { background: var(--panel); color: var(--text); border-color: var(--blue); box-shadow: inset 0 0 0 1px var(--blue); }
 .chip { font: 600 11px/1.2 var(--body); padding: 0 5px; border: 1px solid currentColor; white-space: nowrap; display: inline-block; }
 .chip.llm { color: var(--violet); }
 .chip.script { color: var(--amber); }
@@ -67,31 +59,31 @@ figure canvas:active { cursor: grabbing; }
 .controls { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; background: var(--panel); padding: 3px 8px; }
 button { font: 600 12.5px var(--body); color: var(--text); background: var(--panel2); border: 1px solid var(--line); padding: 3px 9px; cursor: pointer; }
 button:hover { border-color: var(--dim); }
-button:focus-visible, canvas:focus-visible, .row:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
-button[aria-pressed="true"]:not(.pick) { background: var(--blue); color: var(--on-accent); border-color: var(--blue); }
+button:focus-visible, select:focus-visible, canvas:focus-visible, .row:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
+button[aria-pressed="true"] { background: var(--blue); color: var(--on-accent); border-color: var(--blue); }
 #clock { font: 700 19px var(--mono); font-variant-numeric: tabular-nums; min-width: 7ch; }
 .chips { display: flex; gap: 3px; flex-wrap: wrap; }
 .chips button { font-size: 12px; padding: 2px 7px; font-weight: 500; }
 
-.rail { display: flex; flex-direction: column; background: var(--panel); min-width: 0; min-height: 0; }
-.head { padding: 6px 10px; display: grid; gap: 4px; border-bottom: 1px solid var(--line); }
+/* Stacked, the rail's parts join the stage's own grid, so that the heading and the dropdown can come before the maps. */
+.rail { display: contents; }
+.head { order: -1; min-width: 0; background: var(--panel); padding: 6px 10px; display: grid; gap: 4px; border-bottom: 1px solid var(--line); }
+#picker { flex: 1 1 100%; min-width: 0; max-width: 100%; font: 600 16px/1.2 var(--display); color: var(--text); background: var(--panel2); border: 1px solid var(--line); padding: 3px 6px; cursor: pointer; text-overflow: ellipsis; }
 .headline { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 2px 8px; }
-h2 { font: 600 16px/1.2 var(--display); margin: 0; }
+h1 { font: 600 16px/1.2 var(--display); margin: 0; }
 .result { font: 600 13px/1.3 var(--display); padding: 0 7px; border: 1px solid var(--line); white-space: nowrap; }
 .result.win { color: var(--green); border-color: var(--green); }
 .result.loss { color: var(--red); border-color: var(--red); }
-#who, #extra { margin: 0; font-size: 12.5px; line-height: 1.35; }
-#extra { color: var(--dim); }
-#extra b { color: var(--text); font-weight: 600; }
-.score { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px 6px; margin: 0; }
+#who { flex: 1 1 200px; min-width: 0; margin: 0; font-size: 12.5px; line-height: 1.35; }
+.score { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px 6px; margin: 0; }
 .score div { display: flex; flex-direction: column; justify-content: flex-end; min-width: 0; }
 .score dt { color: var(--dim); font-size: 10.5px; line-height: 1.1; }
 .score dd { margin: 0; font: 600 14.5px/1.25 var(--display); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.tabs { display: flex; border-bottom: 1px solid var(--line); overflow-x: auto; flex: none; }
+.tabs { display: flex; background: var(--panel); margin-bottom: -8px; border-bottom: 1px solid var(--line); overflow-x: auto; flex: none; }
 .tabs button { flex: 1 0 auto; background: none; border: 0; border-bottom: 2px solid transparent; padding: 5px 5px 4px; font: 600 12.5px var(--body); color: var(--dim); }
 .tabs button:hover { color: var(--text); }
 .tabs button[aria-selected="true"] { color: var(--text); border-bottom-color: var(--blue); }
-.pane { display: flex; flex-direction: column; min-height: 0; flex: 1 1 auto; max-height: 70vh; }
+.pane { display: flex; flex-direction: column; background: var(--panel); min-height: 0; flex: 1 1 auto; max-height: 70vh; }
 .pane.flow { display: block; overflow-y: auto; padding-bottom: 8px; }
 .bar { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 2px 8px; padding: 4px 10px; font-size: 12px; color: var(--dim); flex: none; border-bottom: 1px solid var(--panel2); }
 h3 { font: 600 14px/1.25 var(--display); margin: 0; padding: 7px 10px 2px; }
@@ -138,15 +130,15 @@ th:first-child, td:first-child { padding-left: 10px; }
    above and below a map in its column. Lists scroll inside the rail. */
 @media (min-width: 1100px) and (min-height: 560px) {
   html, body { height: 100%; }
-  .page { height: 100%; grid-template-rows: auto auto minmax(0, 1fr); gap: 6px; padding-block: 6px; }
-  .picker { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); }
-  .stage { grid-row: 3; container-type: size; min-height: 0; grid-template-columns: auto minmax(0, 1fr); gap: 8px; --chrome: 170px; --rail-min: 340px; }
+  .page { height: 100%; grid-template-rows: minmax(0, 1fr); padding-block: 6px; }
+  .stage { container-type: size; min-height: 0; grid-template-columns: auto minmax(0, 1fr); gap: 8px; --chrome: 170px; --rail-min: 340px; }
   .stage > * { --map: min(100cqh - var(--chrome), (100cqw - var(--rail-min) - 16px) / 2); }
   .left { width: calc(2 * var(--map) + 8px); min-width: min(760px, 100cqw - var(--rail-min)); height: 100%; min-height: 0; grid-template-rows: auto minmax(0, 1fr) auto; }
   .maps { grid-template-columns: var(--map) var(--map); justify-content: center; }
   figure canvas { width: var(--map); height: var(--map); aspect-ratio: auto; }
   .timeline canvas { flex: 1 1 0; height: 0; min-height: 0; }
-  .rail { height: 100%; }
+  .rail { display: flex; flex-direction: column; background: var(--panel); min-width: 0; min-height: 0; height: 100%; }
+  .tabs { margin-bottom: 0; }
   .pane { max-height: none; flex: 1 1 0; }
 }
 /* Smaller maps wrap their keys onto a second line. */
@@ -156,19 +148,12 @@ th:first-child, td:first-child { padding-left: 10px; }
 </head>
 <body>
 <div class="page">
-  <header class="top">
-    <h1>Commander Battle Review</h1>
-    <p id="intro"></p>
-  </header>
-
-  <nav class="picker" id="picker" aria-label="Choose a battle" hidden></nav>
-
   <main class="stage">
     <div class="left">
       <div class="maps">
         <figure class="belief">
           <figcaption>
-            <div class="title"><span id="beliefTitle">What the commander believed</span><small>built only from the radio text it received</small></div>
+            <div class="title"><span>INTERNAL BELIEF</span><small>built only from the radio text it received</small></div>
             <div class="key">
               <span><svg viewBox="0 0 13 10" stroke="var(--blue)"><path d="M1 1h11v8H1zM1 1l11 8M1 9l11-8"/></svg>last report</span>
               <span><svg viewBox="0 0 13 10" stroke="var(--red)"><path d="M6.5 .8l4 4.2-4 4.2-4-4.2z"/></svg>enemy marker</span>
@@ -181,7 +166,7 @@ th:first-child, td:first-child { padding-left: 10px; }
         </figure>
         <figure class="truth">
           <figcaption>
-            <div class="title"><span>What was really happening</span><small>never shown to the commander</small></div>
+            <div class="title"><span>IN-GAME</span><small>never shown to the commander</small></div>
             <div class="key">
               <span><svg viewBox="0 0 13 10" style="fill:var(--blue)"><circle cx="6.5" cy="5" r="3"/></svg>friendly soldier</span>
               <span><svg viewBox="0 0 13 10" style="fill:var(--red)"><circle cx="6.5" cy="5" r="3"/></svg>enemy soldier</span>
@@ -224,9 +209,12 @@ th:first-child, td:first-child { padding-left: 10px; }
 
     <aside class="rail">
       <div class="head">
-        <div class="headline"><h2 id="name"></h2><span class="result" id="result"></span></div>
-        <p id="who"></p>
-        <p id="extra" hidden></p>
+        <div class="headline">
+          <select id="picker" aria-label="Choose a battle" hidden></select>
+          <h1 id="name"></h1>
+          <span class="result" id="result"></span>
+          <p id="who"></p>
+        </div>
         <dl class="score" id="score"></dl>
       </div>
       <div class="tabs" role="tablist" aria-label="Details" id="tabs">
@@ -249,13 +237,12 @@ th:first-child, td:first-child { padding-left: 10px; }
       </section>
 
       <section class="pane flow" id="pane-commander" role="tabpanel" hidden>
-        <p class="note" id="commanderStats"></p>
-        <h3>Its latest words</h3>
+        <h3>THOUGHTS</h3>
         <p class="said" id="turnSaid" hidden></p>
         <p class="note" id="noWords" hidden></p>
-        <h3>Its notes</h3>
+        <h3>NOTES</h3>
         <p class="note notes" id="turnNote"></p>
-        <h3>Its markers at this moment</h3>
+        <h3>MARKERS</h3>
         <ul class="marks" id="marks"></ul>
       </section>
 
@@ -751,14 +738,6 @@ function setTab(name) {
 
 // -- the page's words, and one battle or many -------------------------------------------------------------------------
 
-function introText() {
-  const models = BATTLES.filter(b => b.commander.model).length, scripts = BATTLES.length - models;
-  const maps = "The left map shows what it believed, and the right map shows what was really happening.";
-  if (!models) return `A script with no AI commanded these squads in the military game Arma 3 without ever seeing the battle. It knew only what radio reports told it. ${maps}`;
-  const base = `An AI commanded these squads in the military game Arma 3 without ever seeing the battle. It knew only what radio reports told it. ${maps}`;
-  return scripts ? `${base} Scripts with no AI were run the same way, for comparison.` : base;
-}
-
 function whoShort(battle) {
   return battle.commander.model ? `<span class="chip llm">AI model</span>` : `<span class="chip script">Script, no AI</span>`;
 }
@@ -769,26 +748,14 @@ function whoLong(battle) {
     : `${whoShort(battle)} A script commanded this battle, with no AI model. The records hold no model session for it.`;
 }
 
-const TOOL_WORDS = { SendFeedback: "to draft a bug report, and that tool couldn't see the battle" };
-
-function extraTools(commander) {
-  const tools = commander.tools_outside_lockdown || [], used = commander.outside_lockdown_used || {};
-  if (!tools.length) return "";
-  const times = n => n === 1 ? "once" : n === 2 ? "twice" : `${n} times`;
-  const list = Object.entries(used).map(([tool, n]) => `It used ${tool} ${times(n)}${TOOL_WORDS[tool] ? `, ${TOOL_WORDS[tool]}` : ""}.`);
-  const had = tools.length === 1 ? "one extra tool" : `${tools.length} extra tools`;
-  const names = tools.length === 1 && list.length ? "" : ` (${tools.join(", ")})`;
-  return `<b>Extra access:</b> this commander had ${had} beyond its battle tools${esc(names)}. ${list.length ? esc(list.join(" ")) : `It never used ${tools.length === 1 ? "it" : "them"}.`}`;
-}
-
 function renderPicker() {
-  $("picker").hidden = !MANY;
+  const picker = $("picker");
+  picker.hidden = !MANY;
+  $("name").hidden = MANY;
   $("compareTab").hidden = !PAGE.compare;
   if (!MANY) return;
-  $("picker").innerHTML = BATTLES.map(b => {
-    const s = b.score;
-    return `<button type="button" class="pick" data-id="${esc(b.id)}" aria-pressed="${b === D}"><b>${esc(title(b))}</b><span class="how">${whoShort(b)} ${esc(verdict(s.ended))}, ${s.friendly_lost} of ${s.friendly_total} lost</span></button>`;
-  }).join("");
+  if (!picker.options.length) picker.innerHTML = BATTLES.map(b => `<option value="${esc(b.id)}">${esc(title(b))} (${b.commander.model ? "AI model" : "no AI"})</option>`).join("");
+  picker.value = D.id;
 }
 
 function renderCompare() {
@@ -812,16 +779,11 @@ function renderBattle() {
   const c = D.commander, s = D.score;
   $("name").textContent = title(D);
   if (!MANY && D.name) document.title = `${D.name}: Commander Battle Review`;
-  $("intro").textContent = introText();
   $("mission").innerHTML = D.text ? `<b>The mission:</b> ${esc(D.text)}` : "";
   const result = $("result"), word = verdict(D.ended);
   result.textContent = word;
   result.className = `result ${word === "Won" ? "win" : word === "Didn't finish" ? "" : "loss"}`;
   $("who").innerHTML = whoLong(D);
-  $("beliefTitle").textContent = c.model ? "What the commander believed" : "What the script knew";
-  const extra = extraTools(c);
-  $("extra").hidden = !extra; $("extra").innerHTML = extra;
-  $("commanderStats").textContent = c.model ? `${c.requests} requests to the model, ${Math.round(c.output_tokens / 100) / 10}k tokens written. The model's private reasoning isn't recorded, so only what it wrote out is shown.` : "A script commanded this battle, with no AI model.";
   $("record").textContent = `Record ${D.run || ""}${D.attempt ? `, attempt ${D.attempt}` : ""}.`;
   $("turnStats").textContent = D.turns.length ? `Each lasted ${(D.turns.reduce((sum, t) => sum + (t.duration || 0), 0) / D.turns.length).toFixed(1)} s on average.` : "";
   $("turnMode").textContent = D.mode === "hold" ? "Messages arriving during a turn waited until it ended." : D.mode === "deliver" ? "Messages also reached it during a turn." : "";
@@ -831,6 +793,7 @@ function renderBattle() {
     ["Friendlies lost", `${s.friendly_lost} of ${s.friendly_total}`], ["Enemy killed", `${s.enemy_killed} of ${s.enemy_total}`], ["Duration", clock(s.duration_s)],
     ["First contact", clock(s.first_contact_s)], ["Turns", s.turns], ["Orders", s.orders], ["Questions", s.questions], ["Enemy markers", s.enemy_markers],
     ["Marker error", metres(s.marker_error_m)], ["Position error", metres(s.position_error_m)],
+    ["Requests", c.model ? c.requests : "None"], ["Tokens written", c.model ? `${Math.round(c.output_tokens / 100) / 10}k` : "None"],
   ];
   $("score").innerHTML = facts.map(([name, value]) => `<div><dt>${esc(name)}</dt><dd>${esc(value)}</dd></div>`).join("");
   $("measures").innerHTML = [
@@ -898,7 +861,7 @@ function init() {
     const next = shown[(at + step + shown.length) % shown.length];
     setTab(next.dataset.pane); next.focus();
   });
-  $("picker").addEventListener("click", e => { const b = e.target.closest("[data-id]"); if (b) pickBattle(b.dataset.id); });
+  $("picker").addEventListener("change", e => pickBattle(e.target.value));
   $("compare").addEventListener("click", e => { const b = e.target.closest("[data-id]"); if (b) pickBattle(b.dataset.id); });
   const timeline = $("timeline");
   let dragging = false;
@@ -911,7 +874,7 @@ function init() {
   });
   $("nextEvent").addEventListener("click", () => { const t = killTimes.find(k => k > now + .5); if (t != null) seek(t); });
   $("prevEvent").addEventListener("click", () => { const before = killTimes.filter(k => k < now - .5); if (before.length) seek(before[before.length - 1]); });
-  document.addEventListener("keydown", e => { if (e.code === "Space" && !["BUTTON", "INPUT"].includes(document.activeElement.tagName)) { e.preventDefault(); togglePlay(); } });
+  document.addEventListener("keydown", e => { if (e.code === "Space" && !["BUTTON", "INPUT", "SELECT"].includes(document.activeElement.tagName)) { e.preventDefault(); togglePlay(); } });
   window.addEventListener("resize", draw);
   window.addEventListener("hashchange", () => { const { battle, t } = readHash(); show(battle, t); });
   // Canvas colours are read from the tokens, so they need reading again when the theme changes.

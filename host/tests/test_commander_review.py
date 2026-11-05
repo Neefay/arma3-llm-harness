@@ -334,6 +334,15 @@ def test_a_site_holds_each_battle_under_its_label_and_opens_on_the_first(battle,
     assert aar.DATA_SLOT not in out.read_text(encoding="utf-8")
 
 
+def test_the_page_chooses_battles_from_a_dropdown_under_the_owners_labels(battle):
+    page = aar.render(aar.battle_data(battle))
+    assert '<select id="picker"' in page and 'class="pick"' not in page
+    for label in ("INTERNAL BELIEF", "IN-GAME", "THOUGHTS", "NOTES", "MARKERS", "Requests", "Tokens written"):
+        assert label in page
+    for gone in ("<header", "What the commander believed", "What was really happening", "Extra access"):
+        assert gone not in page
+
+
 def test_a_site_compares_with_the_same_measures_as_the_terminal(battle, tmp_path):
     another_attempt(battle, 3)
     out = tmp_path / "site.html"
