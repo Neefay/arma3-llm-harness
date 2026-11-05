@@ -65,7 +65,7 @@ brmh_spike_fnc_shells = {
 };
 brmh_spike_fnc_gun = {
 	params ["_class", "_pos", ["_side", west]];
-	private _gun = createVehicle [_class, _pos + [0], [], 0, "NONE"];
+	private _gun = createVehicle [_class, (_pos select [0, 2]) + [0], [], 0, "NONE"];
 	_gun setDir 0;
 	private _group = createGroup [_side, false];
 	private _man = _group createUnit [["B_Soldier_F", "O_Soldier_F"] select (_side isEqualTo east), _pos, [], 3, "NONE"];

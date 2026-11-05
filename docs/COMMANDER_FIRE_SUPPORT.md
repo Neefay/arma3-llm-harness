@@ -24,7 +24,7 @@ This is bigger than a new order type. Vehicles become things the commander knows
 
 | Fact | Measured | Design consequence |
 |---|---|---|
-| Vanilla guns | Mk6 mortar, M4 Scorcher, 2S9 Sochor, M5 Sandstorm, Zamak MRL, Mk45 ship gun | Find them with `artilleryScanner`, not a class list |
+| Vanilla guns | Mk6 mortar, M4 Scorcher, 2S9 Sochor, M5 Sandstorm, Zamak MRL, Mk45 ship gun | Find them with `artilleryScanner`, not a class list. First version: mortars, then tube guns, with rockets left out (section 12) |
 | Mortar reach | In range at 50 m to 4,000 m, not at 10 m or 6,000 m | Check before firing |
 | Scorcher and Sandstorm reach | Not in range up to 800 m, in range from 1,200 m | Too far for a small map: start with mortars |
 | Mortar load | 4 HE magazines of 8, plus 8 smoke, 8 flare and 8 illumination | Words for the commander: HE, SMOKE, FLARE, ILLUM |
@@ -40,11 +40,12 @@ This is bigger than a new order type. Vehicles become things the commander knows
 | Two guns in one group | Each fires and stops independently | A station can hold several guns |
 | Damage 0.8 | Still fires | Damage isn't a reliable status |
 
-**Three silent failures.** Each of these does nothing, with no error, and `unitReady` stays true, so the controller checks them all first:
+**Four silent failures.** Each of these does nothing, with no error, and `unitReady` stays true, so the controller checks the first three beforehand, and catches the fourth with a timer:
 
 - Target out of range, too near or too far (`inRangeOfArtillery` is false).
 - Gun has no gunner.
 - Gunner is dead.
+- The gun says it can reach, and doesn't fire. A Scorcher did this at 2,000 m, in 3 of 3 tests.
 
 ### 2.2 The gun fires on its own
 
@@ -170,7 +171,7 @@ commander_order(to="Hammer", legs=[{"type": "CHECK_FIRE"}])
 - **Where 8 figures come from:** the commander's own arithmetic and map reading. The building list stays at 6 figures, so getting a building's 8-figure grid means reading it off `commander_map`, which can be zoomed to a 50 m radius. A spotter's offset has to be added to the last grid by hand. Mistakes here land on the map as real shells.
 - **`vehicle`** must be on the list. Anything else is refused, which reveals nothing.
 - **`seat`:** `driver`, `gunner`, `commander`, `cargo`, or `turret:0` and so on, taken from the game's own list. A seat the type doesn't have is refused from the commander's own knowledge of the type.
-- **`ammo`:** HE, SMOKE, FLARE or ILLUM, by mapping the gun's own magazines.
+- **`ammo`:** HE or SMOKE, by mapping the gun's own magazines. Flares do nothing for AI (section 12), so they wait.
 - **`rounds`:** 1 up to a limit, default 3, per gun. Chunks across magazines are the controller's problem.
 - **`radius`:** 0 to 150 m. Above 0, each round gets its own aim point in the radius, so the rate of fire drops slightly.
 - **`observer`:** a station to watch this mission ([section 6](#6-watching-the-fall-of-shot)).
@@ -205,6 +206,7 @@ Shot, 6 rounds, splash in about 30 seconds.
 Rounds complete. 26 HE left.
 Holding, weapons tight. Mission waiting.    (currentCommand is FIRE AT POSITION, nothing fired after 8 s)
 Unable, out of range.
+Unable, can't lay on that target.           (unitReady, all checks passed, and nothing fired after 10 s)
 Unable, no gunner on V1.
 Out of HE, 2 of 6 fired.
 Check fire. 3 rounds still in the air.
@@ -235,7 +237,7 @@ A new station field, `spotter: true`. Reports depend on who's watching:
 | Not a spotter | Either | Only the "under fire" and "explosions" reports above |
 
 - **An ordinary soldier still reports enemies,** through contact reports, as today. That's how they call for shelling, in effect. They just can't correct it.
-- **Can it see?** At each impact, checked from any living soldier in the station: `checkVisibility` in `VIEW`, from eyes to 1 m above the impact, above 0.3, within 1,500 m. Smoke blinds it for free.
+- **Can it see?** At the moment of each impact, checked from any living soldier in the station: `checkVisibility` in `VIEW`, from eyes to 1 m above the impact, above 0.3, within 1,500 m. Smoke and the dust of earlier rounds block it for free, so in a salvo only the first round is seen, and adjusting calls for single rounds at least 10 s apart. The doctrine has to say so.
 - **Grouped:** one report per burst, a few seconds after the last round lands. Offsets are rounded to 10 m up to 100 m, then to 50 m. That keeps it good enough to correct, and not perfect.
 - **Against what:** the enemy the spotter can see, at the position it perceives them, because that's what an observer corrects onto. An offset from the aim point would tell the commander nothing if the aim was wrong to begin with. With no enemy in view, it's against the grid it was given, which is what assigning an observer tells it.
 - **The correction is the commander's job.** The spotter says where it landed, and the commander works out the new grid. A report may not name friendlies near the impact, unless they're that spotter's own station.
@@ -337,21 +339,34 @@ enemies:
 
 `ammo` sets what a gun starts with, because the default of 32 HE is a lot. A new scenario holds this, and `take_the_village` stays as it is.
 
-## 12. Still unverified
+## 12. Later test results
 
-- **The real thing:** the prototype's enemy stood still in the open, with weapons held and its position given to the spotter by `reveal`. A fight, moving enemies and a spotter that has to find them for itself are all untried.
-- **Dust against spotting:** in the prototype, the spotter saw the first of two rounds, then read about 0.001 for the second, 2 s later. The first round's dust is the likely cause, but one test doesn't prove it. If so, a salvo hides itself, and single adjusting rounds really are the way to spot.
-- **Reliability of `disableAI "TARGET"`:** one 40-second test per setting with an enemy in plain view. Longer, with the enemy shooting at the crew, and with the gunner's squadmates sharing targets, is still to test. Also whether turning it off harms contact reports from that soldier.
-- **Check fire:** 2 of 2 guns stopped at once, but only at one point in a mission, and only on a mortar.
-- **Crew under real assault:** in the one test, the squad and gun won, so the crew was never overrun. Without `TARGET`, and with enemies close, does he dismount or fight? Does an AI gunner abandon a gun?
-- **Smoke against AI:** it blocks `VIEW`, but `FIRE` stayed at 1. Does it stop them shooting?
-- **Flare and illumination at night:** they fire, but their effect on what AI and spotters see wasn't measured.
-- **Lethality:** two runs with men standing in the open. Soldiers in cover, moving or prone are unmeasured.
-- **Vehicle guns:** Scorcher, Sandstorm and Sochor: moving, driver needed, rocket chunks, and the odd shell types.
-- **Vehicles in general:** only one Hunter ride was tried. Driving under fire, stuck drivers and full seats need a look before calling this a general feature.
-- **Headless clients and locality:** everything ran on the server. Guns on another machine need a test.
-- **Thresholds:** 100 m, 400 m, 800 m and 1,500 m are starting guesses. Reasonable but untested on real battles.
-- **`checkVisibility` cost** with many soldiers and shells: 8 rounds against 30 soldiers is fine in principle, but unmeasured.
+Every item that was on this list has now been measured on the real game. Most are one or two runs, so they show what happens, not how often. Scripts are `spike_arty_7.py` to `spike_arty_10.py`, and `spike_stress.py`.
+
+| Question | Measured | Design consequence |
+|---|---|---|
+| A crew alone, assaulted by 6, `TARGET` off | Two runs. Never fired, never dismounted, and killed by T+60 to T+65 | A gun can't defend itself. It needs a squad or a choice to leave it |
+| The same, `TARGET` on | Two runs. Fired 8 and 9 rounds at its attackers, and all 6 were dead by T+55 | Self-firing is a very strong defence, so enemy guns are dangerous up close |
+| A squad of 4 with a gun, assaulted by 6, `TARGET` off | One run lost one soldier and killed 4 attackers in 2 minutes. The other was wiped out and killed none | High variance. The gunner died and didn't dismount in both |
+| `TARGET` off in a long fight | Two runs, 3 minutes each, enemy in plain view: 0 rounds | Reliable so far |
+| Contact knowledge with `TARGET` off | The gunner and leader both still listed all 4 enemies, even with the leader on the gun | Contact reports should survive it. Enemies were revealed by script here, so noticing them unaided is untested |
+| Dust against spotting | After a shell lands, sight of the impact falls to 1 to 10% for about 5 s, and is back by 9 to 11 s, from 100, 330 or 800 m alike. It's the same looking 8 m above the impact | **A salvo hides itself.** At one round per 1.8 s, only the first can be seen. Check sight at the moment of impact, and adjust with single rounds at least 10 s apart |
+| Smoke against spotters | With inert soldiers, 3 rounds cut `VIEW` below 0.4 from about 40 s to 100 s after firing (section 2.5). With 6 rounds in a live fight, it stayed near zero for over a minute | Smoke blinds spotters, including your own |
+| Smoke against AI shooting | One run, before and after the rounds landed at about T+58: firing fell only from 3.4 to about 2.6 shots a second, and hits from 1.7 to about 1.0. `FIRE` visibility stayed at 0.69. `VIEW` had already fallen at T+35, before any mortar smoke, and did so in a test with no mortar too, so the soldiers seem to throw their own, which muddies the comparison | **Smoke doesn't stop AI that already knows where you are.** Whether it hides you from new detection is untested |
+| AI seeing at night | No night vision, moon down: 0 detections in 110 s at 60 or 120 m, in any light. By day, the same setup noticed within 3 to 5 s, at up to 200 m | **Flares don't help AI see.** Illumination is for people watching, which in this mode means nobody. Leave `ILLUM` and `FLARE` out of the first version |
+| Flare and illumination rounds | Burst at about 245 m, 26 s after firing. Flare: 19 s of light, only a little above a site with none, though nearby flares may have lit that site. Illumination: over 50 s, and hundreds of times brighter | They work, and are visually impressive for anyone watching with `--watch` |
+| Lethality, 8 HE on one point | Two runs each, 4 men per ring. **At 15 m and 40 m: all dead, whether standing, prone, moving or behind a bag fence.** At 75 m: all alive, except 2 hurt per standing group, and moving men who walked into it (2 and 3 dead) | Far stronger than any cover tested. Being spread out or moving matters, and being prone only reduces wounds. Ammunition is the balance lever |
+| Scorcher and Sochor | Gunner alone is enough. First round 7 s after the order, then one every 6 s. 48 s flight at 2,500 m. Missed by 28 to 92 m | Less accurate, and slower to arrive. 7 ammo types, including mines and guided rounds, which are worth leaving out at first |
+| **Scorcher at 2,000 m** | 3 of 3 tests fired nothing, though `inRangeOfArtillery` said yes, with `getArtilleryETA` valid and `unitReady` true. Fine at 1,000, 1,300, 1,600, 2,200, 2,500, 3,000 and 4,000 m | **A fourth silent failure.** Probably a gap between charges. Nothing fired after 10 s, with all checks passing, must report `Unable, can't lay on that target` |
+| Sandstorm and Zamak rockets | 4 rockets in 2.4 s, first at about 7 s. `Explode` never fires, because each splits in the air at about 437 m | Impacts can't be tracked this way. Leave rockets out of the first version |
+| Firing a gun that's driving | A Scorcher at 41 km/h stopped, fired, and stayed stopped, having gone 112 m of 600 | A fire mission cancels movement, so the battery must report it and a move needs reissuing |
+| Check fire | Mortar, before the first round and after 4 or 8: nothing further, and the next mission fired. Sandstorm after 2: the same. Scorcher: couldn't be tested, because it hit the 2,000 m gap | Reliable on mortars and rockets |
+| A truck and too many men | A truck took 8 within 40 s and drove 492 m in 40 s. A Hunter took 4 of 8: the other 4 stayed out with no complaint | Report who didn't fit |
+| A gun crew on a headless client | One test. An order sent from the server fired nothing. The same order through `remoteExec` to the gun fired, and the server saw every `Fired` and `Explode` | **Gun crews stay on the server.** `setGroupOwner` isn't used on them |
+| Cost of sight checks | 30 soldiers, one point: 2.3 ms for `checkVisibility`. `nearEntities` 0.17 ms, `fullCrew` 0.05 ms | Fine per shell. Sighting vehicles should be spread over several steps |
+| Stress | `getSuppression` averaged up to 76% on the losing side and 39% on the winning one, and fell to 0 within 5 s of the end. A mortar round 90 m away moved nothing | Used for reports (COMMANDER.md 10.6). Shells need their own trigger: count a nearby impact as being in combat |
+
+**Still open:** a real fight with fire support through the commander's own tools, a spotter finding its own targets, moving enemies, whether smoke hides anyone from new detection, and vehicles driving under fire. These belong to the integration steps below.
 
 ## 13. Decisions
 

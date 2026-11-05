@@ -282,6 +282,9 @@ def play_village(client: Client) -> list[str]:
                         confidence="medium")
             marked = 1
             snap(harness, "first contact")
+            # A squad in a fight should stall, then answer by message, with no grid unless asked for its position.
+            for callsign in ("Alpha", "Recon"):
+                print(f"    asked {callsign} mid-fight:", client.tool("commander_ask", to=callsign), flush=True)
         if len(seen) == 6:
             snap(harness, "mid battle")
         # Send everyone in once they've finished sweeping or have stalled: SEARCH alone leaves garrisons untouched, and
@@ -300,6 +303,8 @@ def play_village(client: Client) -> list[str]:
     assert "E1  enemy First contact  grid 041 040" in text or marked == 0
     assert "H1  hypothesis Enemy in village  grid 041 041  low" in text
     assert "checked, " in text, "no squad reported checking a building"
+    gridded = [line for line in text.splitlines() if "Contact" in line and "grid" in line.lower()]
+    assert not gridded, f"contact reports stating a grid: {gridded[:3]}"
     return seen
 
 
