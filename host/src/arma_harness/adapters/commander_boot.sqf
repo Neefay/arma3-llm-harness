@@ -15,6 +15,9 @@ if (not isNil "brmh_cmd_pfh") then {
 if (isNil "brmh_cmd_stations") then {
 	brmh_cmd_stations = createHashMap;
 };
+if (isNil "brmh_cmd_enemies") then {
+	brmh_cmd_enemies = [];
+};
 brmh_cmd_nextTruth = 0;
 
 brmh_cmd_fnc_rounds = {
@@ -119,6 +122,7 @@ brmh_cmd_fnc_packet = {
 		["unable", _group getVariable ["brmh_cmd_unable", ""]],
 		["leg", currentWaypoint _group],
 		["legs", count waypoints _group],
+		["clearing", _group getVariable ["brmh_cmd_clearLeft", -1]],
 		["contacts", [_leader] call brmh_cmd_fnc_contacts]
 	]
 };
@@ -144,8 +148,61 @@ brmh_cmd_fnc_truth = {
 	["evt", createHashMapFromArray [["type", "cmd_truth"], ["groups", _groups]]] call BRMH_fnc_emit;
 };
 
+brmh_cmd_fnc_startClearing = {
+	params ["_group", "_at", "_radius"];
+	private _spots = [];
+	{
+		_spots append (_x buildingPos -1);
+	} forEach nearestObjects [_at + [0], ["House"], _radius];
+	_group setVariable ["brmh_cmd_clearQueue", _spots];
+	_group setVariable ["brmh_cmd_clearLeft", count _spots];
+	{
+		_x setVariable ["brmh_cmd_clearBy", 0];
+	} forEach units _group;
+};
+
+// AI won't enter buildings to look for enemies it can't see, so soldiers are walked through every position in turn.
+brmh_cmd_fnc_stepClearing = {
+	params ["_group"];
+	private _queue = _group getVariable ["brmh_cmd_clearQueue", []];
+	private _busy = 0;
+	{
+		private _soldier = _x;
+		// A position can be unreachable, so nobody waits for one for long.
+		if (time < (_soldier getVariable ["brmh_cmd_clearBy", 0]) and {
+			not unitReady _soldier
+		}) then {
+			_busy = _busy + 1;
+		} else {
+			if (_queue isNotEqualTo []) then {
+				_soldier doMove (_queue deleteAt 0);
+				_soldier setVariable ["brmh_cmd_clearBy", time + 45];
+				_busy = _busy + 1;
+			};
+		};
+	} forEach ((units _group) select {
+		alive _x
+	});
+	_group setVariable ["brmh_cmd_clearLeft", count _queue + _busy];
+	if (_queue isEqualTo [] and {
+		_busy isEqualTo 0
+	}) then {
+		_group setVariable ["brmh_cmd_clearQueue", nil];
+		{
+			_x doFollow leader _group;
+		} forEach units _group;
+	};
+};
+
 brmh_cmd_fnc_step = {
 	["evt", createHashMapFromArray [["type", "cmd_tick"]]] call BRMH_fnc_emit;
+	{
+		if (not isNil {
+			_y getVariable "brmh_cmd_clearQueue"
+		}) then {
+			[_y] call brmh_cmd_fnc_stepClearing;
+		};
+	} forEach brmh_cmd_stations;
 	{
 		private _packet = [_x, _y] call brmh_cmd_fnc_packet;
 		if (not isNil "_packet") then {
@@ -235,6 +292,10 @@ brmh_cmd_fnc_order = {
 	};
 	_group setVariable ["brmh_cmd_order", _order];
 	_group setVariable ["brmh_cmd_unable", ""];
+	if (_mode isNotEqualTo "posture") then {
+		_group setVariable ["brmh_cmd_clearQueue", nil];
+		_group setVariable ["brmh_cmd_clearLeft", -1];
+	};
 	if ((_legs findIf {
 		(_x # 0) isNotEqualTo "CYCLE" and {
 			surfaceIsWater (_x # 1)
@@ -263,6 +324,10 @@ brmh_cmd_fnc_order = {
 	private _first = [];
 	{
 		_x params ["_type", "_at", "_radius", "_completion", "_holdFor"];
+		if (_type isEqualTo "CLEAR") then {
+			[_group, _at, _radius] call brmh_cmd_fnc_startClearing;
+			continue;
+		};
 		private _waypoint = _group addWaypoint [_at + [0], _radius];
 		_waypoint setWaypointType _type;
 		if (_completion > 0) then {
@@ -298,6 +363,101 @@ brmh_cmd_fnc_killStation = {
 	{
 		_x setDamage 1;
 	} forEach units _group;
+	true
+};
+
+/*
+	NAME: brmh_cmd_fnc_spawnEnemy
+	DESCRIPTION: Spawns an opposing group for a scenario. Operator action. Enemies are never on the net.
+	PARAMETERS:
+		0 - Group id (STRING)
+		1 - Side (SIDE)
+		2 - Number of soldiers (NUMBER)
+		3 - Unit class (STRING)
+		4 - Position [x, y] (ARRAY)
+		5 - Mode: "hold" stays put, "garrison" takes positions in nearby buildings, "patrol" walks the area (STRING)
+		6 - Radius in metres (NUMBER)
+	USAGE:
+		["East 1", east, 6, "O_Soldier_F", [4100, 4160], "garrison", 120] call brmh_cmd_fnc_spawnEnemy;
+	RETURNS: Number of soldiers created
+	ENVIRONMENT: Server
+*/
+brmh_cmd_fnc_spawnEnemy = {
+	params [["_id", "", [""]], ["_side", east, [east]], ["_count", 1, [0]], ["_class", "", [""]], ["_at", [], [[]], 2], ["_mode", "hold", [""]], ["_radius", 100, [0]]];
+	private _centre = _at + [0];
+	private _group = createGroup [_side, false];
+	for "_i" from 1 to _count do {
+		_group createUnit [_class, _centre getPos [3 * _i, 90], [], 0, "NONE"];
+	};
+	_group setGroupIdGlobal [_id];
+	brmh_cmd_enemies pushBack _group;
+	if (_mode isEqualTo "garrison") then {
+		private _spots = [];
+		{
+			_spots append (_x buildingPos -1);
+		} forEach nearestObjects [_centre, ["House"], _radius];
+		{
+			if (_spots isNotEqualTo []) then {
+				_x setPosATL (_spots deleteAt floor random count _spots);
+				_x disableAI "PATH";
+			};
+		} forEach units _group;
+	};
+	if (_mode isEqualTo "patrol") then {
+		[_group, _centre, _radius] call BIS_fnc_taskPatrol;
+	};
+	count units _group
+};
+
+// A repeat start reuses the running game. Renaming keeps old empty groups out of the new battle's records.
+brmh_cmd_fnc_clearAll = {
+	{
+		[_x] call brmh_cmd_fnc_deleteStation;
+		_y setGroupIdGlobal ["Retired"];
+	} forEach brmh_cmd_stations;
+	brmh_cmd_stations = createHashMap;
+	{
+		private _group = _x;
+		{
+			deleteVehicle _x;
+		} forEach units _group;
+		_group setGroupIdGlobal ["Retired"];
+	} forEach brmh_cmd_enemies;
+	brmh_cmd_enemies = [];
+	{
+		deleteVehicle _x;
+	} forEach allDead;
+	{
+		if ((_x find "brmh_cmd_") isEqualTo 0) then {
+			deleteMarker _x;
+		};
+	} forEach allMapMarkers;
+	true
+};
+
+/*
+	Two one-way feeds for a human observer. They write to the game's chat and map, and nothing reads them back,
+	so they can't help the commander.
+*/
+brmh_cmd_fnc_show = {
+	params [["_text", "", [""]]];
+	[_text] remoteExec ["systemChat", 0];
+	true
+};
+
+brmh_cmd_fnc_mirror = {
+	params [["_id", "", [""]], ["_kind", "note", [""]], ["_points", [], [[]]], ["_label", "", [""]], ["_confidence", "", [""]], ["_removed", false, [false]]];
+	private _name = "brmh_cmd_" + _id;
+	deleteMarker _name;
+	if (_removed) exitWith {
+		true
+	};
+	private _marker = createMarker [_name, (_points # 0) + [0]];
+	_marker setMarkerType (createHashMapFromArray [["enemy", "mil_warning"], ["friendly", "mil_dot"], ["objective", "mil_objective"], ["danger", "mil_warning"], ["hypothesis", "mil_unknown"]] getOrDefault [_kind, "mil_dot"]);
+	_marker setMarkerColor (createHashMapFromArray [["enemy", "ColorOPFOR"], ["friendly", "ColorBLUFOR"], ["objective", "ColorGreen"], ["danger", "ColorOrange"]] getOrDefault [_kind, "ColorWhite"]);
+	_marker setMarkerText (([_id, _label, _confidence] select {
+		_x isNotEqualTo ""
+	}) joinString " ");
 	true
 };
 

@@ -28,6 +28,12 @@ source = "missions/brmh_demo.VR"
 mods = ["@CBA_A3", "@Pythia", "@brmh"]
 client_mods = ["@CBA_A3", "@brmh"]
 
+[missions.commander]
+# Commander mode battles: a village on the VR map, and one observer slot to watch from (docs/COMMANDER.md).
+source = "missions/brmh_commander.VR"
+mods = ["@CBA_A3", "@Pythia", "@brmh"]
+client_mods = ["@CBA_A3", "@brmh"]
+
 # Example profile for your own mission:
 #
 # [missions.my_mission]

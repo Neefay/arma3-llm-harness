@@ -1,0 +1,5 @@
+onLoadName = "arma-harness: commander mode";
+onLoadMission = "You are the observer. The battle runs without you.";
+respawn = "BASE";
+respawnDelay = 5;
+respawnOnStart = -1;

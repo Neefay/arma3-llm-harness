@@ -79,7 +79,7 @@ def begin(client: Client) -> dict:
     raise TimeoutError("the net never came up")
 
 
-def next_wake(client: Client, timeout: float = 200) -> dict:
+def next_wake(client: Client, timeout: float = 240) -> dict:
     wake = client.wakes.get(timeout=timeout)
     print(f"\n--- WAKE turn {wake['meta']['turn']}: {wake['meta']['woke_on']}\n{wake['content']}", flush=True)
     return wake
@@ -174,10 +174,62 @@ def play_halt_and_resume(client: Client) -> list[str]:
     return seen
 
 
-def run(name: str, scenario: str, mode: str | None, play) -> None:
+def snap(harness: Harness, label: str) -> None:
+    try:
+        print(f"    snapshot {label}: {harness.snapshot(max_width=1100)['path']}", flush=True)
+    except Exception as exc:  # a missing picture shouldn't fail a battle
+        print(f"    snapshot {label} failed: {exc}", flush=True)
+
+
+def play_village(client: Client) -> list[str]:
+    """Plumbing for the combat scenario: timed attack, repeating check-in, markers, contact reports, an ending."""
+    harness = Harness()
+    begin(client)
+    snap(harness, "start")
+    client.tool("commander_order", to="Recon", legs=[{"type": "MOVE", "at": "041 038"}], behaviour="STEALTH")
+    client.tool("commander_mark", id="H1", kind="hypothesis", at="041 041", label="Enemy in village", confidence="low")
+    for callsign in ("Alpha", "Bravo", "Charlie"):
+        made = client.tool("commander_schedule", after="0:30", do={"order": {
+            "to": callsign, "legs": [{"type": "SEARCH", "at": "O1", "radius": 120}], "speed": "FULL"}})
+        print("    timed:", made, flush=True)
+    client.tool("commander_schedule", every="1:00", do={"ask": {"to": "Recon", "topics": ["position", "contacts"]}})
+    client.tool("commander_schedule", every="2:00", do={"wake": "Regular check"})
+    finish_turn(client, "Recon forward, attack at 0:30")
+    seen, marked, clearing, deadline = [], 0, set(), time.time() + 19 * 60
+    while time.time() < deadline:
+        wake = next_wake(client, 240)
+        seen.append(wake["content"])
+        if "MISSION END" in wake["content"]:
+            finish_turn(client, "Over")
+            break
+        if marked == 0 and "Contact," in wake["content"]:
+            client.tool("commander_mark", id="E1", kind="enemy", at="041 040", label="First contact",
+                        confidence="medium")
+            marked = 1
+            snap(harness, "first contact")
+        if len(seen) == 6:
+            snap(harness, "mid battle")
+        # Send everyone in once they've finished sweeping: SEARCH alone leaves garrisons untouched.
+        for callsign in ("Alpha", "Bravo", "Charlie"):
+            if callsign not in clearing and f"{callsign}: Finished searching" in wake["content"]:
+                clearing.add(callsign)
+                client.tool("commander_order", to=callsign, legs=[{"type": "CLEAR", "at": "O1", "radius": 130}])
+                print(f"    {callsign} ordered to clear", flush=True)
+        finish_turn(client, "Read the traffic")
+    snap(harness, "end")
+    text = "\n".join(seen)
+    assert "Contact," in text, "no contact report in the whole battle"
+    assert "E1  enemy First contact  grid 041 040" in text or marked == 0
+    assert "H1  hypothesis Enemy in village  grid 041 041  low" in text
+    assert "Copy, clearing buildings around grid 041 041" in text, "no squad was ordered to clear"
+    return seen
+
+
+def run(name: str, scenario: str, mode: str | None, play, watch: bool = False) -> None:
     print(f"\n========== {name} ==========", flush=True)
     harness = Harness()
-    print(json.dumps({k: v for k, v in operator.start(scenario, mode, harness).items() if k != "launch"}), flush=True)
+    started = operator.start(scenario, mode, harness, watch=watch)
+    print(json.dumps({k: v for k, v in started.items() if k != "launch"}), flush=True)
     client = Client()
     try:
         play(client)
@@ -195,7 +247,8 @@ def main() -> None:
     battles = [("hold mode, A to B", "poc_a_to_b", "hold", lambda c: play_a_to_b(c, "hold")),
                ("deliver mode, A to B", "poc_a_to_b", "deliver", lambda c: play_a_to_b(c, "deliver")),
                ("failure variant: Alpha lost", "poc_a_to_b_lost", "hold", play_lost),
-               ("halt, posture and resume", "poc_a_to_b", "hold", play_halt_and_resume)]
+               ("halt, posture and resume", "poc_a_to_b", "hold", play_halt_and_resume),
+               ("combat: take the village", "take_the_village", "hold", play_village, True)]
     wanted = sys.argv[1:]  # words to match in battle names; none means all of them
     try:
         for battle in battles:

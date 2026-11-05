@@ -91,7 +91,7 @@ def contact_groups(packet: dict, max_age: float = CONTACT_FORGOTTEN_S) -> list[d
 
 def contact_phrase(group: dict) -> str:
     kind = max(group["kinds"], key=group["kinds"].get)
-    label = "contacts" if kind == "unknown" else kind
+    label = ("contact" if group["count"] == 1 else "contacts") if kind == "unknown" else kind
     return f"{count_word(group['count'])} {label}, {group['direction']}, {rough_range(group['range'])}"
 
 
@@ -150,6 +150,10 @@ def _task_words(packet: dict, route: dict | None) -> str:
     leg = _current_leg(packet, route)
     if leg is None:
         return "No current orders."
+    if leg["type"] == "CLEAR":
+        if packet.get("clearing", -1) == 0:
+            return f"Finished clearing around grid {leg['grid']}."
+        return f"Clearing buildings around grid {leg['grid']}."
     distance = math.dist(packet["pos"], leg["pos"])
     if leg["type"] in ("HOLD", "SENTRY") and distance <= (leg.get("completion") or ON_STATION_M):
         return f"Holding at grid {format_grid(packet['grid'])}."
@@ -230,6 +234,13 @@ class Tracker:
         if not route or self.route_done or route.get("kind") != "route":
             return out
         legs = route["legs"]
+        if legs[0]["type"] == "CLEAR":
+            # Clearing uses no waypoints: the game side counts the positions left.
+            if packet.get("clearing", -1) == 0:
+                self.route_done = True
+                out.append(Report(ROUTINE, f"Finished clearing buildings around grid {legs[0]['grid']}, at grid "
+                                           f"{grid}.", grid))
+            return out
         leg_now = packet.get("leg", 0)
         while self.leg < leg_now and self.leg < len(legs):
             if self.leg == len(legs) - 1:
@@ -281,7 +292,8 @@ class Tracker:
 
     def _stuck(self, packet: dict, route: dict | None, now: float) -> list[Report]:
         current = _current_leg(packet, route)
-        moving_order = current is not None and route.get("kind") in ("route", "patrol") and not self.route_done
+        moving_order = current is not None and route.get("kind") in ("route", "patrol") and not self.route_done \
+            and current["type"] != "CLEAR"
         arrived = current is not None and packet.get("leg", 0) in self.on_station
         if not moving_order or arrived or self.contact_active or not self.progress_pos:
             self.progress_pos, self.progress_t = list(packet["pos"]), now
@@ -313,7 +325,8 @@ def _acknowledgement(route: dict | None, grid: str) -> str:
 
 
 def leg_words(legs: list[dict]) -> str:
-    verbs = {"HOLD": "holding at", "SENTRY": "watching at", "SEARCH": "searching around"}
+    verbs = {"HOLD": "holding at", "SENTRY": "watching at", "SEARCH": "searching around",
+             "CLEAR": "clearing buildings around"}
     return ", then ".join(f"{verbs.get(leg['type'], 'moving to')} grid {leg['grid']}" for leg in legs)
 
 

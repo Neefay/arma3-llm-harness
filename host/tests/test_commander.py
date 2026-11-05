@@ -106,6 +106,25 @@ def test_move_then_hold_at_the_same_grid_doesnt_report_passing_it():
     assert [r.text for r in said] == ["On station, grid 034 030."]
 
 
+def test_clear_reports_when_every_position_has_been_checked():
+    tracker = Tracker()
+    trip = route(("CLEAR", (4150, 4150), "041 041"))
+    said = tracker.update(packet(order="O-1", clearing=30, leg=0, legs=0), trip, 0)
+    assert [r.text for r in said] == ["Copy, clearing buildings around grid 041 041."]
+    assert reports.answer(packet(order="O-1", clearing=30), trip, ["task"]) == "Clearing buildings around grid 041 041."
+    assert tracker.update(packet(order="O-1", clearing=12, leg=0, legs=0), trip, 200) == []  # slow isn't stuck
+    done = tracker.update(packet(order="O-1", clearing=0, leg=0, legs=0, grid="041041"), trip, 300)
+    assert [r.text for r in done] == ["Finished clearing buildings around grid 041 041, at grid 041 041."]
+    assert tracker.update(packet(order="O-1", clearing=0, leg=0, legs=0), trip, 302) == []
+
+
+def test_unknown_contacts_read_properly():
+    assert reports.contact_phrase({"direction": "west", "count": 1, "kinds": {"unknown": 1}, "range": 100}) == \
+        "one contact, west, roughly 100 metres"
+    assert reports.contact_phrase({"direction": "west", "count": 2, "kinds": {"unknown": 2}, "range": 100}) == \
+        "a couple of contacts, west, roughly 100 metres"
+
+
 def test_posture_doesnt_restart_the_route():
     tracker, trip = Tracker(), route(("MOVE", (3200, 3050), "032 030"), ("MOVE", (3450, 3050), "034 030"))
     tracker.update(packet(order="O-1"), trip, 0)
@@ -303,6 +322,17 @@ def test_orders_rejected_only_for_what_the_roster_and_map_show(request_, message
         order(**request_)
 
 
+def test_clear_takes_a_radius_and_stands_alone():
+    stations = {"Alpha": {**STATIONS["Alpha"], "capabilities": ["CLEAR", "MOVE"]}}
+    clear = {"to": "Alpha", "legs": [{"type": "CLEAR", "at": "B"}]}
+    assert orders.validate(clear, stations, MARKERS, 8192)["engine_legs"][0][:3] == ["CLEAR", [3450.0, 3050.0], 100]
+    with pytest.raises(Invalid, match="at most 300"):
+        orders.validate({"to": "Alpha", "legs": [{"type": "CLEAR", "at": "B", "radius": 900}]}, stations, MARKERS, 8192)
+    with pytest.raises(Invalid, match="only leg"):
+        orders.validate({"to": "Alpha", "legs": [{"type": "CLEAR", "at": "B"}, {"type": "MOVE", "at": "B"}]}, stations,
+                        MARKERS, 8192)
+
+
 def test_patrol_adds_a_cycle_waypoint_and_halt_has_no_legs():
     patrol = {"to": "Alpha", "legs": [{"type": "PATROL", "at": ["030 030", "034 030"]}]}
     built = orders.validate(patrol, STATIONS, MARKERS, 8192)
@@ -496,6 +526,268 @@ def test_end_turn_refused_with_nothing_scheduled(tmp_path):
     assert b.runtime.end_turn("done", messages_only=True)["ended"]
 
 
+# -- markers ----------------------------------------------------------------------------------------
+
+
+def test_markers_show_with_age_and_can_be_updated_and_retired(tmp_path):
+    b = Battle(tmp_path)
+    b.start()
+    made = b.runtime.mark({"id": "E1", "kind": "enemy", "at": "056045", "label": "Infantry", "confidence": "medium",
+                           "sources": ["R-0001"], "expires": "T+00:20"})
+    assert made["id"] == "E1" and made["time_now"] == "T+00:00"
+    b.silent(110)
+    text = b.runtime.brief()["briefing"]
+    assert "E1  enemy Infantry  grid 056 045  medium  10 s old" in text and "B  objective Point B  grid 034 030" in text
+    b.silent(125)
+    assert "STALE" in b.runtime.brief()["briefing"]
+    b.runtime.mark({"id": "E1", "at": "057 045", "confidence": "HIGH", "expires": "T+10:00"})
+    text = b.runtime.brief()["briefing"]
+    assert "E1  enemy Infantry  grid 057 045  high  0 s old" in text and "STALE" not in text
+    assert b.runtime.mark({"at": "040 040"})["id"] == "M1"
+    assert b.runtime.mark({"kind": "phase_line", "at": ["040 040", "050 040"], "id": "Rose"})["id"] == "Rose"
+    assert "Rose  phase_line  grids 040 040; 050 040" in b.runtime.brief()["briefing"]
+    assert b.runtime.unmark("E1") == {"retired": "E1"} and "E1" not in b.runtime.brief()["briefing"]
+    history = b.records.read("markers")
+    assert [h["at"] for h in history if h["id"] == "E1" and "at" in h] == ["056 045", "057 045"]
+    assert history[-1] == {"id": "E1", "t": 25.0, "retired": True}
+
+
+@pytest.mark.parametrize("args, message", [
+    ({"id": "E1"}, "needs at"),
+    ({"id": "bad id!", "at": "040 040"}, "marker id"),
+    ({"at": "99"}, "Bad grid"),
+    ({"at": ["040 040"]}, "at least 2"),
+    ({"at": "040 040", "kind": "tank"}, "Bad kind"),
+    ({"at": "040 040", "confidence": "sure"}, "Bad confidence"),
+])
+def test_bad_markers_are_refused(tmp_path, args, message):
+    b = Battle(tmp_path)
+    b.start()
+    with pytest.raises(Invalid, match=message):
+        b.runtime.mark(args)
+
+
+def test_orders_can_aim_at_the_commanders_own_markers(tmp_path):
+    b = Battle(tmp_path)
+    b.start()
+    b.runtime.mark({"id": "Farm", "at": "036 030"})
+    b.runtime.order({"to": "Alpha", "legs": [{"type": "MOVE", "at": "Farm"}]})
+    assert b.game.calls[-1][1][3][0][1] == [3650.0, 3050.0]
+    b.runtime.mark({"id": "Rose", "kind": "phase_line", "at": ["040 040", "050 040"]})
+    with pytest.raises(Invalid, match="line or area"):
+        b.runtime.order({"to": "Alpha", "legs": [{"type": "MOVE", "at": "Rose"}]})
+
+
+# -- schedules --------------------------------------------------------------------------------------
+
+
+def test_timed_order_goes_out_on_time_without_a_wake_even_during_a_turn(tmp_path):
+    b = Battle(tmp_path)
+    b.start()
+    move = {"to": "Alpha", "legs": [{"type": "MOVE", "at": "B"}]}
+    made = b.runtime.schedule({"order": move}, at="T+00:30")
+    assert made["id"] == "S1" and made["first"] == "T+00:30"
+    assert "S1  T+00:30  Alpha: MOVE B" in b.runtime.brief()["briefing"]
+    calls = len(b.game.calls)
+    b.silent(129)
+    assert len(b.game.calls) == calls
+    b.wall = 0
+    b.silent(130)  # the turn is still open
+    assert b.game.calls[-1][1][0:2] == ["Alpha", "O-0001"] and b.wakes == []
+    assert "S1" not in b.runtime.schedules
+    assert "(timed, S1)" in b.records.read("radio")[-1]["text"]
+    assert b.records.read("orders")[-1]["via"] == "S1"
+
+
+def test_coordinated_attack_fires_together(tmp_path):
+    b = Battle(tmp_path, stations=[{"callsign": c, "role": "infantry", "capabilities": ["MOVE"], "at": "030 030"}
+                                   for c in ("Alpha", "Bravo", "Charlie")], success={})
+    b.start()
+    for callsign in ("Alpha", "Bravo", "Charlie"):
+        b.runtime.schedule({"order": {"to": callsign, "legs": [{"type": "MOVE", "at": "B"}]}}, at="T+01:00")
+    b.silent(160)
+    assert [call[1][0] for call in b.game.calls] == ["Alpha", "Bravo", "Charlie"]
+
+
+def test_timed_question_reply_wakes_and_silence_shows_as_overdue(tmp_path):
+    b = Battle(tmp_path)
+    b.start()
+    made = b.runtime.schedule({"ask": {"to": "Alpha", "topics": ["position"]}}, every="1:00")
+    assert made["first"] == "T+01:00"
+    b.runtime.schedule({"wake": "check"}, at="T+04:30")
+    b.runtime.end_turn("x")
+    b.advance(160, order="")
+    b.silent(164)
+    assert "Grid 030 030, stationary." in b.wakes[0][0] and "Alpha  grid 030 030" in b.wakes[0][0]
+    b.runtime.end_turn("fine")
+    b.silent(220)  # no packets for a minute: Alpha can't answer
+    b.silent(280)
+    assert len(b.wakes) == 1  # silence wakes nobody
+    b.silent(370)
+    assert "OVERDUE\nAlpha: missed 3 scheduled check-ins." in b.wakes[1][0]
+    b.runtime.end_turn("hm", messages_only=True)
+    b.advance(400, order="")
+    b.runtime.ask("Alpha", ["ammo"])
+    assert "OVERDUE" not in b.runtime.brief()["briefing"]
+
+
+def test_repeating_wake_comes_back_until_its_count_runs_out(tmp_path):
+    b = Battle(tmp_path)
+    b.start()
+    b.runtime.schedule({"wake": "look around"}, every="0:30", count=2)
+    b.runtime.end_turn("x")
+    b.silent(130)
+    assert "look around" in b.wakes[0][0] and "W1  T+01:00, every 0:30" in b.wakes[0][0]
+    b.runtime.end_turn("x")
+    b.silent(160)
+    assert len(b.wakes) == 2 and "W1" not in b.runtime.schedules and not b.runtime.wake.timers
+
+
+def test_schedules_are_cancelled_and_validated_up_front(tmp_path):
+    b = Battle(tmp_path)
+    b.start()
+    with pytest.raises(Invalid, match="Unknown callsign"):
+        b.runtime.schedule({"order": {"to": "Zulu", "legs": [{"type": "MOVE", "at": "B"}]}}, after="1:00")
+    with pytest.raises(Invalid, match="Unknown topics"):
+        b.runtime.schedule({"ask": {"to": "Alpha", "topics": ["vibes"]}}, after="1:00")
+    with pytest.raises(Invalid, match="at most every"):
+        b.runtime.schedule({"wake": "x"}, every="0:05")
+    with pytest.raises(Invalid, match="do needs one of"):
+        b.runtime.schedule({"dance": True}, after="1:00")
+    with pytest.raises(Invalid, match="Give after or at"):
+        b.runtime.schedule({"wake": "x"}, after="1:00", at="T+02:00")
+    made = b.runtime.schedule({"order": {"to": "Alpha", "legs": [{"type": "MOVE", "at": "B"}]}}, after="1:00")
+    assert b.runtime.unschedule(made["id"]) == {"cancelled": True}
+    b.silent(200)
+    assert b.game.calls == []
+    wake = b.runtime.schedule({"wake": "x"}, after="1:00")
+    assert b.runtime.unschedule(wake["id"]) == {"cancelled": True} and not b.runtime.wake.timers
+
+
+def test_timed_order_whose_marker_was_retired_only_troubles_the_operator(tmp_path):
+    b = Battle(tmp_path)
+    b.start()
+    b.runtime.mark({"id": "Farm", "at": "036 030"})
+    b.runtime.schedule({"order": {"to": "Alpha", "legs": [{"type": "MOVE", "at": "Farm"}]}}, after="0:10")
+    b.runtime.unmark("Farm")
+    b.silent(115)
+    assert b.game.calls == [] and "couldn't fire" in (b.records.folder / "operator.log").read_text(encoding="utf-8")
+
+
+# -- enemies and how battles end ----------------------------------------------------------------------
+
+
+def village(tmp_path, **over) -> Battle:
+    return Battle(tmp_path, enemies=[{"id": "East 1", "at": "041 041", "units": 4, "mode": "garrison"},
+                                     {"id": "East 2", "at": "041 039", "units": 2, "mode": "patrol"}],
+                  success={"enemy_cleared": True}, failure={"all_stations_lost": True}, **over)
+
+
+def groups(alpha=4, east1=4, east2=2) -> list[dict]:
+    return [{"group": "Alpha", "side": "WEST", "alive": alpha, "pos": [3050, 3050] if alpha else []},
+            {"group": "East 1", "side": "EAST", "alive": east1, "pos": [4100, 4100] if east1 else []},
+            {"group": "East 2", "side": "EAST", "alive": east2, "pos": [4100, 3900] if east2 else []}]
+
+
+def test_clearing_the_enemy_wins_and_the_commander_only_hears_at_the_end(tmp_path):
+    b = village(tmp_path)
+    b.start()
+    b.runtime.end_turn("x", messages_only=True)
+    b.game.emit(type="cmd_truth", t=102, groups=groups(east1=0))
+    b.silent(102)
+    assert b.wakes == [] and not b.runtime.ended
+    b.game.emit(type="cmd_truth", t=107, groups=groups(east1=0, east2=0))
+    b.silent(107)
+    assert b.wakes == []
+    b.silent(118)
+    assert "MISSION END. Objective achieved: the enemy has been cleared." in b.wakes[0][0]
+
+
+def test_losing_every_station_ends_it_at_once(tmp_path):
+    b = village(tmp_path)
+    b.start()
+    b.runtime.schedule({"wake": "check"}, after="9:00")
+    b.runtime.end_turn("x")
+    b.game.emit(type="cmd_truth", t=102, groups=groups(alpha=0))
+    b.silent(102)
+    assert "MISSION END. All stations have been lost." in b.wakes[0][0] and "check" not in b.wakes[0][0]
+    assert not b.runtime.schedules
+
+
+def test_enemies_stay_out_of_everything_the_commander_sees(tmp_path):
+    b = village(tmp_path)
+    brief = b.start()
+    b.game.emit(type="cmd_truth", t=102, groups=groups())
+    b.silent(102)
+    seen = json.dumps(brief) + b.runtime.brief()["briefing"] + json.dumps(b.runtime.roster())
+    assert "East 1" not in seen and "East 2" not in seen and "garrison" not in seen
+
+
+def test_bad_enemy_mode_is_refused():
+    with pytest.raises(ValueError, match="mode must be"):
+        scenario.build({"name": "t", "mission": "m", "text": "t", "time_limit": "1:00",
+                        "stations": [{"callsign": "A", "role": "r", "capabilities": [], "at": "000 000"}],
+                        "enemies": [{"id": "E", "at": "000 000", "mode": "dance"}]})
+
+
+# -- the human observer -------------------------------------------------------------------------------
+
+
+def test_observer_sees_radio_and_markers_only_when_the_scenario_has_one(tmp_path):
+    b = village(tmp_path / "a", spectator=True)
+    b.start()
+    b.advance(101, order="")
+    b.runtime.ask("Alpha", ["ammo"])
+    b.runtime.mark({"id": "E1", "kind": "enemy", "at": "041 041", "label": "Infantry", "confidence": "low"})
+    b.runtime.unmark("E1")
+    calls = b.game.calls
+    shown = [args[0] for code, args in calls if "fnc_show" in code]
+    assert "The battle has started." in shown and "Alpha: Ammo green, good." in shown
+    mirrors = [args for code, args in calls if "fnc_mirror" in code]
+    assert mirrors[-2][:2] == ["E1", "enemy"] and mirrors[-2][2] == [[4150.0, 4150.0]] and mirrors[-1][-1] is True
+    quiet = village(tmp_path / "b")
+    quiet.start()
+    quiet.runtime.mark({"id": "E1", "at": "041 041"})
+    assert quiet.game.calls == []
+
+
+# -- the lockdown check ---------------------------------------------------------------------------------
+
+
+def transcript(*loaded, deferred=()) -> list[dict]:
+    return [{"type": "api-request-shape", "shape": {"tools": [{"name": name} for name in loaded]}},
+            {"type": "attachment", "attachment": {"type": "deferred_tools_delta", "addedNames": list(deferred)}}]
+
+
+def commander_tools() -> list[str]:
+    return [f"mcp__commander__{name}" for name in TOOL_NAMES]
+
+
+def test_lockdown_passes_with_exactly_the_allowed_tools():
+    from arma_harness.commander.operator import judge_lockdown, tools_received
+
+    verdict = judge_lockdown(tools_received(transcript("ToolSearch", "advisor", deferred=commander_tools())))
+    assert verdict["ok"] and verdict["unexpected"] == [] and verdict["commander_tools"] == len(TOOL_NAMES)
+
+
+@pytest.mark.parametrize("extra", ["Read", "Bash", "SendMessage", "mcp__arma__arma_exec", "mcp__new_connector__x"])
+def test_lockdown_fails_on_anything_extra_loaded_or_deferred(extra):
+    from arma_harness.commander.operator import judge_lockdown, tools_received
+
+    for rows in (transcript("ToolSearch", extra, deferred=commander_tools()),
+                 transcript("ToolSearch", deferred=[*commander_tools(), extra])):
+        verdict = judge_lockdown(tools_received(rows))
+        assert not verdict["ok"] and verdict["unexpected"] == [extra]
+
+
+def test_lockdown_fails_if_it_cant_read_the_transcript_or_tools_are_missing():
+    from arma_harness.commander.operator import judge_lockdown, tools_received
+
+    assert not judge_lockdown(tools_received([{"type": "user"}]))["ok"]
+    verdict = judge_lockdown(tools_received(transcript("ToolSearch", deferred=commander_tools()[1:])))
+    assert not verdict["ok"] and len(verdict["missing"]) == 1
+
+
 # -- the fog ----------------------------------------------------------------------------------------
 
 
@@ -590,7 +882,8 @@ def test_state_survives_a_server_restart(tmp_path):
 
 def test_tool_list_is_exactly_the_allowlist():
     allowed = {"commander_mission", "commander_roster", "commander_order", "commander_ask", "commander_schedule",
-               "commander_unschedule", "commander_end_turn", "commander_brief", "commander_notes", "commander_log"}
+               "commander_unschedule", "commander_end_turn", "commander_brief", "commander_notes", "commander_log",
+               "commander_mark", "commander_unmark"}
     assert allowed == TOOL_NAMES
 
 

@@ -2,8 +2,11 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
+import subprocess
 import sys
+import time
 from pathlib import Path
 
 from ..adapters import load_sqf
@@ -15,6 +18,8 @@ from .records import Records
 from .runtime import Runtime
 
 SERVER_NAME = "commander"
+# ToolSearch loads the commander's own tools. advisor stayed despite a deny rule: it can't reach game data.
+HARMLESS_TOOLS = {"ToolSearch", "DeferredToolPlaceholder", "advisor"}
 # Named one by one because the client offers whatever isn't denied, and that list grows. A live check of what a session
 # actually received found SendMessage, for one, which could ask another local session what's really happening.
 DENIED_TOOLS = [
@@ -58,7 +63,7 @@ def launch_command(folder: Path) -> str:
             f"claude --dangerously-load-development-channels server:{SERVER_NAME}")
 
 
-def start(path: str, mode: str | None = None, harness: Harness | None = None) -> dict:
+def start(path: str, mode: str | None = None, harness: Harness | None = None, watch: bool = False) -> dict:
     """Boot the scenario's mission if needed, put the stations on the net, and prepare the commander's records."""
     h = harness or Harness()
     raw = _read_raw(path)
@@ -78,13 +83,13 @@ def start(path: str, mode: str | None = None, harness: Harness | None = None) ->
         raise HarnessError(f"this world's grid isn't a plain 100 m grid ({sample!r}), which isn't supported yet")
     _result(h.exec(load_sqf("commander_boot.sqf"), "server", timeout=20, strip=False))
     # A repeat start reuses the running game, so clear the previous attempt's soldiers first.
-    _result(h.exec('{ [_x] call brmh_cmd_fnc_deleteStation; _y setGroupIdGlobal ["Retired"] } '
-                   "forEach brmh_cmd_stations; brmh_cmd_stations = createHashMap; true", "server", timeout=10))
+    _result(h.exec("call brmh_cmd_fnc_clearAll", "server", timeout=10))
     for station in scenario.stations.values():
         at, _ = parse_grid(station["at"], world_size)
         _result(h.exec('[_this # 0, [west, east] select (_this # 1 isEqualTo "east"), _this # 2, _this # 3, _this # 4] '
                        "call brmh_cmd_fnc_enroll", "server", timeout=10,
                        args=[station["callsign"], scenario.side, station["units"], station["class"], at]))
+    _spawn_enemies(h, scenario, world_size)
     attempt = _next_attempt(h.home, state.run_id)
     records_folder = h.home.runs / state.run_id / f"commander-{attempt}" / scenario.side
     records_folder.mkdir(parents=True, exist_ok=True)
@@ -92,9 +97,38 @@ def start(path: str, mode: str | None = None, harness: Harness | None = None) ->
                "world_size": world_size}
     _current_file(h.home).write_text(json.dumps(current, indent=2), encoding="utf-8")
     workspace = write_workspace(h.home)
-    return {"scenario": scenario.name, "mode": scenario.mid_turn_messages, "run": state.run_id, "attempt": attempt,
+    observer = None
+    if watch and not any(proc.kind == "client" for proc in state.procs):
+        observer = h.client_start()
+    return {"observer": observer, "scenario": scenario.name, "mode": scenario.mid_turn_messages, "run": state.run_id,
+            "attempt": attempt,
             "records": str(records_folder), "workspace": str(workspace), "launch": launch_command(workspace),
             "then": 'Accept the prompts, then type: start'}
+
+
+def _spawn_enemies(h: Harness, scenario: scenario_mod.Scenario, world_size: float) -> None:
+    for enemy in scenario.enemies:
+        at, _ = parse_grid(enemy["at"], world_size)
+        if enemy["mode"] == "garrison":
+            _wait_for_buildings(h, at, enemy["radius"])
+        spawned = _result(h.exec('[_this # 0, [east, west] select (_this # 1 isEqualTo "west"), _this # 2, _this # 3, '
+                                 "_this # 4, _this # 5, _this # 6] call brmh_cmd_fnc_spawnEnemy", "server", timeout=10,
+                                 args=[enemy["id"], enemy["side"], enemy["units"], enemy["class"], at, enemy["mode"],
+                                       enemy["radius"]]))
+        if spawned != enemy["units"]:
+            raise HarnessError(f"enemy {enemy['id']}: spawned {spawned} of {enemy['units']}")
+
+
+def _wait_for_buildings(h: Harness, at: list[float], radius: float, timeout: float = 30) -> None:
+    """A mission can still be building its village when a fresh run gets here."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        found = _result(h.exec('count (nearestObjects [(_this # 0) + [0], ["House"], _this # 1] select { '
+                               "count (_x buildingPos -1) > 0 })", "server", timeout=10, args=[at, radius]))
+        if found:
+            return
+        time.sleep(2)
+    raise HarnessError(f"no enterable buildings within {radius} m of {at} to garrison")
 
 
 def _read_raw(path: str) -> dict:
@@ -205,6 +239,75 @@ def aar(home: Home | None = None) -> str:
 def _stations(records: Records) -> set[str]:
     senders = {r["from"] for r in records.read("radio")} | {r["to"] for r in records.read("radio")}
     return senders - {"HQ"}
+
+
+def tools_received(rows: list[dict]) -> tuple[set[str], set[str]] | None:
+    """From a session transcript: the (loaded, deferred) tools the client really offered, or None if not recorded."""
+    loaded: set[str] = set()
+    deferred: set[str] = set()
+    shapes = [row for row in rows if row.get("type") == "api-request-shape"]
+    if not shapes:
+        return None
+
+    def collect(value) -> None:
+        if isinstance(value, dict):
+            for tool in value["tools"] if isinstance(value.get("tools"), list) else []:
+                if isinstance(tool, dict) and tool.get("name"):
+                    loaded.add(tool["name"])
+            for item in value.values():
+                collect(item)
+        elif isinstance(value, list):
+            for item in value:
+                collect(item)
+
+    collect(shapes)
+    for row in rows:
+        attachment = row.get("attachment") or {}
+        if attachment.get("type") == "deferred_tools_delta":
+            deferred |= set(attachment.get("addedNames") or [])
+            deferred -= set(attachment.get("removedNames") or [])
+    return loaded, deferred
+
+
+def judge_lockdown(received: tuple[set[str], set[str]] | None) -> dict:
+    """Compare what a session received with the commander's allowlist. Unreadable counts as failure, not success."""
+    from .server import TOOL_NAMES  # the server imports this module
+
+    if received is None:
+        return {"ok": False, "error": "the transcript has no record of the tools sent, so nothing was verified. The "
+                                      "client's transcript format may have changed."}
+    loaded, deferred = received
+    offered = loaded | deferred
+    expected = {f"mcp__{SERVER_NAME}__{name}" for name in TOOL_NAMES}
+    unexpected = sorted(offered - expected - HARMLESS_TOOLS)
+    missing = sorted(expected - offered)
+    return {"ok": not unexpected and not missing, "unexpected": unexpected, "missing": missing,
+            "commander_tools": len(expected & offered), "other_tools_allowed": sorted(offered & HARMLESS_TOOLS)}
+
+
+def check_lockdown(home: Home | None = None) -> dict:
+    """Start a real one-shot session in the workspace and read which tools the client actually offered it. Asking
+    the model proves little: a well-behaved one declines whether it's blocked or not. Uses one small model call."""
+    home = home or Home()
+    workspace = write_workspace(home)
+    claude = shutil.which("claude")
+    if claude is None:
+        raise HarnessError("claude isn't on the PATH")
+    env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
+    command = [claude, "-p", "Reply with the single word: ok", "--model", "haiku", "--output-format", "json"]
+    done = subprocess.run(command, cwd=workspace, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                          encoding="utf-8", timeout=180, check=False)
+    try:
+        session = json.loads(done.stdout)["session_id"]
+    except (ValueError, KeyError, TypeError):
+        return {"ok": False, "error": f"couldn't read the session's id: {done.stdout[-300:]} {done.stderr[-300:]}"}
+    files = list((Path.home() / ".claude" / "projects").glob(f"*/{session}.jsonl"))
+    if not files:
+        return {"ok": False, "error": f"no transcript found for session {session}"}
+    rows = [json.loads(line) for line in files[0].read_text(encoding="utf-8").splitlines() if line.strip()]
+    return {**judge_lockdown(tools_received(rows)), "workspace": str(workspace), "note": (
+        "This session ran without the channel flag, so an interactive session's list could differ. Rerun after any "
+        "new client version, plugin or connector, because the deny list names tools one by one.")}
 
 
 def stop(harness: Harness | None = None) -> dict:

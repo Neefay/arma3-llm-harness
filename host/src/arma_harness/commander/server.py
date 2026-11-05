@@ -23,7 +23,10 @@ _STRING = {"type": "string"}
 _LEG = {
     "type": "object",
     "properties": {
-        "type": {"type": "string", "description": "MOVE, HOLD, SEARCH, SENTRY, PATROL, HALT or POSTURE"},
+        "type": {"type": "string", "description": "MOVE, HOLD, SEARCH (engage what's noticed in an area, "
+                                                "without entering buildings), CLEAR (go through every building "
+                                                "within radius, default 100 m, at most 300 m, on its own), SENTRY, "
+                                                "PATROL, HALT or POSTURE"},
         "at": {"description": "Grid such as '034 030', or a marker id. For PATROL, a list of them."},
         "radius": {"type": "number", "description": "Metres around the point"},
         "completion": {"type": "number", "description": "How close counts as arrived, in metres"},
@@ -56,12 +59,28 @@ TOOLS = [
         "topics": {"type": "array", "items": _STRING,
                    "description": "position, task, strength, ammo, contacts or eta"},
      }, "required": ["to"]}},
-    {"name": "commander_schedule", "description": "Set a wake. Give after (such as 1:30) or at (such as T+15:45), and "
-     "do={'wake': 'why you want to wake'}. Your note comes back with the wake.", "inputSchema": {
-        "type": "object", "properties": {"after": _STRING, "at": _STRING, "do": {"type": "object"}},
+    {"name": "commander_schedule", "description": "Do something later. When: after (such as 1:30), at (such as "
+     "T+15:45) or every (such as 5:00, with optional count or until). What: do={'wake': 'why you want to wake'}, or "
+     "do={'order': {same fields as commander_order}}, or do={'ask': {'to': ..., 'topics': [...]}}. Timed orders and "
+     "questions go out on time without waking you, even during a turn. Replies wake you. Silence shows as OVERDUE in "
+     "your next briefing.", "inputSchema": {
+        "type": "object", "properties": {"after": _STRING, "at": _STRING, "every": _STRING,
+                                         "count": {"type": "number"}, "until": _STRING, "do": {"type": "object"}},
         "required": ["do"]}},
-    {"name": "commander_unschedule", "description": "Cancel a wake by its id.", "inputSchema": {
+    {"name": "commander_unschedule", "description": "Cancel a schedule by its id.", "inputSchema": {
         "type": "object", "properties": {"id": _STRING}, "required": ["id"]}},
+    {"name": "commander_mark", "description": "Create or update a marker on your map: what you believe, not what's "
+     "confirmed. Omit id to create one, reuse an id to update it. Markers appear in every briefing with their age, and "
+     "orders can use a marker id instead of a grid.", "inputSchema": {"type": "object", "properties": {
+        "id": _STRING, "kind": {"type": "string", "description": "enemy, friendly, objective, phase_line, area, "
+                                                                 "danger, hypothesis or note"},
+        "at": {"description": "A grid such as '034 030', or a list of grids for a line or area"}, "label": _STRING,
+        "confidence": {"type": "string", "description": "low, medium or high"},
+        "sources": {"type": "array", "items": _STRING, "description": "Radio message ids behind this belief"},
+        "expires": {"type": "string", "description": "Flag it as stale after this time, such as T+25:00"},
+     }}},
+    {"name": "commander_unmark", "description": "Retire a marker that no longer holds. Its history is kept for "
+     "review.", "inputSchema": {"type": "object", "properties": {"id": _STRING}, "required": ["id"]}},
     {"name": "commander_end_turn", "description": "End your turn, with a short note. Refused when no wake is set, "
      "unless messages_only is true, which means you'll wake only for incoming messages.", "inputSchema": {
         "type": "object", "properties": {"note": _STRING, "messages_only": {"type": "boolean"}}}},
@@ -125,7 +144,12 @@ class Server:
             case "commander_ask":
                 return runtime.ask(args.get("to", ""), args.get("topics"))
             case "commander_schedule":
-                return runtime.schedule(args.get("do"), args.get("after"), args.get("at"))
+                return runtime.schedule(args.get("do"), args.get("after"), args.get("at"), args.get("every"),
+                                        args.get("count"), args.get("until"))
+            case "commander_mark":
+                return runtime.mark(args)
+            case "commander_unmark":
+                return runtime.unmark(args.get("id", ""))
             case "commander_unschedule":
                 return runtime.unschedule(args.get("id", ""))
             case "commander_end_turn":

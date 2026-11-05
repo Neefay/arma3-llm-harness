@@ -10,7 +10,9 @@ SPEEDS = {"LIMITED", "NORMAL", "FULL"}
 FORMATIONS = {"COLUMN", "STAG COLUMN", "WEDGE", "ECH LEFT", "ECH RIGHT", "VEE", "LINE", "FILE", "DIAMOND"}
 BEHAVIOURS = {"CARELESS", "SAFE", "AWARE", "COMBAT", "STEALTH"}
 COMBAT_MODES = {"BLUE", "GREEN", "WHITE", "YELLOW", "RED"}
-LEG_TYPES = {"MOVE": "MOVE", "HOLD": "HOLD", "SEARCH": "SAD", "SENTRY": "SENTRY"}
+LEG_TYPES = {"MOVE": "MOVE", "HOLD": "HOLD", "SEARCH": "SAD", "SENTRY": "SENTRY", "CLEAR": "CLEAR"}
+CLEAR_DEFAULT_RADIUS_M = 100
+CLEAR_MAX_RADIUS_M = 300
 ORDER_TYPES = set(LEG_TYPES) | {"PATROL", "HALT", "POSTURE"}
 
 
@@ -44,7 +46,10 @@ def parse_grid(text: str, world_size: float) -> tuple[list[float], str]:
 
 def _place(at, markers: dict[str, dict], world_size: float) -> tuple[list[float], str]:
     if isinstance(at, str) and at.strip() in markers:
-        return parse_grid(markers[at.strip()]["at"], world_size)
+        place = markers[at.strip()]["at"]
+        if isinstance(place, list):
+            raise Invalid(f"Marker {at.strip()} is a line or area. Give a grid instead.")
+        return parse_grid(place, world_size)
     return parse_grid(at, world_size)
 
 
@@ -97,12 +102,18 @@ def validate(request: dict, stations: dict[str, dict], markers: dict[str, dict],
         if posture == ["", "", "", ""]:
             raise Invalid("POSTURE needs at least one setting.")
         return {"to": to, "mode": "posture", "engine_legs": [], "posture": posture, "route": None}
+    if "CLEAR" in types and len(types) > 1:
+        raise Invalid("CLEAR must be the only leg in an order. Move there first, or schedule it for later.")
     if "PATROL" in types:
         return _patrol(to, legs, types, posture, markers, world_size)
     engine_legs, route_legs = [], []
     for leg, kind in zip(legs, types, strict=True):
         pos, grid = _place(leg.get("at"), markers, world_size)
         radius, completion = _number(leg.get("radius"), "radius"), _number(leg.get("completion"), "completion")
+        if kind == "CLEAR":
+            radius = radius or CLEAR_DEFAULT_RADIUS_M
+            if radius > CLEAR_MAX_RADIUS_M:
+                raise Invalid(f"CLEAR covers at most {CLEAR_MAX_RADIUS_M} metres.")
         hold_for = parse_time(leg["hold_for"]) if leg.get("hold_for") else 0
         engine_legs.append([LEG_TYPES[kind], pos, radius, completion, hold_for])
         route_legs.append({"type": kind, "pos": pos, "grid": grid, "completion": completion})

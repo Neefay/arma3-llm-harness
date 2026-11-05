@@ -23,7 +23,10 @@ class Scenario:
     side: str = "west"
     markers: dict[str, dict] = field(default_factory=dict)
     success: dict = field(default_factory=dict)
+    failure: dict = field(default_factory=dict)
+    enemies: list[dict] = field(default_factory=list)
     events: list[dict] = field(default_factory=list)
+    spectator: bool = False
     quiet_s: float = 3.0
     ceiling_s: float = 15.0
     mid_turn_messages: str = HOLD
@@ -56,9 +59,17 @@ def build(raw: dict) -> Scenario:
     for event in events:
         if event.get("action") not in ("delete_station", "kill_station") or event.get("station") not in stations:
             raise ValueError(f"bad scenario event: {event}")
+    enemies = []
+    for enemy in raw.get("enemies") or []:
+        if enemy.get("mode", "hold") not in ("hold", "garrison", "patrol"):
+            raise ValueError(f"{enemy['id']}: mode must be hold, garrison or patrol")
+        enemies.append({"id": enemy["id"], "side": enemy.get("side", "east"), "at": enemy["at"],
+                        "units": enemy.get("units", 4), "class": enemy.get("class", "O_Soldier_F"),
+                        "mode": enemy.get("mode", "hold"), "radius": enemy.get("radius", 100)})
     return Scenario(
         name=raw["name"], mission=raw["mission"], text=raw["text"].strip(),
         time_limit_s=parse_time(raw["time_limit"]), stations=stations, side=raw.get("side", "west"),
         markers={m["id"]: m for m in raw.get("markers") or []}, success=raw.get("success") or {}, events=events,
+        failure=raw.get("failure") or {}, enemies=enemies, spectator=bool(raw.get("spectator")),
         quiet_s=debounce.get("quiet_s", 3.0), ceiling_s=debounce.get("ceiling_s", 15.0), mid_turn_messages=mode,
     )
