@@ -5,6 +5,7 @@ import math
 import re
 
 _GRID = re.compile(r"^\s*(\d{3})\s?(\d{3})\s*$")
+_FINE_GRID = re.compile(r"^\s*(\d{4})\s?(\d{4})\s*$")
 _TIME = re.compile(r"^(?:T\+)?(\d+):([0-5]\d)$")
 
 SPEEDS = {"LIMITED", "NORMAL", "FULL"}
@@ -15,7 +16,11 @@ LEG_TYPES = {"MOVE": "MOVE", "HOLD": "HOLD", "SEARCH": "SAD", "SENTRY": "SENTRY"
 SINGLE_LEG = {"CLEAR", "OCCUPY", "CORDON", "ATTACK", "DEFEND", "PATROL_AREA", "SWEEP"}
 DEFAULT_RADIUS_M = {"CLEAR": 100, "CORDON": 30, "ATTACK": 80, "DEFEND": 100, "PATROL_AREA": 150, "SWEEP": 120}
 MAX_RADIUS_M = 300
-ORDER_TYPES = set(LEG_TYPES) | SINGLE_LEG | {"PATROL", "HALT", "POSTURE", "MOUNT", "DISMOUNT"}
+ORDER_TYPES = set(LEG_TYPES) | SINGLE_LEG | {"PATROL", "HALT", "POSTURE", "MOUNT", "DISMOUNT", "FIRE_MISSION",
+                                             "CHECK_FIRE"}
+AMMO = {"HE", "SMOKE"}
+MAX_FIRE_ROUNDS = 32
+MAX_FIRE_RADIUS_M = 150
 SEATS = re.compile(r"^(driver|gunner|commander|cargo|turret:\d+)$")
 
 
@@ -36,12 +41,15 @@ def format_time(seconds: float) -> str:
     return f"T+{total // 60:02d}:{total % 60:02d}"
 
 
-def parse_grid(text: str, world_size: float) -> tuple[list[float], str]:
-    """A 6-digit grid to the centre of its 100 m square, plus its spoken form."""
-    match = _GRID.match(str(text))
+def parse_grid(text: str, world_size: float, precise: bool = False) -> tuple[list[float], str]:
+    """A 6-figure grid to the centre of its 100 m square, plus its spoken form. Where 8 figures are allowed, those give
+    the centre of a 10 m square."""
+    fine = _FINE_GRID.match(str(text)) if precise else None
+    match = fine or _GRID.match(str(text))
     if not match:
-        raise Invalid(f"Bad grid {text!r}: use six digits, such as 048 190.")
-    x, y = int(match[1]) * 100 + 50, int(match[2]) * 100 + 50
+        raise Invalid(f"Bad grid {text!r}: use six digits, such as 048 190" + (", or eight." if precise else "."))
+    square, centre = (10, 5) if fine else (100, 50)
+    x, y = int(match[1]) * square + centre, int(match[2]) * square + centre
     if world_size and not (0 <= x <= world_size and 0 <= y <= world_size):
         raise Invalid(f"Grid {text} is outside the map.")
     return [float(x), float(y)], f"{match[1]} {match[2]}"
@@ -56,7 +64,7 @@ def _place(at, markers: dict[str, dict], world_size: float) -> tuple[list[float]
         place = markers[at.strip()]["at"]
         if isinstance(place, list):
             raise Invalid(f"Marker {at.strip()} is a line or area. Give a grid instead.")
-        return parse_grid(place, world_size)
+        return parse_grid(place, world_size, precise=True)
     return parse_grid(at, world_size)
 
 
@@ -116,6 +124,8 @@ def validate(request: dict, stations: dict[str, dict], markers: dict[str, dict],
         return {"to": to, "mode": "posture", "engine_legs": [], "posture": posture, "route": None}
     if "MOUNT" in types or "DISMOUNT" in types:
         return _boarding(to, legs, types, posture, vehicles or {})
+    if "FIRE_MISSION" in types or "CHECK_FIRE" in types:
+        return _fire(to, legs, types, posture, stations, world_size, vehicles or {})
     single = SINGLE_LEG & set(types)
     if single and len(types) > 1:
         raise Invalid(f"{sorted(single)[0]} must be the only leg in an order. Move there first, or schedule it.")
@@ -136,6 +146,43 @@ def validate(request: dict, stations: dict[str, dict], markers: dict[str, dict],
         route_legs.append({"type": kind, "pos": pos, "grid": grid, "completion": completion})
     return {"to": to, "mode": mode, "engine_legs": engine_legs, "posture": posture,
             "route": {"kind": "route", "legs": route_legs}}
+
+
+def _fire(to, legs, types, posture, stations, world_size, vehicles) -> dict:
+    """Fire orders only concern the guns. A radio operator can't call fire on a token like B3 or a marker, so the place
+    has to be a grid reference, which the commander works out for itself."""
+    if len(types) > 1:
+        raise Invalid(f"{types[0]} must be the only leg in an order.")
+    leg = legs[0]
+    guns = leg.get("guns") or []
+    unknown = [gun for gun in guns if gun not in vehicles]
+    if unknown:
+        raise Invalid(f"guns must be from your vehicle list, and these aren't: {unknown}.")
+    keys = [vehicles[gun]["key"] for gun in guns]
+    if types[0] == "CHECK_FIRE":
+        return {"to": to, "mode": "checkfire", "engine_legs": [[keys]], "posture": posture, "route": None,
+                "words": "Copy, check fire."}
+    at = leg.get("at")
+    if not isinstance(at, str) or not (_GRID.match(at) or _FINE_GRID.match(at)):
+        raise Invalid(f"A fire mission needs a grid reference of six or eight figures, such as 041 041 or 0412 0415, "
+                      f"and {at!r} isn't one. Markers and building ids can't be called in: work out the grid.")
+    aim, grid = parse_grid(at, world_size, precise=True)
+    ammo = str(leg.get("ammo") or "HE").upper()
+    if ammo not in AMMO:
+        raise Invalid(f"Bad ammo {ammo!r}: use one of {', '.join(sorted(AMMO))}.")
+    rounds = leg.get("rounds", 3)
+    if not isinstance(rounds, int) or isinstance(rounds, bool) or not 1 <= rounds <= MAX_FIRE_ROUNDS:
+        raise Invalid(f"rounds must be a whole number from 1 to {MAX_FIRE_ROUNDS}.")
+    radius = _number(leg.get("radius"), "radius")
+    if radius > MAX_FIRE_RADIUS_M:
+        raise Invalid(f"A fire mission's radius is at most {MAX_FIRE_RADIUS_M} metres.")
+    observer = leg.get("observer")
+    if observer is not None and observer not in stations:
+        raise Invalid(f"Unknown observer {observer!r}. See commander_roster.")
+    return {"to": to, "mode": "fire", "engine_legs": [[keys, aim, ammo, rounds, radius]], "posture": posture,
+            "route": None, "words": f"Copy, fire mission, {rounds} {ammo} at grid {grid}.",
+            "mission": {"aim": aim, "grid": grid, "ammo": ammo, "rounds": rounds, "radius": radius,
+                        "observer": observer}}
 
 
 def _boarding(to, legs, types, posture, vehicles) -> dict:

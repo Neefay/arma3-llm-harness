@@ -347,6 +347,99 @@ def play_vehicles(client: Client) -> list[str]:
     return [text]
 
 
+def play_fire(client: Client) -> list[str]:
+    """Fire missions on the real game, by the commander's own tools. The rounds land on empty ground."""
+    harness = Harness()
+    begin(client)
+    client.tool("commander_end_turn", note="Waiting", messages_only=True)
+    time.sleep(3)
+    assert in_game(harness, """
+    private _gun = brmh_cmd_vehicles get "V1";
+    [(gunner _gun) checkAIFeature "TARGET", gunner _gun isEqualTo leader group gunner _gun, count crew _gun]
+    """) == [False, False, 1]
+
+    log = []
+
+    def hear(phrase, timeout):
+        log.append(heard(client, phrase, timeout))
+        return log[-1]
+
+    def fire(to="Hammer", **leg):
+        return client.tool("commander_order", to=to, legs=[{"type": "FIRE_MISSION", **leg}])
+
+    answer = client.tool("commander_ask", to="Hammer", topics=["ammo"])["replies"][0]["text"]
+    assert "V1: 16 HE, 4 SMOKE." in answer, answer
+
+    # A mission: acknowledgement, shot with a time of flight, and rounds complete with what's left.
+    fire(at="028 020", rounds=2)
+    text = hear("Rounds complete", 60)
+    assert "Copy, fire mission, 2 HE at grid 028 020." in text, text[-700:]
+    assert "Shot, 2 rounds, splash in about" in text, text[-700:]
+    assert "14 HE left." in text
+
+    # 8 figures, and the impact goes where it should. A token is refused by the tool.
+    fire(at="0281 0203", rounds=1)
+    hear("13 HE left", 60)
+    result = client.request("tools/call", {"name": "commander_order", "arguments": {
+        "to": "Hammer", "legs": [{"type": "FIRE_MISSION", "at": "V1"}]}})
+    assert result.get("isError") and "grid reference" in result["content"][0]["text"], result
+
+    # Too far, too near, and a station with no gun: each said aloud, with no rounds wasted.
+    fire(at="080 020")
+    hear("Unable, out of range.", 30)
+    fire(at="020 020")
+    hear("Unable, out of range.", 30)
+    fire(to="Alpha", at="070 020")
+    hear("Unable, no gun crewed.", 30)
+
+    # Across a magazine: more than one holds, and it says when it runs out. Smoke is its own count.
+    fire(at="028 020", rounds=12)
+    text = hear("Rounds complete", 90)
+    assert "1 HE left." in text, text[-500:]
+    fire(at="028 020", rounds=3)
+    text = hear("Out of HE", 60)
+    assert "Out of HE, 1 of 3 fired." in text, text[-500:]
+    fire(at="028 020", ammo="SMOKE", rounds=1)
+    hear("3 SMOKE left", 60)
+    fire(at="028 020", rounds=1)
+    hear("Unable, out of HE.", 30)
+
+    # Weapons tight: it holds and says so, and goes when released. BLUE can't stop what's already running.
+    client.tool("commander_order", to="Hammer", legs=[{"type": "POSTURE"}], combat_mode="GREEN")
+    fire(at="028 020", ammo="SMOKE", rounds=1)
+    hear("Holding, weapons tight.", 40)
+    client.tool("commander_order", to="Hammer", legs=[{"type": "POSTURE"}], combat_mode="YELLOW")
+    hear("2 SMOKE left", 60)
+
+    # Check fire stops a mission with rounds to go, and it says what's still coming.
+    in_game(harness, '[(brmh_cmd_vehicles get "V1"), [["HE", 16], ["SMOKE", 2]]] call brmh_cmd_fnc_setAmmo; true')
+    fire(at="028 020", rounds=8)
+    hear("Shot, 8 rounds", 30)
+    time.sleep(1)
+    client.tool("commander_order", to="Hammer", legs=[{"type": "CHECK_FIRE"}])
+    assert "still in the air" in hear("rounds still in the air", 30)
+    left = client.tool("commander_ask", to="Hammer", topics=["ammo"])["replies"][0]["text"]
+    time.sleep(12)
+    assert left == client.tool("commander_ask", to="Hammer", topics=["ammo"])["replies"][0]["text"], "it kept firing"
+    fired = 16 - int(left.split("V1: ")[1].split(" HE")[0])
+    assert 1 <= fired < 8, left
+
+    # The fourth silent failure: a Scorcher that says it can reach, and doesn't fire.
+    fire(to="Anvil", at="040 050", rounds=2)
+    text = hear("Unable, can't lay on that target.", 60)
+
+    # A dead gunner.
+    in_game(harness, 'gunner (brmh_cmd_vehicles get "V1") setDamage 1; true')
+    hear("Gunner down on V1", 30)
+    fire(at="028 020", rounds=1)
+    hear("Unable, no gun crewed.", 30)
+    fire(at="028 020", rounds=1, guns=["V1"])
+    hear("Unable, no gunner on V1.", 30)
+    # The engine's hidden target at each aim point is nobody's enemy.
+    assert not [text for text in log if "Contact" in text], log
+    return log
+
+
 def play_village(client: Client) -> list[str]:
     """Plumbing for the combat scenario: timed attack, repeating check-in, markers, contact reports, an ending."""
     harness = Harness()
@@ -427,6 +520,7 @@ def main() -> None:
                ("halt, posture and resume", "poc_a_to_b", "hold", play_halt_and_resume),
                ("every order type", "orders_check", "hold", play_orders),
                ("vehicles and crews", "vehicles_check", "hold", play_vehicles),
+               ("fire missions", "fire_check", "hold", play_fire),
                ("combat: take the village", "take_the_village", "hold", play_village, True)]
     wanted = sys.argv[1:]  # words to match in battle names; none means all of them
     try:

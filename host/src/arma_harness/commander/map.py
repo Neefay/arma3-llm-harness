@@ -93,6 +93,8 @@ def _footprint(building: dict) -> list[tuple[float, float]]:
 
 def _grid_centre(grid: str) -> list[float]:
     digits = grid.replace(" ", "")
+    if len(digits) == 8:  # a commander's own working, down to a 10 m square
+        return [int(digits[:4]) * 10 + 5, int(digits[4:]) * 10 + 5]
     return [int(digits[:3]) * 100 + 50, int(digits[3:]) * 100 + 50]
 
 

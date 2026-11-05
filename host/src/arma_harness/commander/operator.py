@@ -139,7 +139,7 @@ def _spawn_vehicles(h: Harness, scenario: scenario_mod.Scenario, world_size: flo
     placed = []
     for vehicle in scenario.vehicles:
         at, grid = parse_grid(vehicle["at"], world_size)
-        ammo = [[magazine, rounds] for magazine, rounds in vehicle["ammo"].items()]
+        ammo = [[word.upper(), rounds] for word, rounds in vehicle["ammo"].items()]
         name = _result(h.exec("_this call brmh_cmd_fnc_spawnVehicle", "server", timeout=10,
                               args=[vehicle["id"], vehicle["class"], at, ammo]))
         placed.append({"id": vehicle["id"], "name": name, "at": grid, "known": vehicle["known"]})

@@ -1406,6 +1406,231 @@ def test_the_runtime_sends_the_games_key_and_reports_the_commanders_id(tmp_path)
     assert "U7" not in " ".join(said_by(b)) and "On V2" in b.runtime.ask("Alpha", ["vehicles"])["replies"][0]["text"]
 
 
+FIRING = {"Hammer": {"capabilities": ["FIRE_MISSION", "CHECK_FIRE"]}, "Recon": {"capabilities": ["MOVE"]}}
+
+
+def fire(**leg) -> dict:
+    request = {"to": "Hammer", "legs": [{"type": "FIRE_MISSION", **leg}]}
+    return orders.validate(request, FIRING, MARKERS, 8192, BUILDINGS, LIST)
+
+
+def test_fire_missions_take_six_or_eight_figures():
+    six = fire(at="041 041")
+    assert six["mode"] == "fire" and six["engine_legs"] == [[[], [4150.0, 4150.0], "HE", 3, 0.0]]
+    eight = fire(at="0412 0415", ammo="smoke", rounds=6, radius=30, observer="Recon", guns=["V2"])
+    assert eight["engine_legs"] == [[["U7"], [4125.0, 4155.0], "SMOKE", 6, 30.0]]  # the game's key, never shown
+    assert eight["mission"]["observer"] == "Recon" and eight["mission"]["grid"] == "0412 0415"
+    assert eight["words"] == "Copy, fire mission, 6 SMOKE at grid 0412 0415."
+
+
+@pytest.mark.parametrize("at", ["B1", "B", "E1", None, "", "04 04", ["041 041", "042 042"], "04120415x"])
+def test_a_fire_mission_cant_be_called_on_a_token(at):
+    """An RTO can't call fire on "that house": the commander has to work out the grid."""
+    with pytest.raises(Invalid, match="grid reference"):
+        fire(at=at)
+
+
+@pytest.mark.parametrize("leg, words", [
+    ({"ammo": "MINE"}, "Bad ammo"),
+    ({"rounds": 0}, "rounds must be"),  # the engine fires a burst of 4 if asked for none
+    ({"rounds": -1}, "rounds must be"),
+    ({"rounds": 33}, "rounds must be"),
+    ({"rounds": 1.5}, "rounds must be"),
+    ({"rounds": True}, "rounds must be"),
+    ({"radius": 151}, "radius"),
+    ({"observer": "Nobody"}, "Unknown observer"),
+    ({"guns": ["V9"]}, "vehicle list"),
+])
+def test_bad_fire_missions_are_refused(leg, words):
+    with pytest.raises(Invalid, match=words):
+        fire(at="041 041", **leg)
+
+
+def test_other_orders_stay_at_six_figures():
+    with pytest.raises(Invalid, match="six digits"):
+        wide(legs=[{"type": "MOVE", "at": "0412 0415"}])
+    assert orders.parse_grid("0412 0415", 8192, precise=True) == ([4125.0, 4155.0], "0412 0415")
+
+
+def test_check_fire_and_needing_the_capability():
+    order = orders.validate({"to": "Hammer", "legs": [{"type": "CHECK_FIRE"}]}, FIRING, MARKERS, 8192, [], LIST)
+    assert order["mode"] == "checkfire" and order["engine_legs"] == [[[]]] and order["words"] == "Copy, check fire."
+    with pytest.raises(Invalid, match="can't do FIRE_MISSION"):
+        orders.validate({"to": "Recon", "legs": [{"type": "FIRE_MISSION", "at": "041 041"}]},
+                        FIRING, MARKERS, 8192, [], LIST)
+    with pytest.raises(Invalid, match="only leg"):
+        orders.validate({"to": "Hammer", "legs": [{"type": "FIRE_MISSION", "at": "041 041"}, {"type": "CHECK_FIRE"}]},
+                        FIRING, MARKERS, 8192, [], LIST)
+
+
+def mission(state="firing", fired=0, want=6, reason="", word="HE", eta=27.6, in_air=0, gun="V1", order="O-1"):
+    return [gun, order, state, reason, word, fired, want, eta, in_air]
+
+
+def firing_at(tracker, row, t=0, **over):
+    return [r.text for r in tracker.update(packet(order="O-1", missions=[row], **over), None, t)]
+
+
+def test_a_mission_reports_shot_then_rounds_complete_once_each():
+    tracker = Tracker()
+    tracker.order = "O-1"
+    assert firing_at(tracker, mission()) == []
+    assert firing_at(tracker, mission(fired=1), 2) == ["Shot, 6 rounds, splash in about 30 seconds."]
+    assert firing_at(tracker, mission(fired=4), 4) == []
+    left = [["V1", [["HE", 10], ["SMOKE", 4]]]]
+    assert firing_at(tracker, mission("done", fired=6), 6, gun_ammo=left) == ["Rounds complete. 10 HE left."]
+    assert firing_at(tracker, mission("done", fired=6), 8, gun_ammo=left) == []
+
+
+def test_a_short_mission_still_says_shot_before_it_says_done():
+    tracker = Tracker()
+    tracker.order = "O-1"
+    said = firing_at(tracker, mission("done", fired=2, want=2), gun_ammo=[["V1", [["HE", 6]]]])
+    assert said == ["Shot, 2 rounds, splash in about 30 seconds.", "Rounds complete. 6 HE left."]
+
+
+@pytest.mark.parametrize("row, words", [
+    (mission("unable", reason="out of range"), "Unable, out of range."),
+    (mission("unable", reason="no gunner"), "Unable, no gunner on V1."),
+    (mission("unable", reason="no ammo", word="SMOKE"), "Unable, out of SMOKE."),
+    (mission("unable", reason="no gun", gun=""), "Unable, no gun crewed."),
+    (mission("unable", reason="destroyed"), "Unable, V1 is destroyed."),
+    (mission("cantlay"), "Unable, can't lay on that target."),
+    (mission("holding"), "Holding, weapons tight. Mission waiting."),
+])
+def test_every_way_a_mission_can_fail_is_said_aloud(row, words):
+    tracker = Tracker()
+    tracker.order = "O-1"
+    assert firing_at(tracker, row) == [words]
+
+
+def test_a_mission_cut_short_says_how_many_went():
+    tracker = Tracker()
+    tracker.order = "O-1"
+    assert firing_at(tracker, mission("out", fired=2)) == ["Shot, 6 rounds, splash in about 30 seconds.",
+                                                          "Out of HE, 2 of 6 fired."]
+    tracker = Tracker()
+    tracker.order = "O-1"
+    assert firing_at(tracker, mission("gunner", fired=2))[-1] == "2 of 6 fired, no gunner on V1."
+    tracker = Tracker()
+    tracker.order = "O-1"
+    assert firing_at(tracker, mission("destroyed", fired=2))[-1] == "V1 destroyed, 2 of 6 fired."
+
+
+def test_check_fire_says_whats_still_coming():
+    tracker = Tracker()
+    tracker.order = "O-1"
+    assert firing_at(tracker, mission("checked", fired=2, in_air=2, want=0, word="")) == \
+        ["2 rounds still in the air."]
+    tracker = Tracker()
+    tracker.order = "O-1"
+    assert firing_at(tracker, mission("checked", fired=1, in_air=1, want=0, word="")) == ["1 round still in the air."]
+    tracker = Tracker()
+    tracker.order = "O-1"
+    assert firing_at(tracker, mission("checked", want=0, word="")) == []
+
+
+def test_one_round_is_one_round():
+    tracker = Tracker()
+    tracker.order = "O-1"
+    assert firing_at(tracker, mission(fired=1, want=1)) == ["Shot, 1 round, splash in about 30 seconds."]
+
+
+def test_a_squad_leaving_a_fight_cant_get_ahead_of_itself(tmp_path):
+    b = in_the_fight(tmp_path)
+    b.advance(102, contacts=[contact()], suppression=0.5, missions=[mission(fired=1, order="O-9")])
+    assert radio_words(b) == []
+    b.advance(104, contacts=[], suppression=0, missions=[mission("done", fired=6, order="O-9")])
+    assert radio_words(b) == []  # it isn't in combat now, but it has things waiting to be said first
+    b.advance(200, contacts=[], suppression=0)
+    words = radio_words(b)
+    assert words.index("Shot, 6 rounds, splash in about 30 seconds.") < words.index("Rounds complete.")
+
+
+def test_no_script_ever_makes_a_shell():
+    """Rounds always come from a real gun. Scripted fire is how the mods this was compared with do it."""
+    code = (Path(reports.__file__).parent.parent / "adapters" / "commander_boot.sqf").read_text(encoding="utf-8")
+    assert "doArtilleryFire" in code
+    for banned in ("fireSupportVirtual", "BIS_fnc_fireSupport", "Sh_82mm", "Sh_155mm", "Smoke_82mm"):
+        assert banned not in code
+
+
+def test_holding_then_firing_is_each_reported_once():
+    tracker = Tracker()
+    tracker.order = "O-1"
+    assert firing_at(tracker, mission("holding")) == ["Holding, weapons tight. Mission waiting."]
+    assert firing_at(tracker, mission("holding"), 2) == []
+    assert firing_at(tracker, mission(fired=1), 4) == ["Shot, 6 rounds, splash in about 30 seconds."]
+
+
+def test_a_new_mission_reports_afresh():
+    tracker = Tracker()
+    tracker.order = "O-1"
+    firing_at(tracker, mission("done", fired=6))
+    next_one = packet(order="O-1", missions=[mission("done", fired=6, order="O-2")])
+    said = [r.text for r in tracker.update(next_one, None, 2)]
+    assert "Rounds complete." in said
+
+
+def test_the_squads_gun_ammo_comes_with_its_own():
+    answer = reports.answer(packet(gun_ammo=[["V1", [["HE", 16], ["SMOKE", 4]]]]), None, ["ammo"])
+    assert answer == "Ammo green, good. V1: 16 HE, 4 SMOKE."
+    assert reports.answer(packet(gun_ammo=[["V1", []]]), None, ["ammo"]).endswith("V1: empty.")
+
+
+def gunnery(tmp_path) -> Battle:
+    capabilities = ["MOVE", "FIRE_MISSION", "CHECK_FIRE"]
+    station = {"callsign": "Alpha", "role": "x", "capabilities": capabilities, "at": "030 030"}
+    b = Battle(tmp_path, stations=[station])
+    b.runtime = Runtime(b.game, b.scenario, b.records, lambda text, meta: b.wakes.append((text, meta)), world_size=8192,
+                        clock=lambda: b.wall, vehicles=[{"id": "V1", "name": "Mk6 Mortar", "at": "030 030"}])
+    b.start()
+    return b
+
+
+def test_fire_orders_leave_the_squads_route_alone(tmp_path):
+    b = gunnery(tmp_path)
+    b.runtime.order({"to": "Alpha", "legs": [{"type": "MOVE", "at": "034 030"}]})
+    route_before = b.runtime.routes["Alpha"]["legs"]
+    b.advance(102, order="O-0001")
+    b.runtime.order({"to": "Alpha", "legs": [{"type": "FIRE_MISSION", "at": "041 041", "rounds": 2}]})
+    assert b.game.calls[-1][1][:4] == ["Alpha", "O-0002", "fire", [[[], [4150.0, 4150.0], "HE", 2, 0.0]]]
+    assert b.runtime.routes["Alpha"]["legs"] == route_before
+    b.advance(104, order="O-0002", leg=0)
+    assert "Copy, fire mission, 2 HE at grid 041 041." in said_by(b)
+    assert not [w for w in said_by(b) if w.startswith("Copy, moving") and said_by(b).count(w) > 1]
+
+
+def test_a_fire_mission_records_what_the_commander_believed(tmp_path):
+    b = gunnery(tmp_path)
+    b.runtime.mark({"id": "E1", "kind": "enemy", "at": "041 041"})
+    b.advance(102, order="", pos=[3050, 3050])
+    b.runtime.ask("Alpha", ["position"])
+    b.runtime.order({"to": "Alpha", "legs": [{"type": "FIRE_MISSION", "at": "0412 0415", "observer": "Alpha"}]})
+    row = b.records.read("fire_missions")[0]
+    assert row["id"] == "O-0001" and row["grid"] == "0412 0415" and row["aim"] == [4125.0, 4155.0]
+    assert row["markers"][-1]["id"] == "E1" and row["positions"]["Alpha"]["grid"] == "030 030"
+    assert row["observer"] == "Alpha" and "Alpha" in row["last_heard"]
+
+
+def test_missions_never_show_the_games_keys(tmp_path):
+    b = gunnery(tmp_path)
+    b.advance(102, order="", missions=[["U7", "O-1", "unable", "no gunner", "HE", 0, 3, 0, 0]],
+              gun_ammo=[["U7", [["HE", 8]]]])
+    assert "U7" not in json.dumps(said_by(b)) and "Unable, no gunner on the gun." in said_by(b)
+    assert "U7" not in b.runtime.ask("Alpha", ["ammo"])["replies"][0]["text"]
+
+
+def test_a_marker_can_hold_a_commanders_eight_figure_working(tmp_path):
+    b = gunnery(tmp_path)
+    b.runtime.mark({"id": "E1", "kind": "enemy", "at": "0412 0415"})
+    assert b.runtime.markers["E1"]["at"] == "0412 0415"
+    assert "grid 0412 0415" in b.runtime.briefing()
+    assert b.runtime.map_image(center="E1", radius=100)["png"].startswith(b"\x89PNG")
+    b.runtime.order({"to": "Alpha", "legs": [{"type": "MOVE", "at": "E1"}]})
+    assert b.game.calls[-1][1][3][0][1] == [4125.0, 4155.0]
+
+
 def in_the_fight(tmp_path) -> Battle:
     b = Battle(tmp_path)
     b.start()

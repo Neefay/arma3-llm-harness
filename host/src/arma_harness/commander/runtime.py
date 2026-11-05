@@ -259,7 +259,10 @@ class Runtime:
         packet = {key: event.get(key) for key in (
             "callsign", "pos", "grid", "dir", "speed", "alive", "wounded", "baseline", "leader", "rounds",
             "rounds_baseline", "behaviour", "combat_mode", "order", "unable", "leg", "legs", "clearing", "cleared",
-            "placed", "contacts", "suppression", "ruined", "seen_vehicles", "seen_ruins", "mounted", "mount")}
+            "placed", "contacts", "suppression", "ruined", "seen_vehicles", "seen_ruins", "mounted", "mount",
+            "missions", "gun_ammo")}
+        packet["missions"] = [[self._vehicle_id(row[0]), *row[1:]] for row in packet.get("missions") or []]
+        packet["gun_ammo"] = [[self._vehicle_id(row[0]), *row[1:]] for row in packet.get("gun_ammo") or []]
         packet["mounted"] = [[self._vehicle_id(row[0]), *row[1:]] for row in packet.get("mounted") or []]
         if packet.get("mount"):
             packet["mount"] = [self._vehicle_id(packet["mount"][0]), *packet["mount"][1:]]
@@ -271,8 +274,9 @@ class Runtime:
         said = tracker.update(packet, self.routes.get(callsign), packet["t"], self.buildings)
         in_combat = tracker.in_combat(packet, packet["t"])
         for report in said:
-            if in_combat:
-                delay = reports.report_delay(packet, report.precedence)
+            # A squad out of the fight still can't get ahead of what it hasn't finished saying.
+            if in_combat or any(entry["callsign"] == callsign for entry in self.outbox):
+                delay = reports.report_delay(packet, report.precedence) if in_combat else 0
                 self._send_later(callsign, delay, packet["t"], text=report.text, precedence=report.precedence,
                                  grid=report.grid, checked=report.checked, destroyed=report.destroyed)
                 continue
@@ -388,7 +392,8 @@ class Runtime:
     def _mirror(self, marker: dict, removed: bool = False) -> None:
         if self.scenario.spectator:
             at = marker["at"] if isinstance(marker["at"], list) else [marker["at"]]
-            points = [marker["pos"]] if marker.get("pos") else [parse_grid(grid, self.world_size)[0] for grid in at]
+            points = [marker["pos"]] if marker.get("pos") else [parse_grid(grid, self.world_size, precise=True)[0]
+                                                                for grid in at]
             self._game_exec(MIRROR_CODE, [marker["id"], marker["kind"], points, marker.get("label", ""),
                                           marker.get("confidence", ""), removed])
 
@@ -606,7 +611,11 @@ class Runtime:
         mode, route = checked["mode"], checked["route"]
         if mode == "posture":
             base = previous or {"kind": "posture", "legs": []}
-            route = {**base, "keeps_progress": order_id, "acknowledge": "Copy."}
+            route = {**base, "keeps_progress": order_id, "acknowledge": "Copy.", "keeps_done": True}
+        elif mode in ("fire", "checkfire"):
+            # About the gun alone: the squad carries on with whatever it was doing.
+            base = previous or {"kind": "posture", "legs": []}
+            route = {**base, "keeps_progress": order_id, "acknowledge": checked["words"], "keeps_done": True}
         elif mode == "append" and previous and previous.get("kind") == "route":
             words = reports.leg_words(route["legs"])
             route = {"kind": "route", "legs": previous["legs"] + route["legs"], "keeps_progress": order_id,
@@ -618,6 +627,14 @@ class Runtime:
         suffix = f" (timed, {via})" if via else ""
         self._log_radio("HQ", callsign, f"{order_id}: {_order_words(request)}{suffix}", "order")
         self.records.append("orders", {"id": order_id, "t": round(self.rel(), 1), "request": request, "via": via})
+        if mode == "fire":
+            # What it believed when it fired, so a review can tell the fog from a bug if this kills its own men.
+            self.records.append("fire_missions", {
+                "id": order_id, "t": round(self.rel(), 1), "by": callsign, **checked["mission"],
+                "markers": list(self.markers.values()),
+                "positions": {name: {**place, "t": round(self.rel(place["t"]), 1)}
+                              for name, place in self.positions.items()},
+                "last_heard": {name: round(self.rel(t), 1) for name, t in self.last_heard.items()}})
         return order_id
 
     def _ask_targets(self, to, topics) -> list[str]:
@@ -822,7 +839,7 @@ class Runtime:
             return known[name]["at"]
         if re.fullmatch(r"B\d+", name):
             raise Invalid(f"There's no building {name}. Your buildings are listed in commander_mission.")
-        return parse_grid(at, self.world_size)[1]
+        return parse_grid(at, self.world_size, precise=True)[1]
 
     def unmark(self, marker_id: str) -> dict:
         with self.lock:

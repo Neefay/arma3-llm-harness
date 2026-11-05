@@ -237,7 +237,7 @@ def _radio(row: dict, world_size: float) -> dict:
 
 def _world(grid, world_size: float) -> list[float] | None:
     try:
-        return parse_grid(grid, world_size)[0] if grid else None
+        return parse_grid(grid, world_size, precise=True)[0] if grid else None
     except Invalid:
         return None
 

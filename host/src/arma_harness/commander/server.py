@@ -27,8 +27,11 @@ ORDER_TYPES_HELP = (
     "garrison buildings around a place and hold. PATROL_AREA: patrol randomly around a place. SWEEP: search randomly, "
     "including some buildings, until replaced. SENTRY: wait at a place until enemies appear, then continue. PATROL: "
     "repeat a route. HALT. POSTURE: change settings only. MOUNT: get into a vehicle from your list, one man if you "
-    "name a seat, or everyone who fits. DISMOUNT: get off one, or all of them. The last six of the single-place orders "
-    "run until replaced. Each stands alone in an order, except MOVE, HOLD, SEARCH and SENTRY, which can be chained.")
+    "name a seat, or everyone who fits. DISMOUNT: get off one, or all of them. FIRE_MISSION: fire this station's "
+    "crewed guns at a grid reference of six or eight figures, and only that: markers and building ids can't be called "
+    "in. CHECK_FIRE: stop firing, though rounds in the air still land. Fire orders leave the squad's other orders as "
+    "they are. The last six of the single-place orders run until replaced. Each stands alone in an order, except MOVE, "
+    "HOLD, SEARCH and SENTRY, which can be chained.")
 _STRING = {"type": "string"}
 _LEG = {
     "type": "object",
@@ -40,6 +43,10 @@ _LEG = {
                               "it to stay where that leg ended."},
         "vehicle": {"type": "string", "description": "For MOUNT and DISMOUNT: an id from your list, such as V1"},
         "seat": {"type": "string", "description": "For MOUNT: driver, gunner, commander, cargo or turret:0"},
+        "ammo": {"type": "string", "description": "For FIRE_MISSION: HE (default) or SMOKE"},
+        "rounds": {"type": "integer", "description": "For FIRE_MISSION: rounds per gun, default 3"},
+        "observer": {"type": "string", "description": "For FIRE_MISSION: a station to watch the fall of shot"},
+        "guns": {"type": "array", "items": _STRING, "description": "For fire orders: which guns, default all crewed"},
         "radius": {"type": "number", "description": "Metres around the point"},
         "completion": {"type": "number", "description": "How close counts as arrived, in metres"},
         "hold_for": {"type": "string", "description": "Time to wait at the point, such as 1:30"},

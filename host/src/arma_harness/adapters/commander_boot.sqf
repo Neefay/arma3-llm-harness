@@ -24,6 +24,9 @@ if (isNil "brmh_cmd_vehicles") then {
 if (isNil "brmh_cmd_buildings") then {
 	brmh_cmd_buildings = createHashMap;
 };
+if (isNil "brmh_cmd_fireActive") then {
+	brmh_cmd_fireActive = [];
+};
 brmh_cmd_sightTurn = 0;
 brmh_cmd_nextTruth = 0;
 
@@ -64,7 +67,13 @@ brmh_cmd_fnc_kind = {
 brmh_cmd_fnc_contacts = {
 	params ["_leader"];
 	private _near = _leader nearTargets 2000;
-	(_leader targets [true, 2000]) apply {
+	// A fire mission makes the engine put a hidden ArtilleryTarget at the aim point, on the other side. It isn't an enemy
+	// to anyone, and once it's gone, what's known of it is a place at the map's origin.
+	((_leader targets [true, 2000]) select {
+		not isNull _x and {
+			not ("ArtilleryTarget" in typeOf _x)
+		}
+	}) apply {
 		private _object = _x;
 		private _knowledge = _leader targetKnowledge _object;
 		private _entry = _near findIf {
@@ -527,6 +536,12 @@ brmh_cmd_fnc_packet = {
 		["seen_ruins", _group getVariable ["brmh_cmd_seenRuins", []]],
 		["mounted", [_alive] call brmh_cmd_fnc_mounted],
 		["mount", _group getVariable ["brmh_cmd_mount", []]],
+		["missions", (_group getVariable ["brmh_cmd_missions", []]) apply {
+			[_x get "key", _x get "order", _x get "state", _x getOrDefault ["reason", ""], _x get "word", _x getOrDefault ["fired", 0], _x get "want", _x getOrDefault ["eta", 0], _x getOrDefault ["inAir", 0]]
+		}],
+		["gun_ammo", ([_group, []] call brmh_cmd_fnc_gunsOf) apply {
+			[_x getVariable ["brmh_cmd_key", ""], [_x] call brmh_cmd_fnc_gunAmmo]
+		}],
 		["placed", _group getVariable ["brmh_cmd_placed", -1]],
 		["contacts", [_leader] call brmh_cmd_fnc_contacts]
 	]
@@ -834,6 +849,15 @@ brmh_cmd_fnc_order = {
 	};
 	_group setVariable ["brmh_cmd_order", _order];
 	_group setVariable ["brmh_cmd_unable", ""];
+	// These only concern the gun, and leave the squad's own orders as they were.
+	if (_mode isEqualTo "fire") exitWith {
+		[_group, _order, _legs # 0] call brmh_cmd_fnc_startFire;
+		true
+	};
+	if (_mode isEqualTo "checkfire") exitWith {
+		[_group, _order, _legs # 0 # 0] call brmh_cmd_fnc_checkFire;
+		true
+	};
 	if (_mode isNotEqualTo "posture") then {
 		_group setVariable ["brmh_cmd_clearQueue", nil];
 		_group setVariable ["brmh_cmd_clearLeft", -1];
@@ -1016,25 +1040,329 @@ brmh_cmd_fnc_spawnVehicle = {
 	private _vehicle = createVehicle [_class, _at + [0], [], 0, "NONE"];
 	_vehicle setVariable ["brmh_cmd_key", _key];
 	brmh_cmd_vehicles set [_key, _vehicle];
+	if (getNumber (configOf _vehicle >> "artilleryScanner") > 0) then {
+		[_vehicle] call brmh_cmd_fnc_trackGun;
+	};
 	if (_ammo isNotEqualTo []) then {
 		[_vehicle, _ammo] call brmh_cmd_fnc_setAmmo;
 	};
 	getText (configOf _vehicle >> "displayName")
 };
 
+// What the commander calls a magazine. Anything else a gun carries, such as mines or flares, isn't offered yet.
+brmh_cmd_fnc_ammoWord = {
+	params ["_magazine"];
+	private _name = toLowerANSI _magazine;
+	if ("smoke" in _name) exitWith {
+		"SMOKE"
+	};
+	if ("shells" in _name) exitWith {
+		"HE"
+	};
+	""
+};
+
+// Sets what a gun's main turret carries, from [["HE", 16], ["SMOKE", 4]]. Types not listed are taken away.
 brmh_cmd_fnc_setAmmo = {
 	params ["_vehicle", "_ammo"];
+	private _wanted = createHashMapFromArray _ammo;
+	private _carried = [];
 	{
-		_x params ["_magazine", "_rounds"];
+		if ((_x # 1) isEqualTo [0]) then {
+			_carried pushBackUnique (_x # 0);
+		};
+	} forEach magazinesAllTurrets _vehicle;
+	{
+		private _magazine = _x;
+		private _rounds = _wanted getOrDefault [[_magazine] call brmh_cmd_fnc_ammoWord, 0];
 		private _size = getNumber (configFile >> "CfgMagazines" >> _magazine >> "count");
 		_vehicle removeMagazinesTurret [_magazine, [0]];
 		while {
-			_rounds > 0
+			_rounds > 0 and {
+				_size > 0
+			}
 		} do {
 			_vehicle addMagazineTurret [_magazine, [0], _rounds min _size];
 			_rounds = _rounds - _size;
 		};
-	} forEach _ammo;
+		_wanted deleteAt ([_magazine] call brmh_cmd_fnc_ammoWord);
+	} forEach _carried;
+};
+
+brmh_cmd_fnc_gunAmmo = {
+	params ["_gun"];
+	private _counts = createHashMap;
+	{
+		if ((_x # 1) isEqualTo [0]) then {
+			private _word = [_x # 0] call brmh_cmd_fnc_ammoWord;
+			if (_word isNotEqualTo "") then {
+				_counts set [_word, (_counts getOrDefault [_word, 0]) + (_x # 2)];
+			};
+		};
+	} forEach magazinesAllTurrets _gun;
+	_counts toArray false
+};
+
+brmh_cmd_fnc_trackGun = {
+	params ["_gun"];
+	if (_gun getVariable ["brmh_cmd_tracked", false]) exitWith {};
+	_gun setVariable ["brmh_cmd_tracked", true];
+	_gun addEventHandler ["Fired", {
+		params ["_gun", "", "", "", "_ammo", "", "_shell"];
+		private _mission = _gun getVariable ["brmh_cmd_mission", createHashMap];
+		if (count _mission > 0) then {
+			_mission set ["fired", (_mission getOrDefault ["fired", 0]) + 1];
+			_mission set ["inAir", (_mission getOrDefault ["inAir", 0]) + 1];
+			_mission set ["lastShot", time];
+			if ((_mission getOrDefault ["state", ""]) isEqualTo "holding") then {
+				_mission set ["state", "firing"];
+			};
+		};
+		_shell setVariable ["brmh_cmd_from", [_gun getVariable ["brmh_cmd_key", ""], _mission getOrDefault ["order", ""], side group gunner _gun]];
+		_shell setVariable ["brmh_cmd_mission", _mission];
+		_shell addEventHandler ["Explode", {
+			params ["_shell", "_pos"];
+			private _mission = _shell getVariable ["brmh_cmd_mission", createHashMap];
+			if (count _mission > 0) then {
+				_mission set ["inAir", ((_mission getOrDefault ["inAir", 1]) - 1) max 0];
+			};
+			(_shell getVariable ["brmh_cmd_from", ["", "", sideUnknown]]) params ["_key", "_order", "_side"];
+			["evt", createHashMapFromArray [
+				["type", "cmd_impact"],
+				["gun", _key],
+				["order", _order],
+				["side", str _side],
+				["ammo", typeOf _shell],
+				["pos", [_pos # 0, _pos # 1]],
+				["seen", [_pos] call brmh_cmd_fnc_whoSaw]
+			]] call BRMH_fnc_emit;
+		}];
+	}];
+};
+
+// Who could see an impact at the moment it landed. Later, the dust and smoke of it hide the next one.
+brmh_cmd_fnc_whoSaw = {
+	params ["_pos"];
+	private _point = _pos vectorAdd [0, 0, 1];
+	private _out = [];
+	{
+		private _alive = (units _y) select {
+			alive _x and {
+				_x distance2D [_pos # 0, _pos # 1] < 1500
+			}
+		};
+		if ([_alive select [0, 4], objNull, _point] call brmh_cmd_fnc_canSee) then {
+			_out pushBack _x;
+		};
+	} forEach brmh_cmd_stations;
+	_out
+};
+
+brmh_cmd_fnc_gunsOf = {
+	params ["_group", "_keys"];
+	if (_keys isNotEqualTo []) exitWith {
+		_keys apply {
+			brmh_cmd_vehicles getOrDefault [_x, objNull]
+		}
+	};
+	private _guns = [];
+	{
+		private _vehicle = vehicle _x;
+		if (_vehicle isNotEqualTo _x and {
+			gunner _vehicle isEqualTo _x
+		} and {
+			getNumber (configOf _vehicle >> "artilleryScanner") > 0
+		}) then {
+			_guns pushBackUnique _vehicle;
+		};
+	} forEach units _group;
+	_guns
+};
+
+brmh_cmd_fnc_fireChunk = {
+	params ["_mission"];
+	private _gun = _mission get "gun";
+	private _aim = _mission get "aim";
+	private _left = (_mission get "want") - (_mission getOrDefault ["fired", 0]);
+	private _radius = _mission get "radius";
+	// A spread is one round to a point. A mission can't outrun its magazine, so the step sends the rest.
+	private _at = if (_radius > 0) then {
+		_aim getPos [random _radius, random 360]
+	} else {
+		_aim
+	};
+	_gun doArtilleryFire [_at, _mission get "mag", [_left, 1] select (_radius > 0)];
+	_mission set ["issued", time];
+	_mission set ["firedAtIssue", _mission getOrDefault ["fired", 0]];
+};
+
+/*
+	NAME: brmh_cmd_fnc_startFire
+	DESCRIPTION: Starts a station's fire mission on its guns. Every way this can silently do nothing is checked first or
+		watched for, and comes out in the packet as a state for the host to word.
+	PARAMETERS:
+		0 - Group (GROUP)
+		1 - Order id (STRING)
+		2 - [gun keys, [x, y], "HE" or "SMOKE", rounds, radius] (ARRAY)
+	ENVIRONMENT: Server
+*/
+brmh_cmd_fnc_startFire = {
+	params ["_group", "_order", "_leg"];
+	_leg params ["_keys", "_aim", "_word", "_want", "_radius"];
+	private _guns = [_group, _keys] call brmh_cmd_fnc_gunsOf;
+	private _missions = [];
+	if (_guns isEqualTo []) then {
+		_missions pushBack (createHashMapFromArray [["key", ""], ["order", _order], ["state", "unable"], ["reason", "no gun"], ["word", _word], ["want", _want]]);
+	};
+	{
+		private _gun = _x;
+		private _mission = createHashMapFromArray [["key", _gun getVariable ["brmh_cmd_key", ""]], ["order", _order], ["state", "unable"], ["word", _word], ["want", _want], ["fired", 0], ["inAir", 0], ["aim", (_aim select [0, 2]) + [0]], ["radius", _radius], ["gun", _gun]];
+		_missions pushBack _mission;
+		private _crew = gunner _gun;
+		private _magazine = (getArtilleryAmmo [_gun]) param [(getArtilleryAmmo [_gun]) findIf {
+			([_x] call brmh_cmd_fnc_ammoWord) isEqualTo _word
+		}, ""];
+		if (isNull _gun or {
+			not alive _gun
+		}) then {
+			_mission set ["reason", "destroyed"];
+			continue;
+		};
+		if (isNull _crew or {
+			not alive _crew
+		} or {
+			group _crew isNotEqualTo _group
+		}) then {
+			_mission set ["reason", "no gunner"];
+			continue;
+		};
+		if (_magazine isEqualTo "") then {
+			_mission set ["reason", "no ammo"];
+			continue;
+		};
+		if (not ((_mission get "aim") inRangeOfArtillery [[_gun], _magazine])) then {
+			_mission set ["reason", "out of range"];
+			continue;
+		};
+		[_gun] call brmh_cmd_fnc_trackGun;
+		_mission set ["mag", _magazine];
+		_mission set ["state", "firing"];
+		_mission set ["eta", _gun getArtilleryETA [_mission get "aim", _magazine]];
+		_gun setVariable ["brmh_cmd_mission", _mission];
+		_gun doWatch (_mission get "aim");
+		[_mission] call brmh_cmd_fnc_fireChunk;
+		brmh_cmd_fireActive = brmh_cmd_fireActive select {
+			(_x get "gun") isNotEqualTo _gun
+		};
+		brmh_cmd_fireActive pushBack _mission;
+	} forEach _guns;
+	private _kept = (_group getVariable ["brmh_cmd_missions", []]) select {
+		private _key = _x get "key";
+		(_missions findIf {
+			(_x get "key") isEqualTo _key
+		}) < 0
+	};
+	_group setVariable ["brmh_cmd_missions", _kept + _missions];
+	if (isNil "brmh_cmd_firePfh" and {
+		brmh_cmd_fireActive isNotEqualTo []
+	}) then {
+		brmh_cmd_firePfh = [{
+			call brmh_cmd_fnc_stepFire
+		}, 0.5] call CBA_fnc_addPerFrameHandler;
+	};
+};
+
+brmh_cmd_fnc_stepFire = {
+	{
+		private _mission = _x;
+		private _gun = _mission get "gun";
+		private _crew = gunner _gun;
+		private _fired = _mission getOrDefault ["fired", 0];
+		private _finish = "";
+		private _sinceShot = time - ((_mission getOrDefault ["lastShot", -1]) max (_mission get "issued"));
+		switch (true) do {
+			case (not alive _gun): {
+				_finish = "destroyed";
+			};
+			case (isNull _crew or {
+				not alive _crew
+			}): {
+				_finish = "gunner";
+			};
+			case (_fired >= (_mission get "want")): {
+				_finish = "done";
+			};
+			case (unitReady _gun and {
+				(time - (_mission get "issued")) >= 1
+			}): {
+				if (_fired > (_mission get "firedAtIssue")) then {
+					// That order's rounds are away. If that's all this type has, it's out.
+					if ((([_gun] call brmh_cmd_fnc_gunAmmo) findIf {
+						(_x # 0) isEqualTo (_mission get "word") and {
+							(_x # 1) > 0
+						}
+					}) < 0) then {
+						_finish = "out";
+					} else {
+						[_mission] call brmh_cmd_fnc_fireChunk;
+					};
+				} else {
+					// The engine says it can reach, and it doesn't fire. A Scorcher did this at 2,000 m, every time.
+					if (_sinceShot >= 15) then {
+						_finish = "cantlay";
+					};
+				};
+			};
+			case (_sinceShot >= 10 and {
+				_fired isEqualTo (_mission get "firedAtIssue")
+			} and {
+				(currentCommand _crew) isEqualTo "FIRE AT POSITION"
+			}): {
+				_mission set ["state", "holding"];
+			};
+		};
+		if (_finish isNotEqualTo "") then {
+			_mission set ["state", _finish];
+		};
+	} forEach brmh_cmd_fireActive;
+	brmh_cmd_fireActive = brmh_cmd_fireActive select {
+		(_x get "state") in ["firing", "holding"]
+	};
+	if (brmh_cmd_fireActive isEqualTo [] and {
+		not isNil "brmh_cmd_firePfh"
+	}) then {
+		[brmh_cmd_firePfh] call CBA_fnc_removePerFrameHandler;
+		brmh_cmd_firePfh = nil;
+	};
+};
+
+// The one thing that stops a mission once it's running. Combat modes and disableAI don't.
+brmh_cmd_fnc_checkFire = {
+	params ["_group", "_order", "_keys"];
+	private _guns = [_group, _keys] call brmh_cmd_fnc_gunsOf;
+	private _rows = [];
+	{
+		private _gun = _x;
+		if (alive _gun) then {
+			doStop _gun;
+		};
+		private _mission = _gun getVariable ["brmh_cmd_mission", createHashMap];
+		_mission set ["state", "stopped"];
+		_rows pushBack (createHashMapFromArray [["key", _gun getVariable ["brmh_cmd_key", ""]], ["order", _order], ["state", "checked"], ["word", ""], ["want", 0], ["fired", _mission getOrDefault ["fired", 0]], ["inAir", _mission getOrDefault ["inAir", 0]]]);
+	} forEach _guns;
+	brmh_cmd_fireActive = brmh_cmd_fireActive select {
+		(_x get "state") in ["firing", "holding"]
+	};
+	if (_rows isEqualTo []) then {
+		_rows pushBack (createHashMapFromArray [["key", ""], ["order", _order], ["state", "checked"], ["word", ""], ["want", 0], ["fired", 0], ["inAir", 0]]);
+	};
+	private _kept = (_group getVariable ["brmh_cmd_missions", []]) select {
+		private _key = _x get "key";
+		(_rows findIf {
+			(_x get "key") isEqualTo _key
+		}) < 0
+	};
+	_group setVariable ["brmh_cmd_missions", _kept + _rows];
 };
 
 brmh_cmd_fnc_clearAll = {
@@ -1043,6 +1371,7 @@ brmh_cmd_fnc_clearAll = {
 	} forEach brmh_cmd_vehicles;
 	brmh_cmd_vehicles = createHashMap;
 	brmh_cmd_buildings = createHashMap;
+	brmh_cmd_fireActive = [];
 	{
 		[_x] call brmh_cmd_fnc_deleteStation;
 		_y setGroupIdGlobal ["Retired"];

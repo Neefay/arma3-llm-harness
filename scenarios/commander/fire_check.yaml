@@ -1,0 +1,27 @@
+# Plumbing check for fire missions, with nobody to fight. Used by host/tests/live_commander.py.
+name: fire_check
+mission: commander
+time_limit: "15:00"
+text: >
+  A check of fire missions. There is no enemy.
+vehicles:
+  - { id: V1, class: B_Mortar_01_F, at: "020 020", ammo: { HE: 16, SMOKE: 4 } }
+  - { id: V2, class: B_MBT_01_arty_F, at: "020 050" }
+stations:
+  - callsign: Hammer
+    role: mortar section
+    capabilities: [MOVE, HOLD, MOUNT, DISMOUNT, FIRE_MISSION, CHECK_FIRE, HALT, POSTURE]
+    at: "020 021"
+    units: 3
+    crew: { V1: gunner }
+  - callsign: Anvil
+    role: howitzer crew
+    capabilities: [FIRE_MISSION, CHECK_FIRE, POSTURE]
+    at: "020 051"
+    units: 2
+    crew: { V2: gunner }
+  - callsign: Alpha
+    role: infantry squad, with no gun
+    capabilities: [MOVE, FIRE_MISSION, CHECK_FIRE]
+    at: "060 020"
+    units: 4

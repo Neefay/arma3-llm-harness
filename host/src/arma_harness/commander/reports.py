@@ -190,6 +190,9 @@ def answer(packet: dict, route: dict | None, topics: list[str] | None = None,
             case "ammo":
                 band = ammo_band(packet.get("rounds", 0), packet.get("rounds_baseline", 0))
                 parts.append(f"Ammo {band}, {_AMMO_WORDS[band]}.")
+                for gun, ammo in packet.get("gun_ammo") or []:
+                    held = ", ".join(f"{count} {word}" for word, count in ammo) or "empty"
+                    parts.append(f"{gun or 'The gun'}: {held}.")
             case "contacts":
                 groups = contact_groups(packet)
                 parts.append(" ".join(f"{_sentence(contact_phrase(g, buildings))}, {age_words(g['age_s'])}."
@@ -309,6 +312,7 @@ class Tracker:
     mount_said: list = field(default_factory=list)
     gunners: dict[str, str] = field(default_factory=dict)
     gunners_alive: int = 0
+    fire_said: dict[str, str] = field(default_factory=dict)
 
     def in_combat(self, packet: dict, now: float) -> bool:
         """From what the engine measures: a fresh enemy contact, being suppressed, or casualties just now. Behaviour
@@ -333,7 +337,27 @@ class Tracker:
             self.ammo = band
         out += self._stuck(packet, route, now)
         out += self._boarding(packet)
+        out += self._missions(packet)
         return [_without_own_grid(report) for report in out] if self.in_combat(packet, now) else out
+
+    def _missions(self, packet: dict) -> list[Report]:
+        out = []
+        for row in packet.get("missions") or []:
+            gun, order, state, *_ = row
+            fired, want, eta = row[5], row[6], row[7]
+            key = f"{order}:{gun}"
+            said = self.fire_said.get(key, "")
+            if fired > 0 and "shot" not in said and state != "checked":
+                seconds = max(5, round(eta / 5) * 5)
+                out.append(Report(ROUTINE, f"Shot, {_rounds(want)}, splash in about {seconds} seconds."))
+                said += " shot"
+            if state != "firing" and f" {state} " not in f"{said} ":
+                words = _mission_words(row, packet)
+                if words:
+                    out.append(Report(ROUTINE, words))
+                said += f" {state}"
+            self.fire_said[key] = said
+        return out
 
     def _boarding(self, packet: dict) -> list[Report]:
         out = []
@@ -361,7 +385,7 @@ class Tracker:
                 return [Report(ROUTINE, "Unable, that grid is open water.")]
             if route and route.get("keeps_progress") == order:
                 # POSTURE and appended legs continue the route, so its numbering carries on.
-                self.route_done = self.route_done and route.get("acknowledge") == "Copy."
+                self.route_done = self.route_done and bool(route.get("keeps_done"))
                 out.append(Report(ROUTINE, route.get("acknowledge", "Copy.")))
             else:
                 self.leg, self.on_station, self.route_done, self.checked = 0, [], False, []
@@ -502,6 +526,42 @@ def _boarding_words(status: list) -> str | None:
         "off": f"Off {vehicle}.",
     }
     return said.get(word)
+
+
+def _rounds(count: int) -> str:
+    return f"{count} round" if count == 1 else f"{count} rounds"
+
+
+def _gun_left(packet: dict, gun: str, word: str) -> str:
+    for key, ammo in packet.get("gun_ammo") or []:
+        if key == gun:
+            return f" {dict(ammo).get(word, 0)} {word} left."
+    return ""
+
+
+def _mission_words(row: list, packet: dict) -> str | None:
+    """How a mission's state is said. It's about the gun, and never says what the rounds hit."""
+    gun, _, state, reason, word, fired, want, _, in_air = row
+    name = gun or "the gun"
+    if state == "done":
+        return f"Rounds complete.{_gun_left(packet, gun, word)}"
+    if state == "out":
+        return f"Out of {word}, {fired} of {want} fired."
+    if state == "holding":
+        return "Holding, weapons tight. Mission waiting."
+    if state == "cantlay":
+        return "Unable, can't lay on that target."
+    if state == "gunner":
+        return f"{fired} of {want} fired, no gunner on {name}."
+    if state == "destroyed":
+        return f"{name} destroyed, {fired} of {want} fired."
+    if state == "checked":  # the order's acknowledged by then: this is only what can't be called back
+        return f"{_rounds(in_air)} still in the air." if in_air else None
+    if state == "unable":
+        return {"out of range": "Unable, out of range.", "no gunner": f"Unable, no gunner on {name}.",
+                "no gun": "Unable, no gun crewed.", "no ammo": f"Unable, out of {word}.",
+                "destroyed": f"Unable, {name} is destroyed."}.get(reason, "Unable.")
+    return None
 
 
 def _acknowledgement(route: dict | None, grid: str) -> str:
