@@ -229,7 +229,7 @@ A new station field, `spotter: true`. Reports depend on who's watching:
 
 | Who | Can it see the impact? | Report |
 |---|---|---|
-| Assigned `observer`, and a spotter | Yes | `Splash 60 m north, 20 m east of target. 3 rounds, about 25 m spread.` |
+| Assigned `observer`, and a spotter | Yes | `Splash 60 m north, 20 m east of the enemy. 3 rounds seen.` |
 | Spotter, not assigned | Yes | `Splash seen, grid 041 041, about 300 m north of us.` |
 | Spotter, assigned | No | `Can't observe. No view of the target.` once, with the reason if it's smoke being unknowable |
 | Not a spotter | Either | Only the "under fire" and "explosions" reports above |
@@ -237,7 +237,7 @@ A new station field, `spotter: true`. Reports depend on who's watching:
 - **An ordinary soldier still reports enemies,** through contact reports, as today. That's how they call for shelling, in effect. They just can't correct it.
 - **Can it see?** At each impact, checked from any living soldier in the station: `checkVisibility` in `VIEW`, from eyes to 1 m above the impact, above 0.3, within 1,500 m. Smoke blinds it for free.
 - **Grouped:** one report per burst, a few seconds after the last round lands. Offsets are rounded to 10 m up to 100 m, then to 50 m. That keeps it good enough to correct, and not perfect.
-- **Target:** relative to the mission's aim point. Assigning an observer is what tells it the aim point. That's the point of assigning one.
+- **Against what:** the enemy the spotter can see, at the position it perceives them, because that's what an observer corrects onto. An offset from the aim point would tell the commander nothing if the aim was wrong to begin with. With no enemy in view, it's against the grid it was given, which is what assigning an observer tells it.
 - **The correction is the commander's job.** The spotter says where it landed, and the commander works out the new grid. A report may not name friendlies near the impact, unless they're that spotter's own station.
 
 This gives the classic loop: a first round off by up to the grid's error, the observer calls it, the commander works out a corrected 8-figure grid and sends it, then fire for effect. Without a spotter, it can still fire by map, at unknown effect, and find out only from casualty reports or an enemy that stops showing up.
@@ -339,7 +339,8 @@ enemies:
 
 ## 12. Still unverified
 
-- **A full loop in one go,** which is the point of the prototype below: mount, fire, spot, correct, check fire.
+- **The real thing:** the prototype's enemy stood still in the open, with weapons held and its position given to the spotter by `reveal`. A fight, moving enemies and a spotter that has to find them for itself are all untried.
+- **Dust against spotting:** in the prototype, the spotter saw the first of two rounds, then read about 0.001 for the second, 2 s later. The first round's dust is the likely cause, but one test doesn't prove it. If so, a salvo hides itself, and single adjusting rounds really are the way to spot.
 - **Reliability of `disableAI "TARGET"`:** one 40-second test per setting with an enemy in plain view. Longer, with the enemy shooting at the crew, and with the gunner's squadmates sharing targets, is still to test. Also whether turning it off harms contact reports from that soldier.
 - **Check fire:** 2 of 2 guns stopped at once, but only at one point in a mission, and only on a mortar.
 - **Crew under real assault:** in the one test, the squad and gun won, so the crew was never overrun. Without `TARGET`, and with enemies close, does he dismount or fight? Does an AI gunner abandon a gun?
@@ -370,7 +371,7 @@ Chosen by me and easy to change: the building list stays at 6 figures, so 8-figu
 
 Nothing starts on the main system until the design's agreed and the prototype passes.
 
-1. **Prototype, outside the commander:** a script drives one full loop on a real game, with Recon spotting and Hammer firing: mount, self-fire check, fire, report text, correct, check fire, friendly-fire record.
+1. **Prototype, outside the commander:** done. [prototype_loop.py](../host/tests/spikes/fire_support/prototype_loop.py) drives one full loop on a real game, and passed 16 of 16 checks: mount by seat, no self-firing, impossible shots refused aloud, a 6-figure mission that missed by 45 m on average, a spotter's report, a corrected 8-figure grid that missed by 12 m and killed 4 of 4, a mission across a magazine change, check fire, friendly fire recorded against the gun, and dismounting. A script played the commander, so none of this has been through the commander's tools or reports yet.
 2. **Vehicle list and reports:** `V` ids, sightings, the `vehicles` topic, and the `CLEAR` ruin fix.
 3. **`MOUNT` and `DISMOUNT`,** and the leader and split-squad rules.
 4. **`FIRE_MISSION` and `CHECK_FIRE`,** with the controller.
