@@ -1160,6 +1160,147 @@ def test_nothing_engine_shaped_reaches_the_commander(tmp_path):
         assert banned not in seen, banned
 
 
+def with_a_gun(tmp_path) -> Battle:
+    b = with_buildings(tmp_path)
+    b.runtime = Runtime(b.game, b.scenario, b.records, lambda text, meta: b.wakes.append((text, meta)), world_size=8192,
+                        clock=lambda: b.wall, buildings=BUILDINGS,
+                        vehicles=[{"id": "V1", "name": "Mk6 Mortar", "at": "041 033", "known": True},
+                                  {"id": "V9", "name": "Mk6 Mortar", "at": "050 050", "known": False}])
+    b.start()
+    b.runtime.end_turn("x", messages_only=True)
+    return b
+
+
+def said_by(b: Battle) -> list[str]:
+    return [row["text"] for row in b.records.read("radio")]
+
+
+def test_the_commander_starts_knowing_only_the_vehicles_it_was_told_about(tmp_path):
+    b = with_a_gun(tmp_path)
+    assert list(b.runtime.vehicles) == ["V1"]
+    assert b.runtime.mission()["vehicles"] == [{"id": "V1", "type": "Mk6 Mortar", "grid": "041 033"}]
+    assert "VEHICLES\nV1  Mk6 Mortar  grid 041 033  as briefed" in b.runtime.briefing()
+
+
+def test_a_squad_reports_an_abandoned_gun_once_and_it_gets_an_id(tmp_path):
+    b = with_a_gun(tmp_path)
+    seen = [["V9", "Mk6 Mortar", "039035", True]]
+    b.advance(102, seen_vehicles=seen)
+    b.advance(104, seen_vehicles=seen)
+    assert said_by(b) == ["Mk6 Mortar, nobody on it, grid 039 035. Listed as V2."]
+    assert b.runtime.vehicles["V2"]["at"] == "039 035"
+    assert "V2  Mk6 Mortar  grid 039 035  reported" in b.runtime.briefing()
+    assert "V9" not in b.runtime.briefing() and "U1" not in json.dumps(b.runtime.mission())
+
+
+def test_nobody_takes_stock_of_abandoned_guns_in_a_firefight(tmp_path):
+    b = with_a_gun(tmp_path)
+    seen = [["U1", "Mk6 Mortar", "039035", True]]
+    b.advance(102, seen_vehicles=seen, suppression=0.5)
+    assert said_by(b) == [] and list(b.runtime.vehicles) == ["V1"]
+    b.advance(104, seen_vehicles=seen)
+    assert said_by(b) == ["Mk6 Mortar, nobody on it, grid 039 035. Listed as V2."]
+
+
+def test_a_known_gun_found_wrecked_or_moved_is_news_once(tmp_path):
+    b = with_a_gun(tmp_path)
+    moved = [["V1", "Mk6 Mortar", "042033", True]]
+    b.advance(102, seen_vehicles=moved)
+    b.advance(104, seen_vehicles=moved)
+    wreck = [["V1", "Mk6 Mortar", "042033", False]]
+    b.advance(106, seen_vehicles=wreck)
+    b.advance(108, seen_vehicles=wreck)
+    assert said_by(b) == ["V1, Mk6 Mortar, nobody on it, is at grid 042 033.", "V1 is wrecked, grid 042 033."]
+    assert "V1  Mk6 Mortar  wrecked  grid 042 033" in b.runtime.briefing()
+
+
+def test_an_unknown_wreck_isnt_news(tmp_path):
+    b = with_a_gun(tmp_path)
+    b.advance(102, seen_vehicles=[["U1", "Mk6 Mortar", "039035", False]])
+    assert said_by(b) == [] and list(b.runtime.vehicles) == ["V1"]
+
+
+def test_a_gun_stays_listed_as_it_was_until_someone_sees_otherwise(tmp_path):
+    b = with_a_gun(tmp_path)
+    b.advance(102)
+    assert not b.runtime.vehicles["V1"]["wrecked"]  # truly destroyed or not, nobody's said
+
+
+def test_a_destroyed_building_is_news_only_once_seen(tmp_path):
+    b = with_a_gun(tmp_path)
+    assert "BUILDINGS DESTROYED" not in b.runtime.briefing()
+    b.advance(102, seen_ruins=["B2"])
+    b.advance(104, seen_ruins=["B2"])
+    assert said_by(b) == ["B2 is destroyed."]
+    assert "BUILDINGS DESTROYED\nB2" in b.runtime.briefing()
+
+
+def test_clearing_a_ruin_says_so_and_moves_on():
+    tracker, trip = Tracker(), clear_route("B1", "B3")
+    tracker.update(packet(order="O-1", clearing=30, cleared=[]), trip, 0)
+    said = tracker.update(packet(order="O-1", clearing=12, cleared=[], ruined=["B1"]), trip, 20)
+    assert [(r.text, r.destroyed, r.checked) for r in said] == [("B1 is a ruin, nothing to check.", "B1", None)]
+    assert tracker.update(packet(order="O-1", clearing=12, cleared=[], ruined=["B1"]), trip, 22) == []
+
+
+def test_a_ruin_found_during_a_fight_arrives_late_but_still_counts(tmp_path):
+    b = with_a_gun(tmp_path)
+    b.runtime.routes["Alpha"] = clear_route("B1", "B3")
+    b.advance(102, order="O-1", clearing=30, cleared=[], suppression=0.5)
+    b.advance(104, order="O-1", clearing=30, cleared=[], ruined=["B1"], suppression=0.5)
+    assert "B1" not in b.runtime.destroyed
+    for t in (110, 116, 122, 128, 134, 140, 146, 152):
+        b.advance(t, order="O-1", clearing=30, cleared=[], ruined=["B1"], suppression=0.5)
+    assert "B1" in b.runtime.destroyed
+
+
+def test_vehicles_in_a_sitrep_and_the_vehicles_topic():
+    on_gun = packet(mounted=[["V1", "gunner", "Sam Reed", "B_Mortar_01_F"]])
+    assert reports.answer(on_gun, None, ["vehicles"]) == "On V1: Sam Reed as gunner. 3 on foot."
+    assert reports.answer(packet(), None, ["vehicles"]) == "All on foot."
+    assert "on foot" not in reports.answer(packet(), None)
+    assert "On V1: Sam Reed as gunner." in reports.answer(on_gun, None)
+    all_in = packet(alive=2, mounted=[["V3", "driver", "A B", "x"], ["V3", "cargo", "C D", "x"]])
+    assert reports.answer(all_in, None, ["vehicles"]) == "On V3: A B as driver, C D as cargo."
+    assert reports.answer(packet(mounted=[["", "gunner", "A B", "x"]]), None, ["vehicles"]).startswith("On a vehicle:")
+
+
+def test_engine_keys_become_the_commanders_ids_in_answers(tmp_path):
+    b = with_a_gun(tmp_path)
+    b.advance(102, mounted=[["V1", "gunner", "Sam Reed", "B_Mortar_01_F"]])
+    assert "On V1: Sam Reed as gunner" in b.runtime.ask("Alpha", ["vehicles"])["replies"][0]["text"]
+    b.advance(104, mounted=[["U7", "gunner", "Sam Reed", "B_Mortar_01_F"]])
+    answer = b.runtime.ask("Alpha", ["vehicles"])["replies"][0]["text"]
+    assert "U7" not in answer and "B_Mortar" not in answer and "On a vehicle" in answer
+
+
+def test_vehicle_knowledge_survives_a_server_restart(tmp_path):
+    b = with_a_gun(tmp_path)
+    b.advance(102, seen_vehicles=[["U1", "Mk6 Mortar", "039035", True]], seen_ruins=["B2"])
+    b.runtime.save()
+    again = Runtime(b.game, b.scenario, b.records, lambda text, meta: None, world_size=8192, clock=lambda: b.wall,
+                    buildings=BUILDINGS, vehicles=[{"id": "V1", "name": "Mk6 Mortar", "at": "041 033", "known": True}])
+    assert set(again.vehicles) == {"V1", "V2"} and again.vehicles["V2"]["key"] == "U1" and "B2" in again.destroyed
+
+
+def test_the_map_draws_vehicles_and_ruins(tmp_path):
+    b = with_a_gun(tmp_path)
+    b.advance(102, seen_vehicles=[["V1", "Mk6 Mortar", "041033", False]], seen_ruins=["B1"])
+    assert b.runtime.map_image(center="034 030", radius=400)["png"].startswith(b"\x89PNG")
+
+
+def test_a_scenario_cant_crew_a_vehicle_it_doesnt_have():
+    raw = {"name": "t", "mission": "m", "text": "x", "time_limit": "5:00",
+           "vehicles": [{"id": "V1", "class": "B_Mortar_01_F", "at": "041 033", "ammo": {"8Rnd_82mm_Mo_shells": 16}}],
+           "stations": [{"callsign": "Hammer", "role": "mortars", "capabilities": ["MOVE"], "at": "041 033",
+                         "crew": {"V1": "gunner"}, "spotter": False}]}
+    built = scenario.build(raw)
+    assert built.vehicles[0]["known"] and built.stations["Hammer"]["crew"] == {"V1": "gunner"}
+    raw["stations"][0]["crew"] = {"V2": "gunner"}
+    with pytest.raises(ValueError, match="unknown vehicles"):
+        scenario.build(raw)
+
+
 def in_the_fight(tmp_path) -> Battle:
     b = Battle(tmp_path)
     b.start()

@@ -32,7 +32,7 @@ REPORT_DELAYS = ((0.1, 5.0), (0.4, 15.0), (math.inf, 30.0))
 BEARING_ERROR_DEG = 5  # a soldier's snap estimate, widened by how vaguely the target's position is known
 BEARING_ERROR_MAX_DEG = 20
 BEARING_ROUND_DEG = 5
-DEFAULT_TOPICS = ["position", "task", "strength", "ammo", "contacts"]
+DEFAULT_TOPICS = ["position", "task", "strength", "ammo", "contacts", "vehicles"]
 PLACING_ORDERS = {"OCCUPY", "CORDON"}
 TASK_ORDERS = {"ATTACK", "DEFEND", "PATROL_AREA", "SWEEP"}  # CBA tasks: they run until replaced, with no end to report
 SINGLE_LEG_ORDERS = {"CLEAR"} | PLACING_ORDERS | TASK_ORDERS
@@ -196,9 +196,26 @@ def answer(packet: dict, route: dict | None, topics: list[str] | None = None,
                                       for g in groups) if groups else "No contacts.")
             case "eta":
                 parts.append(_eta_words(packet, route))
+            case "vehicles":
+                words = _vehicle_words(packet)
+                if words or topics:  # a general SITREP doesn't mention being on foot
+                    parts.append(words or "All on foot.")
             case _:
                 parts.append(f"Can't say about {topic}.")
     return " ".join(parts)
+
+
+def _vehicle_words(packet: dict) -> str:
+    """Who's on what, from packet["mounted"], where the runtime has already put in the commander's own ids."""
+    rows = packet.get("mounted") or []
+    if not rows:
+        return ""
+    by_vehicle: dict[str, list[str]] = {}
+    for vehicle, seat, name, *_ in rows:
+        by_vehicle.setdefault(vehicle or "a vehicle", []).append(f"{name} as {seat}")
+    words = " ".join(f"On {vehicle}: {', '.join(seats)}." for vehicle, seats in by_vehicle.items())
+    on_foot = packet.get("alive", 0) - len(rows)
+    return f"{words} {on_foot} on foot." if on_foot > 0 else words
 
 
 def _sentence(words: str) -> str:
@@ -256,6 +273,7 @@ class Report:
     text: str
     grid: str | None = None  # the group's own position, when the text states it
     checked: str | None = None  # a numbered building the group has been through
+    destroyed: str | None = None  # a numbered building it found to be a ruin
 
 
 def _without_own_grid(report: Report) -> Report:
@@ -265,7 +283,7 @@ def _without_own_grid(report: Report) -> Report:
     text = report.text
     for spoken in (f", at grid {report.grid}", f", grid {report.grid}", f" at grid {report.grid}"):
         text = text.replace(spoken, "")
-    return Report(report.precedence, text, None, report.checked)
+    return Report(report.precedence, text, None, report.checked, report.destroyed)
 
 
 @dataclass
@@ -370,6 +388,10 @@ class Tracker:
                 self.checked.append(building)
                 result = "enemy still in the area" if seen_nearby else "nothing seen"
                 out.append(Report(ROUTINE, f"{building} checked, {result}.", checked=building))
+        for building in packet.get("ruined") or []:
+            if building not in self.checked:
+                self.checked.append(building)
+                out.append(Report(ROUTINE, f"{building} is a ruin, nothing to check.", destroyed=building))
         if packet.get("clearing", -1) == 0:
             self.route_done = True
             ids = leg.get("ids", [])

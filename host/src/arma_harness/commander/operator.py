@@ -91,15 +91,18 @@ def start(path: str, mode: str | None = None, harness: Harness | None = None, wa
                        args=[station["callsign"], scenario.side, station["units"], station["class"], at]))
     _spawn_enemies(h, scenario, world_size)
     buildings = _list_buildings(h, scenario, world_size)
+    _result(h.exec("brmh_cmd_buildings = createHashMapFromArray _this; true", "server", timeout=10,
+                   args=[[building["id"], building["pos"]] for building in buildings]))
+    vehicles = _spawn_vehicles(h, scenario, world_size)
     attempt = _next_attempt(h.home, state.run_id)
     records_folder = h.home.runs / state.run_id / f"commander-{attempt}" / scenario.side
     records_folder.mkdir(parents=True, exist_ok=True)
     # What the battle was, kept with its records so a replay still works after later battles have replaced current.json.
     (records_folder.parent / "battle.json").write_text(json.dumps(
-        {"scenario": raw, "buildings": buildings, "world_size": world_size, "run": state.run_id, "attempt": attempt},
-        indent=2), encoding="utf-8")
+        {"scenario": raw, "buildings": buildings, "vehicles": vehicles, "world_size": world_size, "run": state.run_id,
+         "attempt": attempt}, indent=2), encoding="utf-8")
     current = {"run": state.run_id, "attempt": attempt, "folder": str(records_folder), "scenario": raw,
-               "world_size": world_size, "buildings": buildings}
+               "world_size": world_size, "buildings": buildings, "vehicles": vehicles}
     _current_file(h.home).write_text(json.dumps(current, indent=2), encoding="utf-8")
     workspace = write_workspace(h.home)
     observer = None
@@ -124,6 +127,18 @@ def _list_buildings(h: Harness, scenario: scenario_mod.Scenario, world_size: flo
     return [{"id": f"B{index}", "pos": [row[0], row[1]], "at": f"{row[2][:3]} {row[2][3:]}", "name": row[3],
              "positions": row[4], "width": row[5], "length": row[6], "dir": row[7]}
             for index, row in enumerate(rows, start=1)]
+
+
+def _spawn_vehicles(h: Harness, scenario: scenario_mod.Scenario, world_size: float) -> list[dict]:
+    """Places the scenario's guns and vehicles. The commander only starts out knowing about the ones marked known."""
+    placed = []
+    for vehicle in scenario.vehicles:
+        at, grid = parse_grid(vehicle["at"], world_size)
+        ammo = [[magazine, rounds] for magazine, rounds in vehicle["ammo"].items()]
+        name = _result(h.exec("_this call brmh_cmd_fnc_spawnVehicle", "server", timeout=10,
+                              args=[vehicle["id"], vehicle["class"], at, ammo]))
+        placed.append({"id": vehicle["id"], "name": name, "at": grid, "known": vehicle["known"]})
+    return placed
 
 
 def _spawn_enemies(h: Harness, scenario: scenario_mod.Scenario, world_size: float) -> None:
@@ -193,7 +208,8 @@ def load_current(deliver) -> Runtime:
         raise HarnessError("no commander scenario is set up: run arma-harness commander start <scenario>")
     current = json.loads(file.read_text(encoding="utf-8"))
     return Runtime(HarnessGame(h), scenario_mod.build(current["scenario"]), Records(Path(current["folder"])), deliver,
-                   world_size=current["world_size"], buildings=current.get("buildings"))
+                   world_size=current["world_size"], buildings=current.get("buildings"),
+                   vehicles=current.get("vehicles"))
 
 
 def _load_records(home: Home) -> tuple[dict, Records]:

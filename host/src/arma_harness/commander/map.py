@@ -18,7 +18,8 @@ _BUILDING, _CHECKED = (150, 145, 135), (120, 175, 125)
 
 
 def render(center: list[float], radius: float, buildings: list[dict], markers: list[dict], positions: dict[str, dict],
-           checked: dict[str, float], caption: str) -> bytes:
+           checked: dict[str, float], caption: str, destroyed: dict[str, float] | None = None,
+           vehicles: list[dict] | None = None) -> bytes:
     """A square map around ``center``. Markers and positions hold grids in their spoken form, such as "041 041"."""
     image = Image.new("RGB", (SIZE, SIZE), _PAPER)
     draw = ImageDraw.Draw(image)
@@ -33,11 +34,20 @@ def render(center: list[float], radius: float, buildings: list[dict], markers: l
         corners = _footprint(building)
         fill = _CHECKED if building["id"] in checked else _BUILDING
         draw.polygon([xy(*corner) for corner in corners], fill=fill, outline=_INK)
+        if building["id"] in (destroyed or {}):  # a cross through what's left of it
+            points = [xy(*corner) for corner in corners]
+            draw.line((points[0], points[2]), fill=_INK, width=3)
+            draw.line((points[1], points[3]), fill=_INK, width=3)
     for building in buildings:
         draw.text(xy(*building["pos"]), building["id"], fill=_INK, font=small, anchor="mm", stroke_width=2,
                   stroke_fill=_PAPER)
     for marker in markers:
         _marker(draw, marker, xy, medium)
+    for vehicle in vehicles or []:
+        x, y = xy(*_grid_centre(vehicle["at"]))
+        draw.rectangle((x - 7, y - 7, x + 7, y + 7), outline=_INK, width=3 if not vehicle.get("wrecked") else 1)
+        draw.text((x + 10, y), vehicle["id"] + (" wrecked" if vehicle.get("wrecked") else ""), fill=_INK, font=small,
+                  anchor="lm", stroke_width=2, stroke_fill=_PAPER)
     for callsign, place in positions.items():
         x, y = xy(*_grid_centre(place["grid"]))
         draw.rectangle((x - 13, y - 9, x + 13, y + 9), outline=_COLOURS["friendly"], width=3)

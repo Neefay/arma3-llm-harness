@@ -33,7 +33,7 @@ MIN_REPEAT_S = 30
 MARKER_KINDS = {"enemy", "friendly", "objective", "phase_line", "area", "danger", "hypothesis", "note"}
 MARKER_CONFIDENCE = {"low", "medium", "high"}
 NOTES_LIMIT = 1500
-QUESTION_TOPICS = {"position", "task", "strength", "ammo", "contacts", "eta"}
+QUESTION_TOPICS = {"position", "task", "strength", "ammo", "contacts", "eta", "vehicles"}
 ORDER_CODE = "_this call brmh_cmd_fnc_order"
 DELETE_CODE = "_this call brmh_cmd_fnc_deleteStation"
 KILL_CODE = "_this call brmh_cmd_fnc_killStation"
@@ -48,7 +48,7 @@ class Game(Protocol):
 
 class Runtime:
     def __init__(self, game: Game, scenario: Scenario, records: Records, deliver, world_size: float = 0,
-                 clock=time.monotonic, buildings: list[dict] | None = None):
+                 clock=time.monotonic, buildings: list[dict] | None = None, vehicles: list[dict] | None = None):
         self.game, self.scenario, self.records, self.deliver = game, scenario, records, deliver
         self.world_size = world_size
         self.buildings = buildings or []
@@ -70,6 +70,11 @@ class Runtime:
         self.ended_at: float | None = saved.get("ended_at")
         self.restarted: bool = saved.get("restarted", False)
         self.outbox: list[dict] = saved.get("outbox", [])
+        self.destroyed: dict[str, float] = saved.get("destroyed", {})
+        self.vehicles: dict[str, dict] = saved.get("vehicles") or {
+            vehicle["id"]: {"id": vehicle["id"], "key": vehicle["id"], "name": vehicle["name"], "at": vehicle["at"],
+                            "t": None, "wrecked": False}
+            for vehicle in vehicles or [] if vehicle.get("known", True)}
         self.success_at: float | None = saved.get("success_at")
         self.success_reason: str = saved.get("success_reason", "")
         self.next_id: dict[str, int] = saved.get("next_id", {})
@@ -108,7 +113,7 @@ class Runtime:
     def _id(self, prefix: str) -> str:
         number = self.next_id.get(prefix, 1)
         self.next_id[prefix] = number + 1
-        return f"{prefix}{number}" if prefix in "WSM" else f"{prefix}-{number:04d}"
+        return f"{prefix}{number}" if prefix in "WSMV" else f"{prefix}-{number:04d}"
 
     # -- game side -------------------------------------------------------------------------------
 
@@ -159,6 +164,44 @@ class Runtime:
             self._truth(event)
         self.dirty = True
 
+    def _vehicle_id(self, key: str) -> str:
+        """The commander's id for a game vehicle, or nothing if it hasn't been told about it."""
+        return next((vehicle["id"] for vehicle in self.vehicles.values() if vehicle["key"] == key), "")
+
+    def _sightings(self, callsign: str, packet: dict) -> None:
+        """What a squad can see, turned into news: vehicles the commander hasn't heard of, or that have changed since it
+        last heard, and buildings it still thinks are standing."""
+        t = packet["t"]
+        for key, name, grid, alive in packet.get("seen_vehicles") or []:
+            spoken = format_grid(grid)
+            vehicle = self.vehicles.get(self._vehicle_id(key))
+            if vehicle is None:
+                if not alive:
+                    continue
+                vehicle_id = self._new_vehicle_id()
+                self.vehicles[vehicle_id] = {"id": vehicle_id, "key": key, "name": name, "at": spoken, "t": t,
+                                             "wrecked": False}
+                self._say(callsign, f"{name}, nobody on it, grid {spoken}. Listed as {vehicle_id}.", reports.ROUTINE,
+                          None, t)
+                continue
+            if not alive and not vehicle.get("wrecked"):
+                vehicle.update(wrecked=True, at=spoken, t=t)
+                self._say(callsign, f"{vehicle['id']} is wrecked, grid {spoken}.", reports.ROUTINE, None, t)
+            elif alive and vehicle.get("at") != spoken:
+                vehicle.update(at=spoken, t=t)
+                self._say(callsign, f"{vehicle['id']}, {name}, nobody on it, is at grid {spoken}.", reports.ROUTINE,
+                          None, t)
+        for building in packet.get("seen_ruins") or []:
+            if building not in self.destroyed:
+                self.destroyed[building] = t
+                self._say(callsign, f"{building} is destroyed.", reports.ROUTINE, None, t)
+
+    def _new_vehicle_id(self) -> str:
+        while True:
+            vehicle_id = self._id("V")
+            if vehicle_id not in self.vehicles:
+                return vehicle_id
+
     def _in_combat(self, callsign: str) -> bool:
         tracker, packet = self.trackers.get(callsign), self.packets.get(callsign)
         return bool(tracker and packet and tracker.in_combat(packet, packet["t"]))
@@ -184,6 +227,8 @@ class Runtime:
                 continue
             if entry.get("checked"):
                 self.checked[entry["checked"]] = now
+            if entry.get("destroyed"):
+                self.destroyed[entry["destroyed"]] = now
             self._say(callsign, entry["text"], entry["precedence"], entry.get("grid"), now)
             self.dirty = True
 
@@ -214,7 +259,8 @@ class Runtime:
         packet = {key: event.get(key) for key in (
             "callsign", "pos", "grid", "dir", "speed", "alive", "wounded", "baseline", "leader", "rounds",
             "rounds_baseline", "behaviour", "combat_mode", "order", "unable", "leg", "legs", "clearing", "cleared",
-            "placed", "contacts", "suppression")}
+            "placed", "contacts", "suppression", "ruined", "seen_vehicles", "seen_ruins", "mounted")}
+        packet["mounted"] = [[self._vehicle_id(row[0]), *row[1:]] for row in packet.get("mounted") or []]
         packet["t"] = float(event.get("t", 0))
         self.packets[callsign] = packet
         if self.t0 is None or self.ended:
@@ -226,11 +272,15 @@ class Runtime:
             if in_combat:
                 delay = reports.report_delay(packet, report.precedence)
                 self._send_later(callsign, delay, packet["t"], text=report.text, precedence=report.precedence,
-                                 grid=report.grid, checked=report.checked)
+                                 grid=report.grid, checked=report.checked, destroyed=report.destroyed)
                 continue
             if report.checked:
                 self.checked[report.checked] = packet["t"]
+            if report.destroyed:
+                self.destroyed[report.destroyed] = packet["t"]
             self._say(callsign, report.text, report.precedence, report.grid, packet["t"])
+        if not in_combat:  # nobody takes stock of abandoned guns in a firefight
+            self._sightings(callsign, packet)
 
     def _in_battle(self, t: float) -> bool:
         """Whether a truth event belongs to this battle's record. A server can outlive its battle, and the game it's
@@ -417,6 +467,10 @@ class Runtime:
             lines += ["", "BUILDINGS CHECKED"]
             lines += ["  ".join(f"{building} {_ago(self.now() - t).replace(' ago', '')}"
                                 for building, t in sorted(self.checked.items(), key=lambda item: item[1]))]
+        if self.destroyed:
+            lines += ["", "BUILDINGS DESTROYED", "  ".join(sorted(self.destroyed))]
+        if self.vehicles:
+            lines += ["", "VEHICLES", *(self._vehicle_line(vehicle) for vehicle in self.vehicles.values())]
         if self.schedules:
             lines += ["", "SCHEDULED"]
             for entry in sorted(self.schedules.values(), key=lambda e: e["due"]):
@@ -452,6 +506,11 @@ class Runtime:
             lines.append("Nothing plotted yet.")
         return lines
 
+    def _vehicle_line(self, vehicle: dict) -> str:
+        when = "as briefed" if vehicle.get("t") is None else f"reported {_ago(self.now() - vehicle['t'])}"
+        state = "wrecked  " if vehicle.get("wrecked") else ""
+        return f"{vehicle['id']}  {vehicle['name']}  {state}grid {vehicle['at']}  {when}"
+
     def _marker_line(self, marker: dict) -> str:
         at = marker["at"]
         place = f"grids {'; '.join(at)}" if isinstance(at, list) else f"grid {at}"
@@ -470,6 +529,7 @@ class Runtime:
         self.records.save_state({
             "t0": self.t0, "turn": self.turn, "cursor": self.cursor, "delivered": self.delivered,
             "ended": self.ended, "ended_at": self.ended_at, "restarted": self.restarted, "outbox": self.outbox,
+            "destroyed": self.destroyed, "vehicles": self.vehicles,
             "success_at": self.success_at, "success_reason": self.success_reason,
             "next_id": self.next_id, "routes": self.routes, "schedules": self.schedules, "missed": self.missed,
             "markers": self.markers, "checked": self.checked, "last_checkin": self.last_checkin,
@@ -513,6 +573,7 @@ class Runtime:
                             for m in self.markers.values()],
                 "buildings": [{"id": b["id"], "type": b["name"], "grid": b["at"], "positions": b["positions"]}
                               for b in self.buildings],
+                "vehicles": [{"id": v["id"], "type": v["name"], "grid": v["at"]} for v in self.vehicles.values()],
                 "ended": self.ended or None,
             }
 
@@ -803,7 +864,7 @@ class Runtime:
             caption = (f"{format_time(self.rel())}. Your beliefs and last reports, not live. Green: buildings checked. "
                        f"Grid lines every {100 if size <= 800 else 500 if size <= 3000 else 1000} m.")
             png = map_mod.render(place, size, self.buildings, list(self.markers.values()), positions, self.checked,
-                                 caption)
+                                 caption, self.destroyed, list(self.vehicles.values()))
             self._used()
             return {"png": png, "text": caption}
 

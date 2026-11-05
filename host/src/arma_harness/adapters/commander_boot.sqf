@@ -18,6 +18,13 @@ if (isNil "brmh_cmd_stations") then {
 if (isNil "brmh_cmd_enemies") then {
 	brmh_cmd_enemies = [];
 };
+if (isNil "brmh_cmd_vehicles") then {
+	brmh_cmd_vehicles = createHashMap;
+};
+if (isNil "brmh_cmd_buildings") then {
+	brmh_cmd_buildings = createHashMap;
+};
+brmh_cmd_sightTurn = 0;
 brmh_cmd_nextTruth = 0;
 
 brmh_cmd_fnc_rounds = {
@@ -82,6 +89,100 @@ brmh_cmd_fnc_contacts = {
 	}
 };
 
+// A numbered building, if it's still standing. A destroyed one becomes a ruin that isn't a House, and a wider search
+// would find its neighbour.
+brmh_cmd_fnc_building = {
+	params ["_pos"];
+	private _found = (nearestObjects [(_pos select [0, 2]) + [0], ["House"], 6]) select {
+		alive _x and {
+			(_x buildingPos -1) isNotEqualTo []
+		}
+	};
+	if (_found isEqualTo []) then {
+		objNull
+	} else {
+		_found # 0
+	}
+};
+
+brmh_cmd_fnc_canSee = {
+	params ["_soldiers", "_object", "_point"];
+	(_soldiers findIf {
+		([_x, "VIEW", _object] checkVisibility [eyePos _x, _point]) > 0.3
+	}) >= 0
+};
+
+// What a squad can see of vehicles and destroyed buildings. The host decides what's news. Only worked out now and then,
+// because it's the most expensive thing here.
+brmh_cmd_fnc_sightings = {
+	params ["_group"];
+	private _alive = (units _group) select {
+		alive _x
+	};
+	if (_alive isEqualTo []) exitWith {};
+	private _lookers = _alive select [0, 4];
+	private _leader = _alive # 0;
+	private _vehicles = (_leader nearEntities [["StaticWeapon", "LandVehicle"], 800]) select {
+		({
+			alive _x
+		} count crew _x) isEqualTo 0
+	};
+	{
+		if (not alive _y and {
+			_leader distance2D _y < 800
+		}) then {
+			_vehicles pushBackUnique _y;
+		};
+	} forEach brmh_cmd_vehicles;
+	private _seen = [];
+	{
+		private _vehicle = _x;
+		private _top = (getPosASL _vehicle) vectorAdd [0, 0, 1];
+		if ([_lookers, _vehicle, _top] call brmh_cmd_fnc_canSee) then {
+			private _key = _vehicle getVariable ["brmh_cmd_key", ""];
+			if (_key isEqualTo "") then {
+				_key = format ["U%1", count brmh_cmd_vehicles + 1];
+				_vehicle setVariable ["brmh_cmd_key", _key];
+				brmh_cmd_vehicles set [_key, _vehicle];
+			};
+			_seen pushBack [_key, getText (configOf _vehicle >> "displayName"), mapGridPosition _vehicle, alive _vehicle];
+		};
+	} forEach _vehicles;
+	_group setVariable ["brmh_cmd_seenVehicles", _seen];
+	private _ruins = [];
+	{
+		if (_leader distance2D _y < 800 and {
+			isNull ([_y] call brmh_cmd_fnc_building)
+		}) then {
+			private _ground = [_y # 0, _y # 1, (getTerrainHeightASL _y) + 1];
+			if ([_lookers, objNull, _ground] call brmh_cmd_fnc_canSee) then {
+				_ruins pushBack _x;
+			};
+		};
+	} forEach brmh_cmd_buildings;
+	_group setVariable ["brmh_cmd_seenRuins", _ruins];
+};
+
+brmh_cmd_fnc_mounted = {
+	params ["_alive"];
+	private _out = [];
+	{
+		private _soldier = _x;
+		private _vehicle = vehicle _soldier;
+		if (_vehicle isNotEqualTo _soldier) then {
+			private _seat = (fullCrew _vehicle) select {
+				(_x # 0) isEqualTo _soldier
+			};
+			_out pushBack [_vehicle getVariable ["brmh_cmd_key", ""], if (_seat isEqualTo []) then {
+				"cargo"
+			} else {
+				_seat # 0 # 1
+			}, name _soldier, typeOf _vehicle];
+		};
+	} forEach _alive;
+	_out
+};
+
 brmh_cmd_fnc_packet = {
 	params ["_callsign", "_group"];
 	private _alive = (units _group) select {
@@ -127,6 +228,10 @@ brmh_cmd_fnc_packet = {
 		["legs", count waypoints _group],
 		["clearing", _group getVariable ["brmh_cmd_clearLeft", -1]],
 		["cleared", _group getVariable ["brmh_cmd_cleared", []]],
+		["ruined", _group getVariable ["brmh_cmd_ruined", []]],
+		["seen_vehicles", _group getVariable ["brmh_cmd_seenVehicles", []]],
+		["seen_ruins", _group getVariable ["brmh_cmd_seenRuins", []]],
+		["mounted", [_alive] call brmh_cmd_fnc_mounted],
 		["placed", _group getVariable ["brmh_cmd_placed", -1]],
 		["contacts", [_leader] call brmh_cmd_fnc_contacts]
 	]
@@ -162,13 +267,14 @@ brmh_cmd_fnc_startClearing = {
 	params ["_group", "_buildings"];
 	private _total = 0;
 	{
-		_total = _total + count (nearestObject [(_x # 1) + [0], "House"] buildingPos -1);
+		_total = _total + count (([_x # 1] call brmh_cmd_fnc_building) buildingPos -1);
 	} forEach _buildings;
 	_group setVariable ["brmh_cmd_clearQueue", +_buildings];
 	_group setVariable ["brmh_cmd_clearSpots", []];
 	_group setVariable ["brmh_cmd_clearCurrent", ""];
 	_group setVariable ["brmh_cmd_clearLeft", _total max 1];
 	_group setVariable ["brmh_cmd_cleared", []];
+	_group setVariable ["brmh_cmd_ruined", []];
 	{
 		_x setVariable ["brmh_cmd_clearBy", 0];
 	} forEach units _group;
@@ -223,8 +329,13 @@ brmh_cmd_fnc_stepClearing = {
 		};
 		if (_queue isNotEqualTo []) then {
 			private _next = _queue deleteAt 0;
-			_group setVariable ["brmh_cmd_clearCurrent", _next # 0];
-			_group setVariable ["brmh_cmd_clearSpots", nearestObject [(_next # 1) + [0], "House"] buildingPos -1];
+			private _building = [_next # 1] call brmh_cmd_fnc_building;
+			if (isNull _building) then {
+				(_group getVariable ["brmh_cmd_ruined", []]) pushBack (_next # 0);
+			} else {
+				_group setVariable ["brmh_cmd_clearCurrent", _next # 0];
+				_group setVariable ["brmh_cmd_clearSpots", _building buildingPos -1];
+			};
 		} else {
 			_group setVariable ["brmh_cmd_clearQueue", nil];
 			_group setVariable ["brmh_cmd_clearLeft", 0];
@@ -238,7 +349,7 @@ brmh_cmd_fnc_stepClearing = {
 	}) then {
 		private _left = _busy + count (_group getVariable ["brmh_cmd_clearSpots", []]);
 		{
-			_left = _left + count (nearestObject [(_x # 1) + [0], "House"] buildingPos -1);
+			_left = _left + count (([_x # 1] call brmh_cmd_fnc_building) buildingPos -1);
 		} forEach _queue;
 		_group setVariable ["brmh_cmd_clearLeft", _left max 1];
 	};
@@ -331,6 +442,12 @@ brmh_cmd_fnc_step = {
 			} forEach units _y;
 		};
 	} forEach brmh_cmd_stations;
+	// One squad per step looks around, so nobody's sight checks pile up.
+	private _names = keys brmh_cmd_stations;
+	if (_names isNotEqualTo []) then {
+		brmh_cmd_sightTurn = (brmh_cmd_sightTurn + 1) % count _names;
+		[brmh_cmd_stations get (_names # brmh_cmd_sightTurn)] call brmh_cmd_fnc_sightings;
+	};
 	{
 		private _packet = [_x, _y] call brmh_cmd_fnc_packet;
 		if (not isNil "_packet") then {
@@ -571,7 +688,51 @@ brmh_cmd_fnc_spawnEnemy = {
 };
 
 // A repeat start reuses the running game. Renaming keeps old empty groups out of the new battle's records.
+/*
+	NAME: brmh_cmd_fnc_spawnVehicle
+	DESCRIPTION: Places a scenario's vehicle or gun. Operator action, never reachable by the commander.
+	PARAMETERS:
+		0 - Scenario id (STRING)
+		1 - Class (STRING)
+		2 - Position [x, y] (ARRAY)
+		3 - Ammunition [magazine, rounds] pairs, empty to leave it as it comes (ARRAY)
+	USAGE:
+		["V1", "B_Mortar_01_F", [4150, 3350], [["8Rnd_82mm_Mo_shells", 16]]] call brmh_cmd_fnc_spawnVehicle;
+	RETURNS: Its display name
+	ENVIRONMENT: Server
+*/
+brmh_cmd_fnc_spawnVehicle = {
+	params [["_key", "", [""]], ["_class", "", [""]], ["_at", [], [[]], 2], ["_ammo", [], [[]]]];
+	private _vehicle = createVehicle [_class, _at + [0], [], 0, "NONE"];
+	_vehicle setVariable ["brmh_cmd_key", _key];
+	brmh_cmd_vehicles set [_key, _vehicle];
+	if (_ammo isNotEqualTo []) then {
+		[_vehicle, _ammo] call brmh_cmd_fnc_setAmmo;
+	};
+	getText (configOf _vehicle >> "displayName")
+};
+
+brmh_cmd_fnc_setAmmo = {
+	params ["_vehicle", "_ammo"];
+	{
+		_x params ["_magazine", "_rounds"];
+		private _size = getNumber (configFile >> "CfgMagazines" >> _magazine >> "count");
+		_vehicle removeMagazinesTurret [_magazine, [0]];
+		while {
+			_rounds > 0
+		} do {
+			_vehicle addMagazineTurret [_magazine, [0], _rounds min _size];
+			_rounds = _rounds - _size;
+		};
+	} forEach _ammo;
+};
+
 brmh_cmd_fnc_clearAll = {
+	{
+		deleteVehicle _y;
+	} forEach brmh_cmd_vehicles;
+	brmh_cmd_vehicles = createHashMap;
+	brmh_cmd_buildings = createHashMap;
 	{
 		[_x] call brmh_cmd_fnc_deleteStation;
 		_y setGroupIdGlobal ["Retired"];

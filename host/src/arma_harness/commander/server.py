@@ -67,7 +67,7 @@ TOOLS = [
      "own grid in a fight if you ask for position.", "inputSchema": {"type": "object", "properties": {
         "to": {"type": "string", "description": "A callsign, or all"},
         "topics": {"type": "array", "items": _STRING,
-                   "description": "position, task, strength, ammo, contacts or eta"},
+                   "description": "position, task, strength, ammo, contacts, eta or vehicles"},
      }, "required": ["to"]}},
     {"name": "commander_schedule", "description": "Do something later. When: after (such as 1:30), at (such as "
      "T+15:45) or every (such as 5:00, with optional count or until). What: do={'wake': 'why you want to wake'}, or "
