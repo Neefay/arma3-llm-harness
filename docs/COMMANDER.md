@@ -840,6 +840,8 @@ The enemy stays as it is for now, so that an LLM's run compares directly with th
 
 The earlier script's first run, before the trap houses were fixed, lost 5 of 27.
 
+A third scripted run (`20261105-164111:1`), after squads in combat became slower to talk and stopped giving grids (section 10.6), won at T+18:14, the first script to do so, with 14 of 27 lost, 14 of 14 killed and 7 orders. Its position error rose to 138 m, as expected when squads state their grid less often. It isn't like-for-like with the two below or with Haiku's run, which all had the older reports.
+
 These two baselines ran with no game window, so the empty observer slot held an armed AI soldier at grid 041 038, who wasn't part of any station. The patrol shot him at T+00:22 in the rigid run. He's left out of their losses and the review, and the mission now disables AI in that slot. Haiku's run isn't affected, because a person was in the slot.
 
 **First LLM result, on Claude Haiku 5.5 (`20261105-133935:1`):** it won in T+08:44, killing all 14 enemies for 3 of 27 lost, using 26 orders, 41 turns and 92 questions. That took 113 model requests, 51,404 output tokens and a peak context of about 116k tokens. Its marker error was 62 m and its position error 63 m. It's one run, so it can't yet say how much of this was skill, given the spread above.
