@@ -1,7 +1,8 @@
 """The running commander: turns game events into radio traffic and wakes, and carries out its tool calls.
 
 Only four event types are ever read from the game: cmd_tick, cmd_report, cmd_truth and killed. Truth and kills go
-straight to files for review. Tool results reveal nothing about what happened to a unit: consequences arrive by radio, or don't.
+straight to files for review. Tool results reveal nothing about what happened to a unit: consequences arrive by radio,
+or don't.
 """
 from __future__ import annotations
 

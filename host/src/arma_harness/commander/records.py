@@ -33,8 +33,7 @@ class Records:
 
     def kill(self, row: dict) -> None:
         with (self.truth_file.parent / "kills.jsonl").open("a", encoding="utf-8") as f:
-            f.write(json.dumps(row, ensure_ascii=False) + "
-")
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
     def read_kills(self) -> list[dict]:
         file = self.truth_file.parent / "kills.jsonl"
