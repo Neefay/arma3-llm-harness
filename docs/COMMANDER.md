@@ -1067,7 +1067,8 @@ Not planned, but the design shouldn't block them:
 - **Comms model:** delay, loss, garbling, airtime and radio range. It would sit as a filter between the report writer and the radio log.
 - **Unreliable reporting:** inflated counts under fire, misidentified vehicles, and morale.
 - **LLM subordinates:** personas, free-text questions and pushback, restricted to the perception packet.
-- **Fire support and logistics:** mortars, resupply and medevac as stations with special order types.
+- **Fire support:** designed in [COMMANDER_FIRE_SUPPORT.md](COMMANDER_FIRE_SUPPORT.md), and not built yet.
+- **Logistics:** resupply and medevac as stations with special order types.
 - **Human stations:** player-led squads receiving orders in game.
 - **Radio spoofing:** a player uses a captured radio to send false orders or reports, testing injection resistance as a game mechanic.
 - **Zeus and the blind commander:** an agent with full god view adds complications for a commander with none.

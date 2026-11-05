@@ -28,6 +28,7 @@ packages = ["src/arma_harness"]
 [tool.ruff]
 line-length = 120
 target-version = "py311"
+extend-exclude = ["tests/spikes"]  # throwaway engine tests, kept as a record of how design facts were measured
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "SIM"]
