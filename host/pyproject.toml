@@ -19,6 +19,7 @@ dev = ["pytest>=8", "ruff>=0.6"]
 [project.scripts]
 arma-harness = "arma_harness.cli:main"
 arma-harness-mcp = "arma_harness.mcp_server:main"
+arma-commander-mcp = "arma_harness.commander.server:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/arma_harness"]

@@ -106,6 +106,10 @@ def main(argv: list[str] | None = None) -> int:
     sc = sub.add_parser("scenario")
     sc.add_argument("path")
     sc.add_argument("--keep-running", action="store_true")
+    co = sub.add_parser("commander", help="set up, watch and review a commander battle (docs/COMMANDER.md)")
+    co.add_argument("action", choices=["start", "status", "aar", "stop"])
+    co.add_argument("scenario", nargs="?", help="scenario name in scenarios/commander/, or a path (start only)")
+    co.add_argument("--mode", choices=["hold", "deliver"], help="what happens to messages during a turn")
     rs = sub.add_parser("rounds")
     rs.add_argument("what", choices=["state", "get", "set", "fire", "gui"])
     rs.add_argument("arg", nargs="*")
@@ -121,7 +125,7 @@ def main(argv: list[str] | None = None) -> int:
     except (HarnessError, BridgeError, KeyError, ValueError, FileNotFoundError) as exc:
         print(json.dumps({"ok": False, "error": str(exc)}, indent=2))
         return 1
-    print(json.dumps(out, indent=2, default=str))
+    print(out if isinstance(out, str) else json.dumps(out, indent=2, default=str))
     if args.cmd == "scenario":
         return 0 if out.get("as_expected") else 1
     return 0
@@ -176,6 +180,8 @@ def _dispatch(h: Harness, a):
             return h.reload(a.path, target=a.target, function=a.function, force=a.force)
         case "scenario":
             return scenario.run(h, a.path, keep_running=a.keep_running)
+        case "commander":
+            return _commander(h, a)
         case "rounds":
             match a.what:
                 case "state":
@@ -189,6 +195,23 @@ def _dispatch(h: Harness, a):
                 case "gui":
                     return rounds.gui(h)
     raise ValueError(a.cmd)
+
+
+def _commander(h: Harness, a):
+    from .commander import operator
+
+    match a.action:
+        case "start":
+            if not a.scenario:
+                raise ValueError("commander start needs a scenario name")
+            return operator.start(a.scenario, a.mode, h)
+        case "status":
+            return operator.status(h.home)
+        case "aar":
+            return operator.aar(h.home)
+        case "stop":
+            return operator.stop(h)
+    raise ValueError(a.action)
 
 
 if __name__ == "__main__":
