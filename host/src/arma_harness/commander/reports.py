@@ -235,7 +235,7 @@ class Tracker:
             if self.leg == len(legs) - 1:
                 out.append(Report(ROUTINE, _finish_words(legs[self.leg], grid), grid))
                 self.route_done = True
-            else:
+            elif legs[self.leg]["grid"] != legs[self.leg + 1]["grid"]:  # moving somewhere to hold there is one trip
                 out.append(Report(ROUTINE, f"Passing grid {legs[self.leg]['grid']}, at grid {grid}.", grid))
             self.leg += 1
         current = _current_leg(packet, route)

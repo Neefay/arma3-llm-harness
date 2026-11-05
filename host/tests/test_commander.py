@@ -98,6 +98,14 @@ def test_multi_leg_route_passes_then_arrives():
         "Arrived, grid 034 030."]
 
 
+def test_move_then_hold_at_the_same_grid_doesnt_report_passing_it():
+    tracker = Tracker()
+    trip = route(("MOVE", (3450, 3050), "034 030"), ("HOLD", (3450, 3050), "034 030"))
+    tracker.update(packet(order="O-1"), trip, 0)
+    said = tracker.update(packet(order="O-1", leg=1, pos=[3450, 3050], grid="034030"), trip, 2)
+    assert [r.text for r in said] == ["On station, grid 034 030."]
+
+
 def test_posture_doesnt_restart_the_route():
     tracker, trip = Tracker(), route(("MOVE", (3200, 3050), "032 030"), ("MOVE", (3450, 3050), "034 030"))
     tracker.update(packet(order="O-1"), trip, 0)
@@ -434,6 +442,23 @@ def test_lost_group_is_only_caught_by_the_commanders_own_timer(tmp_path):
     b.silent(160)
     assert len(b.wakes) == 2 and "Has Alpha arrived?" in b.wakes[1][0] and "Arrived" not in b.wakes[1][0]
     assert b.runtime.ask("Alpha") == {"replies": [{"from": "Alpha", "text": "No answer."}]}
+
+
+def test_killed_group_says_nothing_about_it(tmp_path):
+    b = Battle(tmp_path, events=[{"at": "0:10", "action": "kill_station", "station": "Alpha"}])
+    b.start()
+    b.runtime.order({"to": "Alpha", "legs": [{"type": "MOVE", "at": "B"}]})
+    b.runtime.end_turn("Sent", messages_only=True)
+    b.advance(102, order="O-0001")
+    b.silent(111)
+    assert b.game.calls[-1] == ("_this call brmh_cmd_fnc_killStation", ["Alpha"])
+    b.silent(200)
+    assert len(b.wakes) == 1 and "Copy" in b.wakes[0][0]
+    assert b.runtime.ask("Alpha")["replies"][0]["text"] == "No answer."
+    with pytest.raises(ValueError, match="bad scenario event"):
+        scenario.build({"name": "t", "mission": "m", "text": "t", "time_limit": "1:00",
+                        "stations": [{"callsign": "A", "role": "r", "capabilities": [], "at": "000 000"}],
+                        "events": [{"at": "0:10", "action": "explode", "station": "A"}]})
 
 
 def test_time_limit_ends_the_mission_and_wakes_the_commander(tmp_path):

@@ -29,6 +29,7 @@ NOTES_LIMIT = 1500
 QUESTION_TOPICS = {"position", "task", "strength", "ammo", "contacts", "eta"}
 ORDER_CODE = "_this call brmh_cmd_fnc_order"
 DELETE_CODE = "_this call brmh_cmd_fnc_deleteStation"
+KILL_CODE = "_this call brmh_cmd_fnc_killStation"
 
 
 class Game(Protocol):
@@ -200,9 +201,9 @@ class Runtime:
                 self.save()
 
     def _scenario_event(self, event: dict) -> None:
-        if event.get("action") == "delete_station":
-            self._game_exec(DELETE_CODE, [event["station"]])
-            self.records.operator_log(f"{format_time(self.rel())} scenario event: deleted {event['station']}")
+        code = {"delete_station": DELETE_CODE, "kill_station": KILL_CODE}[event["action"]]
+        self._game_exec(code, [event["station"]])
+        self.records.operator_log(f"{format_time(self.rel())} scenario event: {event['action']} {event['station']}")
         self.dirty = True
 
     def _game_exec(self, code: str, args: list) -> None:
