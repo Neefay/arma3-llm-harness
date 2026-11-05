@@ -118,6 +118,9 @@ brmh_cmd_fnc_packet = {
 		["rounds_baseline", _group getVariable ["brmh_cmd_roundsBaseline", _rounds]],
 		["behaviour", behaviour _leader],
 		["combat_mode", combatMode _group],
+		["suppression", (_alive apply {
+			getSuppression _x
+		}) call BIS_fnc_arithmeticMean],
 		["order", _group getVariable ["brmh_cmd_order", ""]],
 		["unable", _group getVariable ["brmh_cmd_unable", ""]],
 		["leg", currentWaypoint _group],

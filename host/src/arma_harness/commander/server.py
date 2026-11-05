@@ -63,7 +63,8 @@ TOOLS = [
         "intent": {"type": "string", "description": "Your purpose. Recorded for review"},
      }, "required": ["to", "legs"]}},
     {"name": "commander_ask", "description": "Ask a station for a full SITREP (no topics) or specific facts. Silence "
-     "comes back as No answer.", "inputSchema": {"type": "object", "properties": {
+     "comes back as No answer. A squad in a fight says Wait one, and answers by message when it can. It only gives its "
+     "own grid in a fight if you ask for position.", "inputSchema": {"type": "object", "properties": {
         "to": {"type": "string", "description": "A callsign, or all"},
         "topics": {"type": "array", "items": _STRING,
                    "description": "position, task, strength, ammo, contacts or eta"},

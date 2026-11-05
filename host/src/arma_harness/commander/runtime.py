@@ -69,6 +69,7 @@ class Runtime:
         self.ended: str = saved.get("ended", "")
         self.ended_at: float | None = saved.get("ended_at")
         self.restarted: bool = saved.get("restarted", False)
+        self.outbox: list[dict] = saved.get("outbox", [])
         self.success_at: float | None = saved.get("success_at")
         self.success_reason: str = saved.get("success_reason", "")
         self.next_id: dict[str, int] = saved.get("next_id", {})
@@ -158,8 +159,49 @@ class Runtime:
             self._truth(event)
         self.dirty = True
 
+    def _in_combat(self, callsign: str) -> bool:
+        tracker, packet = self.trackers.get(callsign), self.packets.get(callsign)
+        return bool(tracker and packet and tracker.in_combat(packet, packet["t"]))
+
+    def _send_later(self, callsign: str, delay: float, t: float, **message) -> None:
+        """A squad in combat takes a while to get a message out. Its messages still go in the order it said them."""
+        waiting = [entry["due"] for entry in self.outbox if entry["callsign"] == callsign]
+        self.outbox.append({"callsign": callsign, "due": max([t + delay, *waiting]), **message})
+        self.dirty = True
+
+    def _send_due(self) -> None:
+        now = self.now()
+        due = [entry for entry in self.outbox if entry["due"] <= now]
+        self.outbox = [entry for entry in self.outbox if entry["due"] > now]
+        for entry in due:
+            callsign = entry["callsign"]
+            packet = self.packets.get(callsign)
+            if packet is None or now - packet["t"] > PACKET_FRESH_S:
+                self.records.operator_log(f"{format_time(self.rel())} {callsign} was lost with a message unsent")
+                continue
+            if "topics" in entry:
+                self._answer_now(callsign, entry)
+                continue
+            if entry.get("checked"):
+                self.checked[entry["checked"]] = now
+            self._say(callsign, entry["text"], entry["precedence"], entry.get("grid"), now)
+            self.dirty = True
+
+    def _answer_now(self, callsign: str, entry: dict) -> None:
+        """A delayed answer, from what the squad knows by the time it gets to answer."""
+        text, grid = self._reply_to(callsign, entry["topics"])
+        key = f"{entry['checkin']}:{callsign}" if entry.get("checkin") else ""
+        if key and self.last_checkin.get(key) == text:
+            self._log_radio(callsign, "HQ", text, "checkin_unchanged")
+            self._heard(callsign, grid, self.now())
+            return
+        if key:
+            self.last_checkin[key] = text
+        self._say(callsign, text, reports.ROUTINE, grid, self.now())
+
     def _mission_restarted(self) -> None:
         self.restarted = True
+        self.outbox = []
         self.routes, self.trackers, self.packets = {}, {}, {}
         self.wake.timers, self.schedules, self.missed = {}, {}, {}
         self.wake.notice("The mission has restarted. All stations, orders and timers have been reset.")
@@ -172,13 +214,20 @@ class Runtime:
         packet = {key: event.get(key) for key in (
             "callsign", "pos", "grid", "dir", "speed", "alive", "wounded", "baseline", "leader", "rounds",
             "rounds_baseline", "behaviour", "combat_mode", "order", "unable", "leg", "legs", "clearing", "cleared",
-            "placed", "contacts")}
+            "placed", "contacts", "suppression")}
         packet["t"] = float(event.get("t", 0))
         self.packets[callsign] = packet
         if self.t0 is None or self.ended:
             return
         tracker = self.trackers.setdefault(callsign, Tracker())
-        for report in tracker.update(packet, self.routes.get(callsign), packet["t"], self.buildings):
+        said = tracker.update(packet, self.routes.get(callsign), packet["t"], self.buildings)
+        in_combat = tracker.in_combat(packet, packet["t"])
+        for report in said:
+            if in_combat:
+                delay = reports.report_delay(packet, report.precedence)
+                self._send_later(callsign, delay, packet["t"], text=report.text, precedence=report.precedence,
+                                 grid=report.grid, checked=report.checked)
+                continue
             if report.checked:
                 self.checked[report.checked] = packet["t"]
             self._say(callsign, report.text, report.precedence, report.grid, packet["t"])
@@ -232,6 +281,7 @@ class Runtime:
 
     def _end(self, reason: str) -> None:
         self.ended, self.ended_at = reason, self.rel()
+        self.outbox = []
         self.wake.timers, self.schedules = {}, {}
         self._show(f"MISSION END: {reason}")
         self.wake.notice(f"MISSION END. {reason} No further orders are needed. End your turn.")
@@ -253,6 +303,7 @@ class Runtime:
             if not self.ended and rel >= self.scenario.time_limit_s:
                 self._end("Time limit reached.")
             self._fire_schedules()
+            self._send_due()
             wake = self.wake.poll(self.now())
             if wake is not None:
                 self._deliver(wake)
@@ -418,7 +469,7 @@ class Runtime:
     def save(self) -> None:
         self.records.save_state({
             "t0": self.t0, "turn": self.turn, "cursor": self.cursor, "delivered": self.delivered,
-            "ended": self.ended, "ended_at": self.ended_at, "restarted": self.restarted,
+            "ended": self.ended, "ended_at": self.ended_at, "restarted": self.restarted, "outbox": self.outbox,
             "success_at": self.success_at, "success_reason": self.success_reason,
             "next_id": self.next_id, "routes": self.routes, "schedules": self.schedules, "missed": self.missed,
             "markers": self.markers, "checked": self.checked, "last_checkin": self.last_checkin,
@@ -520,8 +571,10 @@ class Runtime:
         packet = self.packets.get(callsign)
         if packet is None or self.now() - packet["t"] > PACKET_FRESH_S:
             return None, None
-        grid = format_grid(packet["grid"]) if topics is None or "position" in topics else None
-        return reports.answer(packet, self.routes.get(callsign), topics, self.buildings), grid
+        in_combat = self._in_combat(callsign)
+        states_grid = "position" in topics if topics is not None else not in_combat
+        grid = format_grid(packet["grid"]) if states_grid else None
+        return reports.answer(packet, self.routes.get(callsign), topics, self.buildings, in_combat), grid
 
     def ask(self, to: str, topics: list[str] | None = None) -> dict:
         with self.lock:
@@ -536,6 +589,16 @@ class Runtime:
                 if text is None:
                     self._log_radio(callsign, "HQ", "No answer.", "no_answer")
                     replies.append({"from": callsign, "text": "No answer."})
+                    continue
+                if self._in_combat(callsign):
+                    # It heard, and it'll answer when it can. Asking again doesn't make that any sooner.
+                    if not any(e["callsign"] == callsign and e.get("topics", 0) == topics for e in self.outbox):
+                        packet = self.packets[callsign]
+                        self._send_later(callsign, reports.report_delay(packet), self.now(), topics=topics)
+                    self._log_radio(callsign, "HQ", "Wait one.", "reply")
+                    self.last_heard[callsign] = self.now()
+                    self.missed.pop(callsign, None)
+                    replies.append({"from": callsign, "text": "Wait one."})
                     continue
                 self._log_radio(callsign, "HQ", text, "reply")
                 self._heard(callsign, grid, self.now())
@@ -609,6 +672,9 @@ class Runtime:
                 # Silence wakes nobody: it waits in the next briefing, under OVERDUE.
                 self._log_radio(callsign, "HQ", "No answer.", "no_answer")
                 self.missed[callsign] = self.missed.get(callsign, 0) + 1
+            elif self._in_combat(callsign):
+                packet = self.packets[callsign]
+                self._send_later(callsign, reports.report_delay(packet), self.now(), topics=topics, checkin=entry["id"])
             elif self.last_checkin.get(f"{entry['id']}:{callsign}") == text:
                 # Nothing has changed, so it isn't worth a turn: the check-in still counts as being heard.
                 self._log_radio(callsign, "HQ", text, "checkin_unchanged")

@@ -25,6 +25,10 @@ STUCK_REPEAT_S = 180
 STUCK_MIN_M = 20
 ON_STATION_M = 30
 NEAR_BUILDING_M = 25
+COMBAT_RECENT_S = 30  # a squad stays "in combat" this long after its last casualty
+COMBAT_SUPPRESSION = 0.05  # average of getSuppression across the squad, 0 to 1
+# How long a squad takes to get a report out, by how suppressed it is on average: (below this, seconds).
+REPORT_DELAYS = ((0.1, 5.0), (0.4, 15.0), (math.inf, 30.0))
 BEARING_ERROR_DEG = 5  # a soldier's snap estimate, widened by how vaguely the target's position is known
 BEARING_ERROR_MAX_DEG = 20
 BEARING_ROUND_DEG = 5
@@ -156,18 +160,28 @@ def _current_leg(packet: dict, route: dict | None) -> dict | None:
     return route["legs"][leg] if 0 <= leg < len(route["legs"]) else None
 
 
+def report_delay(packet: dict, precedence: str = ROUTINE) -> float:
+    """Seconds before a squad in combat gets this out. Shouting "contact" comes quicker than anything else."""
+    suppression = packet.get("suppression") or 0
+    delay = next(seconds for below, seconds in REPORT_DELAYS if suppression < below)
+    delay = delay / 2 if precedence == FLASH else delay
+    return max(1.0, delay + _wobble(delay * 0.3))
+
+
 def answer(packet: dict, route: dict | None, topics: list[str] | None = None,
-           buildings: list[dict] | None = None) -> str:
-    """Words for a general SITREP or a specific question, from the group's latest packet."""
+           buildings: list[dict] | None = None, in_combat: bool = False) -> str:
+    """Words for a general SITREP or a specific question, from the group's latest packet. A squad in combat only works
+    out its own grid when it's specifically asked for its position."""
     parts = []
-    for topic in topics or DEFAULT_TOPICS:
+    wanted = topics or [topic for topic in DEFAULT_TOPICS if not (in_combat and topic == "position")]
+    for topic in wanted:
         match topic:
             case "position":
                 moving = packet.get("speed", 0) > 1
                 motion = f"moving {_COMPASS[round(packet.get('dir', 0) / 45) % 8]}" if moving else "stationary"
                 parts.append(f"Grid {format_grid(packet['grid'])}, {motion}.")
             case "task":
-                parts.append(_task_words(packet, route))
+                parts.append(_task_words(packet, route, in_combat))
             case "strength":
                 wounded = packet.get("wounded", 0)
                 hurt = f", {wounded} wounded" if wounded else ""
@@ -191,9 +205,9 @@ def _sentence(words: str) -> str:
     return words[:1].upper() + words[1:]  # str.capitalize would lower-case a building's id
 
 
-def _task_words(packet: dict, route: dict | None) -> str:
+def _task_words(packet: dict, route: dict | None, in_combat: bool = False) -> str:
     if route and route.get("kind") == "halt":
-        return f"Halted at grid {format_grid(packet['grid'])}."
+        return "Halted." if in_combat else f"Halted at grid {format_grid(packet['grid'])}."
     leg = _current_leg(packet, route)
     if leg is None:
         return "No current orders."
@@ -211,7 +225,7 @@ def _task_words(packet: dict, route: dict | None) -> str:
         return f"{_sentence(LEG_VERBS[leg['type']])} {_where(leg)}."
     distance = math.dist(packet["pos"], leg["pos"])
     if leg["type"] in ("HOLD", "SENTRY") and distance <= (leg.get("completion") or ON_STATION_M):
-        return f"Holding at grid {format_grid(packet['grid'])}."
+        return "Holding." if in_combat else f"Holding at grid {format_grid(packet['grid'])}."
     verb = {"HOLD": "Moving to hold at", "SENTRY": "Moving to watch at", "SEARCH": "Searching around"}.get(
         leg["type"], "Moving to")
     return f"{verb} grid {leg['grid']}, {rough_range(distance).replace('roughly', 'about')} out."
@@ -244,6 +258,16 @@ class Report:
     checked: str | None = None  # a numbered building the group has been through
 
 
+def _without_own_grid(report: Report) -> Report:
+    """Nobody checks a map or a GPS under fire. Grids of places it was told about are still fine."""
+    if not report.grid:
+        return report
+    text = report.text
+    for spoken in (f", at grid {report.grid}", f", grid {report.grid}", f" at grid {report.grid}"):
+        text = text.replace(spoken, "")
+    return Report(report.precedence, text, None, report.checked)
+
+
 @dataclass
 class Tracker:
     """What a station has already said. Plain data, so it can be saved between server restarts."""
@@ -263,6 +287,15 @@ class Tracker:
     progress_t: float = -1.0
     stuck_said: float = -1.0
     checked: list[str] = field(default_factory=list)
+    hurt_at: float = -1.0
+
+    def in_combat(self, packet: dict, now: float) -> bool:
+        """From what the engine measures: a fresh enemy contact, being suppressed, or casualties just now. Behaviour
+        isn't used. It stays COMBAT for 35 s after a fight, and a commander can order it. Shells landing nearby move
+        none of these."""
+        hurt_recently = self.hurt_at >= 0 and now - self.hurt_at < COMBAT_RECENT_S
+        return hurt_recently or (packet.get("suppression") or 0) >= COMBAT_SUPPRESSION \
+            or bool(contact_groups(packet, CONTACT_FRESH_S))
 
     def update(self, packet: dict, route: dict | None, now: float, buildings: list[dict] | None = None) -> list[Report]:
         out: list[Report] = []
@@ -278,7 +311,7 @@ class Tracker:
         if not self.ammo or _AMMO_BANDS.index(band) > _AMMO_BANDS.index(self.ammo):
             self.ammo = band
         out += self._stuck(packet, route, now)
-        return out
+        return [_without_own_grid(report) for report in out] if self.in_combat(packet, now) else out
 
     def _order(self, packet: dict, route: dict | None, now: float) -> list[Report]:
         order, grid = packet.get("order", ""), format_grid(packet["grid"])
@@ -368,8 +401,10 @@ class Tracker:
     def _casualties(self, packet: dict, now: float) -> list[Report]:
         alive = packet["alive"]
         out = []
-        if self.alive >= 0 and alive < self.alive and self.casualties_since < 0:
-            self.casualties_since = now
+        if self.alive >= 0 and alive < self.alive:
+            self.hurt_at = now
+            if self.casualties_since < 0:
+                self.casualties_since = now
         self.alive = alive
         if self.casualties_since >= 0 and now - self.casualties_since >= CASUALTY_GROUP_S:
             self.casualties_since = -1.0

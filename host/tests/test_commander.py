@@ -128,7 +128,7 @@ def test_clear_reports_each_building_and_never_claims_all_clear():
     said = tracker.update(packet(order="O-1", clearing=0, cleared=["B1", "B3"], grid="041041",
                                  contacts=[contact(3060, 3060)]), trip, 300)
     assert "B3 checked, enemy still in the area." in [r.text for r in said]
-    assert "Finished checking B1, B3, at grid 041 041." in [r.text for r in said]
+    assert "Finished checking B1, B3." in [r.text for r in said]  # no grid: there's an enemy about
     assert tracker.update(packet(order="O-1", clearing=0, cleared=["B1", "B3"]), trip, 302) == []
 
 
@@ -208,6 +208,63 @@ def test_contact_reports_dont_state_the_squads_own_grid(tmp_path):
     b.start()
     b.advance(102, contacts=[contact()], pos=[3250, 3050], grid="032030")
     assert "Alpha" not in b.runtime.positions
+
+
+def test_what_counts_as_being_in_combat():
+    tracker = Tracker()
+    assert not tracker.in_combat(packet(), 100)
+    assert not tracker.in_combat(packet(behaviour="COMBAT"), 100)  # a commander can order this, and it lingers
+    assert not tracker.in_combat(packet(suppression=0.04), 100)
+    assert tracker.in_combat(packet(suppression=0.05), 100)
+    assert tracker.in_combat(packet(contacts=[contact()]), 100)
+    assert not tracker.in_combat(packet(contacts=[contact(age=31)]), 100)
+    tracker.update(packet(alive=4), None, 100)
+    tracker.update(packet(alive=3), None, 110)
+    assert tracker.in_combat(packet(alive=3), 139) and not tracker.in_combat(packet(alive=3), 141)
+
+
+def test_the_harder_a_squad_is_hit_the_slower_it_talks():
+    delay = reports.report_delay
+    assert [delay(packet(suppression=s)) for s in (0, 0.09, 0.1, 0.39, 0.4, 1.3)] == [5, 5, 15, 15, 30, 30]
+    assert delay(packet(suppression=0.5), reports.FLASH) == 15
+    assert delay({"suppression": None}) == 5
+
+
+def test_delays_vary_within_a_range(monkeypatch):
+    monkeypatch.undo()
+    said = [reports.report_delay(packet(suppression=0.5)) for _ in range(200)]
+    assert 21 <= min(said) < 27 and 33 < max(said) <= 39
+
+
+def test_in_combat_reports_drop_the_squads_own_grid_but_not_places_they_were_told():
+    grid = "041 041"
+    for words, expect in (
+        (f"Arrived, grid {grid}.", "Arrived."),
+        (f"On station, grid {grid}.", "On station."),
+        (f"Halted at grid {grid}.", "Halted."),
+        (f"Holding at grid {grid}.", "Holding."),
+        (f"In position, occupying B1, at grid {grid}.", "In position, occupying B1."),
+        (f"Passing grid 040 040, at grid {grid}.", "Passing grid 040 040."),
+        (f"Not making progress toward grid 050 050, at grid {grid}.", "Not making progress toward grid 050 050."),
+        (f"Finished searching around grid {grid}, at grid {grid}.", f"Finished searching around grid {grid}."),
+    ):
+        report = reports._without_own_grid(reports.Report(reports.ROUTINE, words, grid))
+        assert report.text == expect and report.grid is None
+    said = Tracker().update(packet(order="O-1", pos=[3050, 3050], leg=1, contacts=[contact()]),
+                            route(("MOVE", (3050, 3050), "030 030")), 0)
+    assert not [r for r in said if r.grid]
+
+
+def test_a_squad_in_combat_gives_its_grid_only_when_asked_for_its_position():
+    seen = packet(contacts=[contact()])
+    calm_answer = reports.answer(seen, None)
+    assert calm_answer.startswith("Grid 030 030")
+    sitrep = reports.answer(seen, None, None, None, in_combat=True)
+    assert "030 030" not in sitrep and "One infantry" in sitrep
+    assert reports.answer(seen, None, ["position"], None, in_combat=True).startswith("Grid 030 030")
+    held = route(("HOLD", (3050, 3050), "030 030"))
+    assert reports.answer(packet(), held, ["task"], None, in_combat=True) == "Holding."
+    assert reports.answer(packet(), held, ["task"]) == "Holding at grid 030 030."
 
 
 def test_posture_doesnt_restart_the_route():
@@ -779,7 +836,8 @@ def test_check_in_with_nothing_new_doesnt_wake_the_commander(tmp_path):
     assert b.records.read("radio")[-1]["kind"] == "checkin_unchanged"
     assert b.runtime.last_heard["Alpha"] == 190
     b.advance(220, order="", contacts=[contact()])
-    b.silent(224)
+    b.silent(223)
+    b.silent(227)
     assert len(b.wakes) == 2 and "Contact" in b.wakes[1][0]
 
 
@@ -1091,9 +1149,105 @@ def test_nothing_engine_shaped_reaches_the_commander(tmp_path):
     b.game.emit(type="cmd_report", t=102, secret_class="O_Soldier_F", netId="2:113", **packet(**fields))
     b.silent(102)
     b.silent(106)
+    b.silent(110)
     seen = b.wakes[0][0] + json.dumps(b.runtime.ask("Alpha")) + json.dumps(b.runtime.roster())
+    b.game.emit(type="cmd_report", t=128, **packet(**fields))
+    b.silent(128)
+    b.game.emit(type="cmd_report", t=132, **packet(**fields))
+    b.silent(132)
+    seen += json.dumps(b.records.read("radio"))
     for banned in ("O_Soldier_F", "2:113", "3250", "3050", "AWARE", "YELLOW", "cmd_report"):
         assert banned not in seen, banned
+
+
+def in_the_fight(tmp_path) -> Battle:
+    b = Battle(tmp_path)
+    b.start()
+    b.runtime.end_turn("x", messages_only=True)
+    return b
+
+
+def radio_words(b: Battle) -> list[str]:
+    return [row["text"] for row in b.records.read("radio")]
+
+
+def test_reports_from_a_squad_in_combat_arrive_late_and_in_order(tmp_path):
+    b = in_the_fight(tmp_path)
+    b.advance(102, contacts=[contact()], suppression=0.5)
+    assert radio_words(b) == []  # nothing yet
+    b.advance(104, contacts=[contact()], suppression=0.5, alive=3)
+    b.advance(110, contacts=[contact()], suppression=0.5, alive=3)
+    assert radio_words(b) == []  # under heavy fire, even a flash report takes about 15 s
+    for t in (114, 117, 120):
+        b.advance(t, contacts=[contact()], suppression=0.5, alive=3)
+    assert radio_words(b)[0].startswith("Contact, one infantry, bearing 045")
+    assert b.records.read("radio")[0]["t"] == 17  # logged when it was heard, and T+0 is mission time 100
+    for t in (125, 131, 137, 143, 149, 155, 161, 167, 170):  # casualties are grouped for 30 s, then take 30 s to report
+        b.advance(t, contacts=[contact()], suppression=0.5, alive=3)
+    words = radio_words(b)
+    assert words[1].startswith("Taking casualties, 3 of 4 effective")
+
+
+def test_a_calm_squad_still_reports_at_once(tmp_path):
+    b = in_the_fight(tmp_path)
+    b.advance(102, order="", alive=3)
+    b.advance(104, order="", alive=2)
+    assert b.runtime.outbox == []
+
+
+def test_asking_a_squad_in_combat_gets_wait_one_then_the_answer_later(tmp_path):
+    b = in_the_fight(tmp_path)
+    b.advance(102, contacts=[contact()], suppression=0.5)
+    assert b.runtime.ask("Alpha", ["position", "strength"])["replies"] == [{"from": "Alpha", "text": "Wait one."}]
+    assert b.runtime.ask("Alpha", ["position", "strength"])["replies"] == [{"from": "Alpha", "text": "Wait one."}]
+    assert len([e for e in b.runtime.outbox if "topics" in e]) == 1  # asking again changes nothing
+    assert "Grid" not in " ".join(radio_words(b))
+    for t in (110, 118, 125, 131, 133):
+        b.advance(t, contacts=[contact()], suppression=0.5, pos=[3350, 3050], grid="033030")
+    answers = [w for w in radio_words(b) if w.startswith("Grid")]
+    assert answers == ["Grid 033 030, stationary. 4 of 4 effective. Sam Reed has command."]  # as it is by then
+    assert b.runtime.positions["Alpha"]["grid"] == "033 030"
+
+
+def test_a_general_sitrep_in_combat_gives_no_grid_and_doesnt_move_the_map(tmp_path):
+    b = in_the_fight(tmp_path)
+    b.advance(102, contacts=[contact()], suppression=0.5)
+    b.runtime.ask("Alpha")
+    for t in (110, 118, 125, 131, 133):
+        b.advance(t, contacts=[contact()], suppression=0.5)
+    answer = [w for w in radio_words(b) if "effective" in w][0]
+    assert "030 030" not in answer and "Alpha" not in b.runtime.positions
+
+
+def test_a_squad_wiped_out_never_sends_what_it_was_waiting_to_say(tmp_path):
+    b = in_the_fight(tmp_path)
+    b.advance(102, contacts=[contact()], suppression=0.5)
+    b.runtime.ask("Alpha", ["strength"])
+    for t in (110, 120, 130, 140):
+        b.silent(t)  # no more packets: nobody left to send them
+    assert radio_words(b).count("Wait one.") == 1
+    assert not [w for w in radio_words(b) if w.startswith("Contact") or "effective" in w]
+    assert b.runtime.outbox == [] and b.wakes == []
+
+
+def test_a_checkin_during_a_fight_arrives_late_too(tmp_path):
+    b = in_the_fight(tmp_path)
+    b.runtime.schedule({"ask": {"to": "Alpha", "topics": ["strength"]}}, after="0:10")
+    b.advance(105, contacts=[contact()], suppression=0.5)
+    b.advance(111, contacts=[contact()], suppression=0.5)
+    assert [e for e in b.runtime.outbox if e.get("checkin")]
+    for t in (118, 124, 130, 136, 142):
+        b.advance(t, contacts=[contact()], suppression=0.5)
+    assert "4 of 4 effective. Sam Reed has command." in radio_words(b)
+
+
+def test_messages_waiting_to_be_sent_survive_a_server_restart_and_die_with_the_battle(tmp_path):
+    b = in_the_fight(tmp_path)
+    b.advance(102, contacts=[contact()], suppression=0.5)
+    b.runtime.save()
+    assert b.new_runtime().outbox == b.runtime.outbox != []
+    b.runtime._end("Time limit reached.")
+    assert b.runtime.outbox == []
 
 
 def test_game_outage_is_a_plain_fault_notice(tmp_path):

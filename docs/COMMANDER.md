@@ -577,7 +577,7 @@ The commander hears:
 
 | Data | Spoken as | Rule |
 |---|---|---|
-| Own position | Grid 052 191 | 100 m grid, 6 digits |
+| Own position | Grid 052 191 | 100 m grid, 6 digits. In combat, only when specifically asked for |
 | Own movement | moving north-east | 8-point compass |
 | Bearing to an enemy | bearing 045 | Degrees, rounded to 5. An estimate: a random error of 5 degrees either way, widening with how vaguely the target's position is known, up to 20 |
 | Enemy range | roughly 300 metres | Nearest 50 m up to 500 m, nearest 100 m beyond, "distant" past a limit |
@@ -623,7 +623,16 @@ AI soldiers can walk past an enemy without registering him. In the first combat 
 
 Reports stay modest: "B3 checked, nothing seen", and never "all clear", because squads can still miss people.
 
-### 10.6 Rule-based first, personas later
+### 10.6 Squads in combat
+
+A squad under fire can't do what a calm one can, so its radio behaviour changes with what the engine measures. **In combat** means a fresh enemy contact, an average `getSuppression` of at least 0.05 across the squad, or casualties in the last 30 s. In a test firefight, `getSuppression` averaged up to 76% for the losing side and up to 39% for the winning side, and fell to 0 within 5 s of the fight ending. `behaviour` isn't used: it stays `COMBAT` for 35 s after a fight, and the commander can order it. A mortar round landing 90 m away moved none of these, so shelling needs its own trigger when fire support is built.
+
+- **No grid refs.** Reports drop the squad's own grid. A general SITREP leaves position out. The squad gives its grid only when asked specifically for `position`. Grids of places it was told about stay in.
+- **Reports are slower.** By average suppression: 5 s below 10%, 15 s below 40%, and 30 s above that, give or take 30%. Flash reports take half that. Messages keep their order.
+- **Questions get "Wait one."** The real answer comes as a message when the delay is up, built from what the squad knows by then, and it wakes the commander like any message. Asking again while one is waiting adds nothing.
+- **A squad wiped out before it gets a message away never sends it.** That's noted only in the operator's log.
+
+### 10.7 Rule-based first, personas later
 
 The first version uses templates with a little seeded variation in wording. A later persona layer would rewrite rendered text and answer free-form questions using the packet alone. The rest of the system doesn't change when personas arrive. Any persona must pass a check that its output adds no facts beyond the packet.
 
