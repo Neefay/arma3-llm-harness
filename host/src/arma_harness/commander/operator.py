@@ -94,6 +94,11 @@ def start(path: str, mode: str | None = None, harness: Harness | None = None, wa
     _result(h.exec("brmh_cmd_buildings = createHashMapFromArray _this; true", "server", timeout=10,
                    args=[[building["id"], building["pos"]] for building in buildings]))
     vehicles = _spawn_vehicles(h, scenario, world_size)
+    for station in scenario.stations.values():
+        for vehicle_id, seat in station["crew"].items():
+            if not _result(h.exec("_this call brmh_cmd_fnc_crew", "server", timeout=10,
+                                  args=[station["callsign"], vehicle_id, seat])):
+                raise HarnessError(f"{station['callsign']} couldn't crew {vehicle_id} as {seat}")
     attempt = _next_attempt(h.home, state.run_id)
     records_folder = h.home.runs / state.run_id / f"commander-{attempt}" / scenario.side
     records_folder.mkdir(parents=True, exist_ok=True)

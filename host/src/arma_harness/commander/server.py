@@ -26,8 +26,9 @@ ORDER_TYPES_HELP = (
     "a ring around a place, radius default 30 m, and watch it. ATTACK: slow combat advance on a place. DEFEND: "
     "garrison buildings around a place and hold. PATROL_AREA: patrol randomly around a place. SWEEP: search randomly, "
     "including some buildings, until replaced. SENTRY: wait at a place until enemies appear, then continue. PATROL: "
-    "repeat a route. HALT. POSTURE: change settings only. The last six of the single-place orders run until replaced. "
-    "Each stands alone in an order, except MOVE, HOLD, SEARCH and SENTRY, which can be chained.")
+    "repeat a route. HALT. POSTURE: change settings only. MOUNT: get into a vehicle from your list, one man if you "
+    "name a seat, or everyone who fits. DISMOUNT: get off one, or all of them. The last six of the single-place orders "
+    "run until replaced. Each stands alone in an order, except MOVE, HOLD, SEARCH and SENTRY, which can be chained.")
 _STRING = {"type": "string"}
 _LEG = {
     "type": "object",
@@ -37,6 +38,8 @@ _LEG = {
                               "list of them. For CLEAR, a list of building ids, or a place plus radius. Needed by "
                               "every type except HALT and POSTURE, though HOLD or SENTRY after another leg can omit "
                               "it to stay where that leg ended."},
+        "vehicle": {"type": "string", "description": "For MOUNT and DISMOUNT: an id from your list, such as V1"},
+        "seat": {"type": "string", "description": "For MOUNT: driver, gunner, commander, cargo or turret:0"},
         "radius": {"type": "number", "description": "Metres around the point"},
         "completion": {"type": "number", "description": "How close counts as arrived, in metres"},
         "hold_for": {"type": "string", "description": "Time to wait at the point, such as 1:30"},

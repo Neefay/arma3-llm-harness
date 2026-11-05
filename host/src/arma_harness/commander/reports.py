@@ -211,7 +211,7 @@ def _vehicle_words(packet: dict) -> str:
     if not rows:
         return ""
     by_vehicle: dict[str, list[str]] = {}
-    for vehicle, seat, name, *_ in rows:
+    for vehicle, seat, name, *_ in rows:  # the rest of a row isn't for saying aloud
         by_vehicle.setdefault(vehicle or "a vehicle", []).append(f"{name} as {seat}")
     words = " ".join(f"On {vehicle}: {', '.join(seats)}." for vehicle, seats in by_vehicle.items())
     on_foot = packet.get("alive", 0) - len(rows)
@@ -306,6 +306,9 @@ class Tracker:
     stuck_said: float = -1.0
     checked: list[str] = field(default_factory=list)
     hurt_at: float = -1.0
+    mount_said: list = field(default_factory=list)
+    gunners: dict[str, str] = field(default_factory=dict)
+    gunners_alive: int = 0
 
     def in_combat(self, packet: dict, now: float) -> bool:
         """From what the engine measures: a fresh enemy contact, being suppressed, or casualties just now. Behaviour
@@ -329,7 +332,23 @@ class Tracker:
         if not self.ammo or _AMMO_BANDS.index(band) > _AMMO_BANDS.index(self.ammo):
             self.ammo = band
         out += self._stuck(packet, route, now)
+        out += self._boarding(packet)
         return [_without_own_grid(report) for report in out] if self.in_combat(packet, now) else out
+
+    def _boarding(self, packet: dict) -> list[Report]:
+        out = []
+        status = packet.get("mount") or []
+        if status and status != self.mount_said:
+            self.mount_said = list(status)
+            words = _boarding_words(status)
+            if words:
+                out.append(Report(ROUTINE, words))
+        gunners = {row[0]: row[2] for row in packet.get("mounted") or [] if row[1] == "gunner"}
+        for vehicle in self.gunners:
+            if vehicle not in gunners and packet.get("alive", 0) < self.gunners_alive:
+                out.append(Report(PRIORITY, f"Gunner down on {vehicle or 'the gun'}."))
+        self.gunners, self.gunners_alive = gunners, packet.get("alive", 0)
+        return out
 
     def _order(self, packet: dict, route: dict | None, now: float) -> list[Report]:
         order, grid = packet.get("order", ""), format_grid(packet["grid"])
@@ -346,7 +365,8 @@ class Tracker:
                 out.append(Report(ROUTINE, route.get("acknowledge", "Copy.")))
             else:
                 self.leg, self.on_station, self.route_done, self.checked = 0, [], False, []
-                out.append(Report(ROUTINE, _acknowledgement(route, grid), grid if _is_stop(route) else None))
+                words = f"{_acknowledgement(route, grid)}{_who_stays(packet, route)}"
+                out.append(Report(ROUTINE, words, grid if _is_stop(route) else None))
         if not route or self.route_done or route.get("kind") != "route":
             return out
         legs = route["legs"]
@@ -457,8 +477,40 @@ def _is_stop(route: dict | None) -> bool:
     return bool(route) and route.get("kind") == "halt"
 
 
+def _who_stays(packet: dict, route: dict | None) -> str:
+    """A man on a static gun stays there when his squad moves off. The engine does that, and it's worth knowing."""
+    if not route or route.get("kind") not in ("route", "patrol"):
+        return ""
+    stays = [row for row in packet.get("mounted") or [] if len(row) > 3 and row[3] and row[2] != packet.get("leader")]
+    return "".join(f" {row[2]} stays on {row[0] or 'the gun'}." for row in stays)
+
+
+def _boarding_words(status: list) -> str | None:
+    """What a squad says about getting on or off. Nothing while it's still doing it."""
+    vehicle, word, seat, names = status[0] or "the vehicle", status[1], status[2], status[3]
+    spare = status[4] if len(status) > 4 else 0
+    who = ", ".join(names)
+    place = f" as {seat}" if seat else ""
+    said = {
+        "wrecked": f"{vehicle} is wrecked. Not mounting.",
+        "noseat": f"Unable, {vehicle} has no {seat} seat.",
+        "taken": f"Unable, {vehicle}'s {seat} seat is taken." if seat else f"Unable, {vehicle} is full.",
+        "nobody": f"Unable, nobody free to mount {vehicle}.",
+        "unreachable": f"Unable, can't reach {vehicle}.",
+        "on": f"{who} on {vehicle}{place}." + (f" {spare} didn't fit." if spare else ""),
+        "none": "Nobody's on a vehicle.",
+        "off": f"Off {vehicle}.",
+    }
+    return said.get(word)
+
+
 def _acknowledgement(route: dict | None, grid: str) -> str:
     kind = route.get("kind") if route else ""
+    if kind == "mount":
+        seat = f" as {route['seat']}" if route.get("seat") else ""
+        return f"Copy, mounting {route['vehicle']}{seat}."
+    if kind == "dismount":
+        return f"Copy, getting off {route['vehicle']}." if route.get("vehicle") else "Copy, getting off."
     if kind == "halt":
         return f"Halted at grid {grid}."
     if kind == "posture":

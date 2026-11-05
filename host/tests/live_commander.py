@@ -254,6 +254,99 @@ def snap(harness: Harness, label: str) -> None:
         print(f"    snapshot {label} failed: {exc}", flush=True)
 
 
+def heard(client: Client, phrase: str, timeout: float = 180) -> str:
+    """Reads wakes until a phrase turns up, ending each turn as it goes."""
+    deadline, text = time.time() + timeout, ""
+    while time.time() < deadline:
+        wake = next_wake(client, max(1, deadline - time.time()))
+        text += wake["content"]
+        finish_turn(client, "Read the traffic")
+        if phrase in text:
+            return text
+    raise AssertionError(f"never heard {phrase!r}: {text[-900:]}")
+
+
+def in_game(harness: Harness, code: str, args: list | None = None):
+    res = harness.exec(code, "server", timeout=15, args=args, strip=False)
+    result = res["results"][0] if res.get("results") else res
+    assert res.get("ok") and not result.get("errors"), result
+    return result.get("r")
+
+
+def play_vehicles(client: Client) -> list[str]:
+    """Vehicles, seats and ruins, on the real game. Each step's words are what the commander really gets."""
+    harness = Harness()
+    brief = begin(client)
+    known = {vehicle["id"]: vehicle for vehicle in brief["vehicles"]}
+    assert set(known) == {"V1", "V3"} and known["V1"]["type"] == "Mk6 Mortar", brief["vehicles"]
+    client.tool("commander_end_turn", note="Waiting", messages_only=True)
+
+    # Alpha can see the unlisted mortar. The id it gets is the commander's own, not the scenario's.
+    text = heard(client, "Listed as V")
+    assert "Mk6 Mortar, nobody on it, grid 041 035. Listed as V" in text, text[-500:]
+    assert "is destroyed" not in text, "a standing building was reported destroyed"
+
+    # Mount by seat: a subordinate gets on, not the leader, and targeting goes off.
+    client.tool("commander_order", to="Hammer", legs=[{"type": "MOUNT", "vehicle": "V1", "seat": "gunner"}])
+    text = heard(client, "on V1 as gunner")
+    assert "Copy, mounting V1 as gunner." in text and "didn't fit" not in text
+    seat = in_game(harness, """
+    private _gun = brmh_cmd_vehicles get "V1";
+    private _group = brmh_cmd_stations get "Hammer";
+    [gunner _gun isNotEqualTo objNull, gunner _gun isEqualTo leader _group, (gunner _gun) checkAIFeature "TARGET"]
+    """)
+    assert seat == [True, False, False], seat
+    answer = client.tool("commander_ask", to="Hammer", topics=["vehicles"])["replies"][0]["text"]
+    assert "On V1:" in answer and "as gunner" in answer and "2 on foot" in answer, answer
+
+    # A taken seat is said aloud, not left waiting in silence. There's no such seat on a mortar as a driver's.
+    client.tool("commander_order", to="Alpha", legs=[{"type": "MOUNT", "vehicle": "V1", "seat": "gunner"}])
+    assert "Unable, V1's gunner seat is taken." in heard(client, "seat is taken", 30)
+    client.tool("commander_order", to="Alpha", legs=[{"type": "MOUNT", "vehicle": "V1", "seat": "driver"}])
+    assert "Unable, V1 has no driver seat." in heard(client, "no driver seat", 30)
+
+    # The squad moves off, and its man stays on the gun.
+    client.tool("commander_order", to="Hammer", legs=[{"type": "MOVE", "at": "038 039"}])
+    text = heard(client, "stays on V1", 30)
+    time.sleep(25)
+    apart = in_game(harness, """
+    private _gun = brmh_cmd_vehicles get "V1";
+    private _group = brmh_cmd_stations get "Hammer";
+    [round (leader _group distance2D _gun), vehicle (gunner _gun) isEqualTo _gun]
+    """)
+    assert apart[0] > 30 and apart[1], apart
+
+    # A gunner down is reported by his squad, and the seat can be taken again.
+    in_game(harness, 'gunner (brmh_cmd_vehicles get "V1") setDamage 1; true')
+    heard(client, "Gunner down on V1", 40)
+
+    # A whole squad into a truck, driven by a subordinate, then out.
+    client.tool("commander_order", to="Alpha", legs=[{"type": "MOUNT", "vehicle": "V3"}])
+    text = heard(client, "on V3", 120)
+    client.tool("commander_order", to="Alpha", legs=[{"type": "MOVE", "at": "039 040"}])
+    heard(client, "Arrived, grid", 120)
+    client.tool("commander_order", to="Alpha", legs=[{"type": "DISMOUNT", "vehicle": "V3"}])
+    heard(client, "Off V3.", 60)
+    assert client.tool("commander_ask", to="Alpha", topics=["vehicles"])["replies"][0]["text"] == "All on foot."
+
+    # A wreck, seen and then refused. Then a ruin: it's seen, and clearing it says so and moves on.
+    # No explosion: Alpha is standing right beside it, and would be wiped out with nobody left to report.
+    in_game(harness, '(brmh_cmd_vehicles get "V3") setDamage [1, false]; true')
+    heard(client, "V3 is wrecked", 60)
+    print("    Alpha alive:", in_game(harness, '{alive _x} count units (brmh_cmd_stations get "Alpha")'), flush=True)
+    client.tool("commander_order", to="Alpha", legs=[{"type": "MOUNT", "vehicle": "V3"}])
+    heard(client, "V3 is wrecked. Not mounting.", 40)
+    ids = sorted(brief["buildings"], key=lambda b: b["positions"])
+    gone, kept = ids[0]["id"], ids[1]["id"]
+    in_game(harness, "(brmh_cmd_buildings get (_this # 0)) params ['_x', '_y']; "
+            "(nearestObjects [[_x, _y, 0], ['House'], 6]) apply { _x setDamage 1 }; true", [gone])
+    client.tool("commander_order", to="Alpha", legs=[{"type": "CLEAR", "at": [gone, kept]}])
+    text = heard(client, f"{kept} checked", 240)
+    assert f"{gone} is a ruin" in text or f"{gone} is destroyed" in text, text[-800:]
+    assert f"{gone} checked" not in text, "a ruin was reported as checked"
+    return [text]
+
+
 def play_village(client: Client) -> list[str]:
     """Plumbing for the combat scenario: timed attack, repeating check-in, markers, contact reports, an ending."""
     harness = Harness()
@@ -333,6 +426,7 @@ def main() -> None:
                ("failure variant: Alpha lost", "poc_a_to_b_lost", "hold", play_lost),
                ("halt, posture and resume", "poc_a_to_b", "hold", play_halt_and_resume),
                ("every order type", "orders_check", "hold", play_orders),
+               ("vehicles and crews", "vehicles_check", "hold", play_vehicles),
                ("combat: take the village", "take_the_village", "hold", play_village, True)]
     wanted = sys.argv[1:]  # words to match in battle names; none means all of them
     try:

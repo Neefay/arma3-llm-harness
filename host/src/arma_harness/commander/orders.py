@@ -15,7 +15,8 @@ LEG_TYPES = {"MOVE": "MOVE", "HOLD": "HOLD", "SEARCH": "SAD", "SENTRY": "SENTRY"
 SINGLE_LEG = {"CLEAR", "OCCUPY", "CORDON", "ATTACK", "DEFEND", "PATROL_AREA", "SWEEP"}
 DEFAULT_RADIUS_M = {"CLEAR": 100, "CORDON": 30, "ATTACK": 80, "DEFEND": 100, "PATROL_AREA": 150, "SWEEP": 120}
 MAX_RADIUS_M = 300
-ORDER_TYPES = set(LEG_TYPES) | SINGLE_LEG | {"PATROL", "HALT", "POSTURE"}
+ORDER_TYPES = set(LEG_TYPES) | SINGLE_LEG | {"PATROL", "HALT", "POSTURE", "MOUNT", "DISMOUNT"}
+SEATS = re.compile(r"^(driver|gunner|commander|cargo|turret:\d+)$")
 
 
 class Invalid(ValueError):
@@ -83,7 +84,7 @@ def _number(value, label: str) -> float:
 
 
 def validate(request: dict, stations: dict[str, dict], markers: dict[str, dict], world_size: float,
-             buildings: list[dict] | None = None) -> dict:
+             buildings: list[dict] | None = None, vehicles: dict[str, dict] | None = None) -> dict:
     """Check a commander_order request and build what the game side needs: {to, mode, engine_legs, posture, route}."""
     to = request.get("to")
     if to not in stations:
@@ -113,6 +114,8 @@ def validate(request: dict, stations: dict[str, dict], markers: dict[str, dict],
         if posture == ["", "", "", ""]:
             raise Invalid("POSTURE needs at least one setting.")
         return {"to": to, "mode": "posture", "engine_legs": [], "posture": posture, "route": None}
+    if "MOUNT" in types or "DISMOUNT" in types:
+        return _boarding(to, legs, types, posture, vehicles or {})
     single = SINGLE_LEG & set(types)
     if single and len(types) > 1:
         raise Invalid(f"{sorted(single)[0]} must be the only leg in an order. Move there first, or schedule it.")
@@ -133,6 +136,23 @@ def validate(request: dict, stations: dict[str, dict], markers: dict[str, dict],
         route_legs.append({"type": kind, "pos": pos, "grid": grid, "completion": completion})
     return {"to": to, "mode": mode, "engine_legs": engine_legs, "posture": posture,
             "route": {"kind": "route", "legs": route_legs}}
+
+
+def _boarding(to, legs, types, posture, vehicles) -> dict:
+    """Getting on and off goes by the commander's own list of vehicles, so a refusal gives nothing away."""
+    if len(types) > 1:
+        raise Invalid(f"{types[0]} must be the only leg in an order.")
+    kind, vehicle_id, seat = types[0], legs[0].get("vehicle"), str(legs[0].get("seat") or "").lower()
+    if seat and not SEATS.match(seat):
+        raise Invalid(f"Bad seat {seat!r}: use driver, gunner, commander, cargo or turret:0.")
+    if kind == "DISMOUNT" and not vehicle_id:
+        return {"to": to, "mode": "dismount", "engine_legs": [["", ""]], "posture": posture,
+                "route": {"kind": "dismount", "legs": [], "vehicle": ""}}
+    if vehicle_id not in vehicles:
+        raise Invalid(f"{kind} needs a vehicle from your list, such as V1, and {vehicle_id!r} isn't on it.")
+    key = vehicles[vehicle_id]["key"]
+    return {"to": to, "mode": kind.lower(), "engine_legs": [[key, seat]], "posture": posture,
+            "route": {"kind": kind.lower(), "legs": [], "vehicle": vehicle_id, "seat": seat}}
 
 
 def _building_of(at, places: dict[str, dict], known: dict[str, dict]) -> str | None:

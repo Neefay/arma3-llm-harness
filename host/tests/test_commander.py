@@ -1301,6 +1301,111 @@ def test_a_scenario_cant_crew_a_vehicle_it_doesnt_have():
         scenario.build(raw)
 
 
+BOARDING = {"Alpha": {**STATIONS["Alpha"], "capabilities": ["MOVE", "MOUNT", "DISMOUNT"]}}
+LIST = {"V1": {"id": "V1", "key": "V1"}, "V2": {"id": "V2", "key": "U7"}}
+
+
+def boarding(**leg) -> dict:
+    return orders.validate({"to": "Alpha", "legs": [leg]}, BOARDING, MARKERS, 8192, BUILDINGS, LIST)
+
+
+def test_mount_orders_go_by_the_commanders_own_list():
+    order = boarding(type="MOUNT", vehicle="V2", seat="Gunner")
+    assert order["mode"] == "mount" and order["engine_legs"] == [["U7", "gunner"]]  # the game's key, never shown
+    assert order["route"] == {"kind": "mount", "legs": [], "vehicle": "V2", "seat": "gunner"}
+    assert boarding(type="MOUNT", vehicle="V1")["engine_legs"] == [["V1", ""]]
+    assert boarding(type="MOUNT", vehicle="V1", seat="turret:2")["engine_legs"] == [["V1", "turret:2"]]
+    assert boarding(type="DISMOUNT")["engine_legs"] == [["", ""]]
+    assert boarding(type="DISMOUNT", vehicle="V1")["route"]["vehicle"] == "V1"
+
+
+@pytest.mark.parametrize("leg, words", [
+    ({"type": "MOUNT", "vehicle": "V9"}, "from your list"),
+    ({"type": "MOUNT"}, "from your list"),
+    ({"type": "DISMOUNT", "vehicle": "V9"}, "from your list"),
+    ({"type": "MOUNT", "vehicle": "V1", "seat": "roof"}, "Bad seat"),
+])
+def test_bad_mount_orders_are_refused(leg, words):
+    with pytest.raises(Invalid, match=words):
+        boarding(**leg)
+
+
+def test_mount_stands_alone_and_needs_the_capability():
+    with pytest.raises(Invalid, match="only leg"):
+        both = [{"type": "MOUNT", "vehicle": "V1"}, {"type": "MOVE", "at": "034 030"}]
+        orders.validate({"to": "Alpha", "legs": both}, BOARDING, MARKERS, 8192, BUILDINGS, LIST)
+    with pytest.raises(Invalid, match="can't do MOUNT"):
+        one = [{"type": "MOUNT", "vehicle": "V1"}]
+        orders.validate({"to": "Alpha", "legs": one}, STATIONS, MARKERS, 8192, [], LIST)
+
+
+def mount_route(vehicle="V1", seat="gunner") -> dict:
+    return {"kind": "mount", "legs": [], "vehicle": vehicle, "seat": seat}
+
+
+def test_mounting_acknowledges_then_reports_how_it_went():
+    tracker, trip = Tracker(), mount_route()
+    said = tracker.update(packet(order="O-1", mount=["V1", "going", "gunner", []]), trip, 0)
+    assert [r.text for r in said] == ["Copy, mounting V1 as gunner."]
+    said = tracker.update(packet(order="O-1", mount=["V1", "on", "gunner", ["Sam Reed"], 0]), trip, 16)
+    assert [r.text for r in said] == ["Sam Reed on V1 as gunner."]
+    assert tracker.update(packet(order="O-1", mount=["V1", "on", "gunner", ["Sam Reed"], 0]), trip, 18) == []
+
+
+@pytest.mark.parametrize("status, words", [
+    (["V1", "wrecked", "gunner", []], "V1 is wrecked. Not mounting."),
+    (["V1", "noseat", "driver", []], "Unable, V1 has no driver seat."),
+    (["V1", "taken", "gunner", []], "Unable, V1's gunner seat is taken."),
+    (["V1", "taken", "", []], "Unable, V1 is full."),
+    (["V1", "nobody", "", []], "Unable, nobody free to mount V1."),
+    (["V1", "unreachable", "gunner", []], "Unable, can't reach V1."),
+    (["V3", "on", "", ["A B", "C D"], 4], "A B, C D on V3. 4 didn't fit."),
+    (["V3", "off", "", ["A B"]], "Off V3."),
+    (["", "none", "", []], "Nobody's on a vehicle."),
+])
+def test_how_boarding_is_said(status, words):
+    assert reports._boarding_words(status) == words
+
+
+def test_a_squad_moving_off_says_who_stays_on_the_gun():
+    trip = route(("MOVE", (3450, 3050), "034 030"))
+    seated = [["V1", "gunner", "Pat Vane", True]]
+    assert Tracker().update(packet(order="O-1", mounted=seated), trip, 0)[0].text == \
+        "Copy, moving to grid 034 030. Pat Vane stays on V1."
+    # A leader's taken off by the game side, and a man in a truck goes with it.
+    leader = [["V1", "gunner", "Sam Reed", True]]
+    assert "stays" not in Tracker().update(packet(order="O-1", mounted=leader), trip, 0)[0].text
+    truck = [["V2", "driver", "Pat Vane", False]]
+    assert "stays" not in Tracker().update(packet(order="O-1", mounted=truck), trip, 0)[0].text
+
+
+def test_losing_a_gunner_is_reported_but_getting_off_isnt():
+    tracker = Tracker()
+    seated = [["V1", "gunner", "Pat Vane", True]]
+    tracker.update(packet(mounted=seated), None, 0)
+    said = tracker.update(packet(alive=3, mounted=[]), None, 2)
+    assert [r.text for r in said] == ["Gunner down on V1."] and said[0].precedence == reports.PRIORITY
+    tracker = Tracker()
+    tracker.update(packet(mounted=seated), None, 0)
+    assert tracker.update(packet(mounted=[]), None, 2) == []
+
+
+def test_the_runtime_sends_the_games_key_and_reports_the_commanders_id(tmp_path):
+    station = {"callsign": "Alpha", "role": "x", "capabilities": ["MOVE", "MOUNT", "DISMOUNT"], "at": "030 030"}
+    b = Battle(tmp_path, stations=[station])
+    b.runtime = Runtime(b.game, b.scenario, b.records, lambda text, meta: b.wakes.append((text, meta)), world_size=8192,
+                        clock=lambda: b.wall, vehicles=[{"id": "V1", "name": "Mk6 Mortar", "at": "041 033"}])
+    b.start()
+    b.runtime.vehicles["V2"] = {"id": "V2", "key": "U7", "name": "Hunter", "at": "030 030", "t": 100, "wrecked": False}
+    b.runtime.order({"to": "Alpha", "legs": [{"type": "MOUNT", "vehicle": "V2", "seat": "driver"}]})
+    assert b.game.calls[-1][1][:4] == ["Alpha", "O-0001", "mount", [["U7", "driver"]]]
+    assert "O-0001: MOUNT V2" in said_by(b)[-1]
+    b.advance(102, order="O-0001", mount=["U7", "on", "driver", ["Sam Reed"], 0],
+              mounted=[["U7", "driver", "Sam Reed", False]])
+    assert "Sam Reed on V2 as driver." in said_by(b)
+    assert "U7" not in " ".join(said_by(b)) and "On V2" in b.runtime.ask("Alpha", ["vehicles"])["replies"][0]["text"]
+
+
 def in_the_fight(tmp_path) -> Battle:
     b = Battle(tmp_path)
     b.start()

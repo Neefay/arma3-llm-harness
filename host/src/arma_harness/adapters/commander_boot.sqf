@@ -89,12 +89,16 @@ brmh_cmd_fnc_contacts = {
 	}
 };
 
-// A numbered building, if it's still standing. A destroyed one becomes a ruin that isn't a House, and a wider search
-// would find its neighbour.
+// A numbered building, if it's still standing. A destroyed one becomes a ruin that isn't a House. The search has to be wide,
+// because it measures in 3D from the model's centre, which is high up on a tower, but only what's directly here counts,
+// or it would find a neighbour instead.
 brmh_cmd_fnc_building = {
 	params ["_pos"];
-	private _found = (nearestObjects [(_pos select [0, 2]) + [0], ["House"], 6]) select {
+	private _here = (_pos select [0, 2]) + [0];
+	private _found = (nearestObjects [_here, ["House"], 40]) select {
 		alive _x and {
+			(_x distance2D _here) < 6
+		} and {
 			(_x buildingPos -1) isNotEqualTo []
 		}
 	};
@@ -106,9 +110,9 @@ brmh_cmd_fnc_building = {
 };
 
 brmh_cmd_fnc_canSee = {
-	params ["_soldiers", "_object", "_point"];
+	params ["_soldiers", "_object", "_point", ["_through", "VIEW"]];
 	(_soldiers findIf {
-		([_x, "VIEW", _object] checkVisibility [eyePos _x, _point]) > 0.3
+		([_x, _through, _object] checkVisibility [eyePos _x, _point]) > 0.3
 	}) >= 0
 };
 
@@ -138,7 +142,8 @@ brmh_cmd_fnc_sightings = {
 	{
 		private _vehicle = _x;
 		private _top = (getPosASL _vehicle) vectorAdd [0, 0, 1];
-		if ([_lookers, _vehicle, _top] call brmh_cmd_fnc_canSee) then {
+		// A burning wreck's own smoke blocks VIEW, even from beside it. FIRE ignores smoke.
+		if ([_lookers, _vehicle, _top, ["FIRE", "VIEW"] select alive _vehicle] call brmh_cmd_fnc_canSee) then {
 			private _key = _vehicle getVariable ["brmh_cmd_key", ""];
 			if (_key isEqualTo "") then {
 				_key = format ["U%1", count brmh_cmd_vehicles + 1];
@@ -155,7 +160,7 @@ brmh_cmd_fnc_sightings = {
 			isNull ([_y] call brmh_cmd_fnc_building)
 		}) then {
 			private _ground = [_y # 0, _y # 1, (getTerrainHeightASL _y) + 1];
-			if ([_lookers, objNull, _ground] call brmh_cmd_fnc_canSee) then {
+			if ([_lookers, objNull, _ground, "FIRE"] call brmh_cmd_fnc_canSee) then {
 				_ruins pushBack _x;
 			};
 		};
@@ -177,10 +182,299 @@ brmh_cmd_fnc_mounted = {
 				"cargo"
 			} else {
 				_seat # 0 # 1
-			}, name _soldier, typeOf _vehicle];
+			}, name _soldier, _vehicle isKindOf "StaticWeapon"];
 		};
 	} forEach _alive;
 	_out
+};
+
+// Free seats of a kind, in the game's own order. A seat with a dead man in it counts as free. The engine lets someone take it.
+brmh_cmd_fnc_freeSeats = {
+	params ["_vehicle", "_kind"];
+	(fullCrew [_vehicle, "", true]) select {
+		(_x # 1) isEqualTo _kind and {
+			isNull (_x # 0) or {
+				not alive (_x # 0)
+			}
+		}
+	}
+};
+
+brmh_cmd_fnc_seatMan = {
+	params ["_man", "_vehicle", "_seat"];
+	_seat params ["", "_role", "_cargo", "_turret"];
+	switch (_role) do {
+		case "driver": {
+			_man assignAsDriver _vehicle;
+		};
+		case "gunner": {
+			_man assignAsGunner _vehicle;
+		};
+		case "commander": {
+			_man assignAsCommander _vehicle;
+		};
+		case "cargo": {
+			_man assignAsCargoIndex [_vehicle, _cargo];
+		};
+		default {
+			_man assignAsTurret [_vehicle, _turret];
+		};
+	};
+};
+
+// A gun's crew only fires when ordered. A crewed gun otherwise opens up by itself at any enemy its crew knows of.
+brmh_cmd_fnc_onSeat = {
+	params ["_man", "_vehicle"];
+	if (getNumber (configOf _vehicle >> "artilleryScanner") > 0 and {
+		gunner _vehicle isEqualTo _man
+	}) then {
+		_man disableAI "TARGET";
+	};
+};
+
+brmh_cmd_fnc_startMount = {
+	params ["_group", "_key", "_kind"];
+	private _vehicle = brmh_cmd_vehicles getOrDefault [_key, objNull];
+	_group setVariable ["brmh_cmd_mountList", []];
+	_group setVariable ["brmh_cmd_mount", []];
+	if (isNull _vehicle or {
+		not alive _vehicle
+	}) exitWith {
+		_group setVariable ["brmh_cmd_mount", [_key, "wrecked", _kind, []]];
+	};
+	private _leader = leader _group;
+	// The newest first, and the leader last: a leader on a gun stays there and holds the squad with him.
+	private _newestFirst = +(units _group);
+	reverse _newestFirst;
+	private _free = _newestFirst select {
+		alive _x and {
+			_x isNotEqualTo _leader
+		} and {
+			vehicle _x isEqualTo _x
+		}
+	};
+	if (alive _leader and {
+		vehicle _leader isEqualTo _leader
+	}) then {
+		_free pushBack _leader;
+	};
+	private _seats = [];
+	if (_kind isEqualTo "") then {
+		{
+			_seats append ([_vehicle, _x] call brmh_cmd_fnc_freeSeats);
+		} forEach ["driver", "gunner", "commander", "cargo", "turret"];
+	} else {
+		if ((_kind select [0, 7]) isEqualTo "turret:") then {
+			private _all = (fullCrew [_vehicle, "", true]) select {
+				(_x # 1) isEqualTo "turret"
+			};
+			private _index = parseNumber (_kind select [7]);
+			_seats = (_all select [_index, 1]) select {
+				isNull (_x # 0) or {
+					not alive (_x # 0)
+				}
+			};
+		} else {
+			if (((fullCrew [_vehicle, "", true]) findIf {
+				(_x # 1) isEqualTo _kind
+			}) < 0) exitWith {
+				_group setVariable ["brmh_cmd_mount", [_key, "noseat", _kind, []]];
+			};
+			_seats = ([_vehicle, _kind] call brmh_cmd_fnc_freeSeats) select [0, 1];
+		};
+	};
+	if ((_group getVariable ["brmh_cmd_mount", []]) isEqualTo [_key, "noseat", _kind, []]) exitWith {};
+	if (_seats isEqualTo []) exitWith {
+		_group setVariable ["brmh_cmd_mount", [_key, "taken", _kind, []]];
+	};
+	if (_free isEqualTo []) exitWith {
+		_group setVariable ["brmh_cmd_mount", [_key, "nobody", _kind, []]];
+	};
+	private _list = [];
+	{
+		if (_forEachIndex < count _free) then {
+			private _man = _free # _forEachIndex;
+			[_man, _vehicle, _x] call brmh_cmd_fnc_seatMan;
+			_list pushBack [_man, _x # 1, _x # 2, _x # 3];
+		};
+	} forEach _seats;
+	if (not (_vehicle isKindOf "StaticWeapon")) then {
+		_group addVehicle _vehicle;
+	};
+	(_list apply {
+		_x # 0
+	}) orderGetIn true;
+	_group setVariable ["brmh_cmd_mountList", _list];
+	_group setVariable ["brmh_cmd_mountBy", time + 60 + ((_leader distance2D _vehicle) / 1.5)];
+	// Only when it asked for everyone who fits. A named seat is for one man.
+	_group setVariable ["brmh_cmd_mountSpare", [0, ((count _free) - (count _seats)) max 0] select (_kind isEqualTo "")];
+	_group setVariable ["brmh_cmd_mountVehicle", _vehicle];
+	_group setVariable ["brmh_cmd_mount", [_key, "going", _kind, []]];
+};
+
+brmh_cmd_fnc_stepMount = {
+	params ["_group"];
+	private _list = _group getVariable ["brmh_cmd_mountList", []];
+	if (_list isEqualTo []) exitWith {};
+	private _vehicle = _group getVariable ["brmh_cmd_mountVehicle", objNull];
+	private _status = _group getVariable ["brmh_cmd_mount", []];
+	_status params ["_key", "", "_kind"];
+	private _stop = {
+		params ["_word", "_names"];
+		{
+			if (alive (_x # 0) and {
+				vehicle (_x # 0) isNotEqualTo _vehicle
+			}) then {
+				unassignVehicle (_x # 0);
+				[_x # 0] orderGetIn false;
+			};
+		} forEach _list;
+		_group setVariable ["brmh_cmd_mountList", []];
+		_group setVariable ["brmh_cmd_mount", [_key, _word, _kind, _names, _group getVariable ["brmh_cmd_mountSpare", 0]]];
+	};
+	if (not alive _vehicle) exitWith {
+		["wrecked", []] call _stop;
+	};
+	private _on = [];
+	private _waiting = [];
+	{
+		_x params ["_man", "_role", "_cargo", "_turret"];
+		if (alive _man) then {
+			if (vehicle _man isEqualTo _vehicle) then {
+				[_man, _vehicle] call brmh_cmd_fnc_onSeat;
+				_on pushBack _man;
+			} else {
+				_waiting pushBack _x;
+			};
+		};
+	} forEach _list;
+	private _names = _on apply {
+		name _x
+	};
+	if (_waiting isEqualTo []) exitWith {
+		if (_on isEqualTo []) then {
+			["nobody", []] call _stop;
+		} else {
+			["on", _names] call _stop;
+		};
+	};
+	// The engine has a man wait beside a seat someone else has taken, with no error.
+	private _taken = (_waiting findIf {
+		_x params ["_man", "_role", "_cargo", "_turret"];
+		((fullCrew [_vehicle, "", true]) findIf {
+			alive (_x # 0) and {
+				(_x # 0) isNotEqualTo _man
+			} and {
+				(_x # 1) isEqualTo _role
+			} and {
+				(_x # 2) isEqualTo _cargo
+			} and {
+				(_x # 3) isEqualTo _turret
+			}
+		}) >= 0
+	}) >= 0;
+	if (_taken) exitWith {
+		["taken", _names] call _stop;
+	};
+	if (time > (_group getVariable ["brmh_cmd_mountBy", 0])) exitWith {
+		["unreachable", _names] call _stop;
+	};
+};
+
+brmh_cmd_fnc_getOff = {
+	params ["_man"];
+	private _vehicle = vehicle _man;
+	if (_vehicle isNotEqualTo _man) then {
+		_man action ["GetOut", _vehicle];
+	};
+	unassignVehicle _man;
+	[_man] orderGetIn false;
+	_man enableAI "TARGET";
+};
+
+brmh_cmd_fnc_startDismount = {
+	params ["_group", "_key"];
+	_group setVariable ["brmh_cmd_mountList", []];
+	private _men = (units _group) select {
+		alive _x and {
+			vehicle _x isNotEqualTo _x
+		} and {
+			_key isEqualTo "" or {
+				(vehicle _x getVariable ["brmh_cmd_key", ""]) isEqualTo _key
+			}
+		}
+	};
+	{
+		_group leaveVehicle (vehicle _x);
+		[_x] call brmh_cmd_fnc_getOff;
+	} forEach _men;
+	_group setVariable ["brmh_cmd_mount", [_key, ["none", "going off"] select (_men isNotEqualTo []), "", _men apply {
+		name _x
+	}]];
+};
+
+brmh_cmd_fnc_stepDismount = {
+	params ["_group"];
+	private _status = _group getVariable ["brmh_cmd_mount", []];
+	if ((_status param [1, ""]) isNotEqualTo "going off") exitWith {};
+	private _still = (units _group) select {
+		alive _x and {
+			vehicle _x isNotEqualTo _x
+		} and {
+			(_status # 0) isEqualTo "" or {
+				(vehicle _x getVariable ["brmh_cmd_key", ""]) isEqualTo (_status # 0)
+			}
+		}
+	};
+	if (_still isEqualTo []) then {
+		_status set [1, "off"];
+	};
+};
+
+/*
+	NAME: brmh_cmd_fnc_crew
+	DESCRIPTION: Starts a scenario with a soldier already in a seat. Operator action, never reachable by the commander.
+	PARAMETERS:
+		0 - Callsign (STRING)
+		1 - Vehicle id (STRING)
+		2 - Seat: gunner, driver, commander or cargo (STRING)
+	USAGE:
+		["Hammer", "V1", "gunner"] call brmh_cmd_fnc_crew;
+	RETURNS: Whether anybody got on
+	ENVIRONMENT: Server
+*/
+brmh_cmd_fnc_crew = {
+	params [["_callsign", "", [""]], ["_key", "", [""]], ["_kind", "gunner", [""]]];
+	private _group = brmh_cmd_stations getOrDefault [_callsign, grpNull];
+	private _vehicle = brmh_cmd_vehicles getOrDefault [_key, objNull];
+	private _seat = ([_vehicle, _kind] call brmh_cmd_fnc_freeSeats) param [0, []];
+	private _free = (+(units _group)) select {
+		vehicle _x isEqualTo _x
+	};
+	reverse _free;
+	if (_seat isEqualTo [] or {
+		_free isEqualTo []
+	}) exitWith {
+		false
+	};
+	private _man = _free # 0;
+	[_man, _vehicle, _seat] call brmh_cmd_fnc_seatMan;
+	switch (_kind) do {
+		case "driver": {
+			_man moveInDriver _vehicle;
+		};
+		case "commander": {
+			_man moveInCommander _vehicle;
+		};
+		case "cargo": {
+			_man moveInCargo _vehicle;
+		};
+		default {
+			_man moveInGunner _vehicle;
+		};
+	};
+	[_man, _vehicle] call brmh_cmd_fnc_onSeat;
+	true
 };
 
 brmh_cmd_fnc_packet = {
@@ -232,6 +526,7 @@ brmh_cmd_fnc_packet = {
 		["seen_vehicles", _group getVariable ["brmh_cmd_seenVehicles", []]],
 		["seen_ruins", _group getVariable ["brmh_cmd_seenRuins", []]],
 		["mounted", [_alive] call brmh_cmd_fnc_mounted],
+		["mount", _group getVariable ["brmh_cmd_mount", []]],
 		["placed", _group getVariable ["brmh_cmd_placed", -1]],
 		["contacts", [_leader] call brmh_cmd_fnc_contacts]
 	]
@@ -436,6 +731,8 @@ brmh_cmd_fnc_step = {
 		if ((_y getVariable ["brmh_cmd_placed", -1]) isEqualTo 0) then {
 			[_y] call brmh_cmd_fnc_stepPlacing;
 		};
+		[_y] call brmh_cmd_fnc_stepMount;
+		[_y] call brmh_cmd_fnc_stepDismount;
 		if (time < (_y getVariable ["brmh_cmd_releaseUntil", 0])) then {
 			{
 				_x enableAI "PATH";
@@ -554,6 +851,14 @@ brmh_cmd_fnc_order = {
 			_group setVariable ["brmh_cmd_releaseUntil", time + 150];
 		};
 	};
+	if (_mode isEqualTo "mount") exitWith {
+		[_group, _legs # 0 # 0, _legs # 0 # 1] call brmh_cmd_fnc_startMount;
+		true
+	};
+	if (_mode isEqualTo "dismount") exitWith {
+		[_group, _legs # 0 # 0] call brmh_cmd_fnc_startDismount;
+		true
+	};
 	if ((_legs findIf {
 		not ((_x # 0) in ["CYCLE", "CLEAR"]) and {
 			surfaceIsWater (_x # 1)
@@ -571,6 +876,11 @@ brmh_cmd_fnc_order = {
 		// Clearing waypoints doesn't stop a walking group, and doFollow and doMove don't either. doStop does.
 		doStop (units _group);
 		true
+	};
+	// A leader on a gun won't go anywhere by waypoint, and neither will his squad. Anyone else stays on theirs.
+	private _leader = leader _group;
+	if (vehicle _leader isKindOf "StaticWeapon") then {
+		[_leader] call brmh_cmd_fnc_getOff;
 	};
 	private _finished = currentWaypoint _group >= count waypoints _group;
 	if (_mode isEqualTo "replace") then {

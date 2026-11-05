@@ -1,0 +1,22 @@
+# Plumbing check for vehicles, crews and ruins, with nobody to fight. Used by host/tests/live_commander.py.
+name: vehicles_check
+mission: commander
+time_limit: "12:00"
+ao: { at: "041 041", radius: 400 }
+text: >
+  A check of vehicles and crews. There is no enemy.
+vehicles:
+  - { id: V1, class: B_Mortar_01_F, at: "038 037" }
+  - { id: V3, class: B_MRAP_01_hmg_F, at: "039 035" }
+  - { id: V7, class: B_Mortar_01_F, at: "041 035", known: false }
+stations:
+  - callsign: Hammer
+    role: mortar section
+    capabilities: [MOVE, HOLD, MOUNT, DISMOUNT, HALT, POSTURE]
+    at: "038 036"
+    units: 3
+  - callsign: Alpha
+    role: infantry squad
+    capabilities: [MOVE, HOLD, CLEAR, MOUNT, DISMOUNT, HALT, POSTURE]
+    at: "040 035"
+    units: 4

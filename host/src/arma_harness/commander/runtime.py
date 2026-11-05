@@ -259,8 +259,10 @@ class Runtime:
         packet = {key: event.get(key) for key in (
             "callsign", "pos", "grid", "dir", "speed", "alive", "wounded", "baseline", "leader", "rounds",
             "rounds_baseline", "behaviour", "combat_mode", "order", "unable", "leg", "legs", "clearing", "cleared",
-            "placed", "contacts", "suppression", "ruined", "seen_vehicles", "seen_ruins", "mounted")}
+            "placed", "contacts", "suppression", "ruined", "seen_vehicles", "seen_ruins", "mounted", "mount")}
         packet["mounted"] = [[self._vehicle_id(row[0]), *row[1:]] for row in packet.get("mounted") or []]
+        if packet.get("mount"):
+            packet["mount"] = [self._vehicle_id(packet["mount"][0]), *packet["mount"][1:]]
         packet["t"] = float(event.get("t", 0))
         self.packets[callsign] = packet
         if self.t0 is None or self.ended:
@@ -596,7 +598,8 @@ class Runtime:
             return {"order": order_id, "sent": True}
 
     def _send_order(self, request: dict, via: str = "") -> str:
-        checked = orders_mod.validate(request, self.scenario.stations, self.markers, self.world_size, self.buildings)
+        checked = orders_mod.validate(request, self.scenario.stations, self.markers, self.world_size, self.buildings,
+                                      self.vehicles)
         order_id = self._id("O")
         callsign = checked["to"]
         previous = self.routes.get(callsign)
@@ -918,6 +921,6 @@ def _radio_line(row: dict) -> str:
 
 
 def _order_words(request: dict) -> str:
-    legs = ", ".join(f"{leg.get('type')} {leg.get('at', '')}".strip() for leg in request.get("legs") or []
-                     if isinstance(leg, dict))
+    legs = ", ".join(f"{leg.get('type')} {leg.get('at', leg.get('vehicle', ''))}".strip()
+                     for leg in request.get("legs") or [] if isinstance(leg, dict))
     return legs or "order"
