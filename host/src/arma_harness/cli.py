@@ -107,10 +107,13 @@ def main(argv: list[str] | None = None) -> int:
     sc.add_argument("path")
     sc.add_argument("--keep-running", action="store_true")
     co = sub.add_parser("commander", help="set up, watch and review a commander battle (docs/COMMANDER.md)")
-    co.add_argument("action", choices=["start", "status", "aar", "stop", "check-lockdown"])
+    co.add_argument("action", choices=["start", "status", "aar", "review", "stop", "check-lockdown"])
     co.add_argument("scenario", nargs="?", help="scenario name in scenarios/commander/, or a path (start only)")
     co.add_argument("--mode", choices=["hold", "deliver"], help="what happens to messages during a turn")
     co.add_argument("--watch", action="store_true", help="also open a game window, in the mission's observer slot")
+    co.add_argument("--run", help="review: the run to review (default: the newest battle)")
+    co.add_argument("--attempt", type=int, help="review: which battle in that run (default: the last)")
+    co.add_argument("--out", help="review: where to write the page (default: review.html beside the battle's records)")
     rs = sub.add_parser("rounds")
     rs.add_argument("what", choices=["state", "get", "set", "fire", "gui"])
     rs.add_argument("arg", nargs="*")
@@ -214,6 +217,10 @@ def _commander(h: Harness, a):
             return operator.status(h.home)
         case "aar":
             return operator.aar(h.home)
+        case "review":
+            from .commander import aar
+
+            return aar.write(aar.find_battle(h.home, a.run, a.attempt), Path(a.out) if a.out else None)
         case "stop":
             return operator.stop(h)
     raise ValueError(a.action)

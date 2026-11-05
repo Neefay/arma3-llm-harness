@@ -26,6 +26,7 @@ PACKET_FRESH_S = 6
 CLOCK_COAST_S = 3
 GAME_LOST_S = 15
 SUCCESS_GRACE_S = 10
+RECORD_AFTER_END_S = 15  # the last deaths and final positions, for the after-action review
 TRAFFIC_CAP = 25
 MAX_SCHEDULES = 20
 MIN_REPEAT_S = 30
@@ -66,6 +67,8 @@ class Runtime:
         self.cursor: int | None = saved.get("cursor")
         self.delivered: int = saved.get("delivered", 0)
         self.ended: str = saved.get("ended", "")
+        self.ended_at: float | None = saved.get("ended_at")
+        self.restarted: bool = saved.get("restarted", False)
         self.success_at: float | None = saved.get("success_at")
         self.success_reason: str = saved.get("success_reason", "")
         self.next_id: dict[str, int] = saved.get("next_id", {})
@@ -156,6 +159,7 @@ class Runtime:
         self.dirty = True
 
     def _mission_restarted(self) -> None:
+        self.restarted = True
         self.routes, self.trackers, self.packets = {}, {}, {}
         self.wake.timers, self.schedules, self.missed = {}, {}, {}
         self.wake.notice("The mission has restarted. All stations, orders and timers have been reset.")
@@ -179,8 +183,16 @@ class Runtime:
                 self.checked[report.checked] = packet["t"]
             self._say(callsign, report.text, report.precedence, report.grid, packet["t"])
 
+    def _in_battle(self, t: float) -> bool:
+        """Whether a truth event belongs to this battle's record. A server can outlive its battle, and the game it's
+        watching can move on to another mission while its session stays open."""
+        rel = self.rel(t)
+        if self.t0 is None or self.restarted or rel < 0:
+            return False
+        return self.ended_at is None or rel <= self.ended_at + RECORD_AFTER_END_S
+
     def _truth(self, event: dict) -> None:
-        if self.t0 is None:
+        if not self._in_battle(float(event.get("t", 0))):
             return
         self.records.truth({"t": round(self.rel(float(event.get("t", 0))), 1), "groups": event.get("groups")})
         if not self.ended:
@@ -188,7 +200,7 @@ class Runtime:
 
     def _kill(self, event: dict) -> None:
         """For the after-action review only. It's written to its own file, and nothing the commander sees reads it."""
-        if self.t0 is None:
+        if not self._in_battle(float(event.get("t", 0))):
             return
         self.records.kill({"t": round(self.rel(float(event.get("t", 0))), 1),
                            **{key: event.get(key) for key in ("victim", "side", "victimPos", "killer", "killerSide",
@@ -219,7 +231,7 @@ class Runtime:
             self.success_at = self.rel() + SUCCESS_GRACE_S
 
     def _end(self, reason: str) -> None:
-        self.ended = reason
+        self.ended, self.ended_at = reason, self.rel()
         self.wake.timers, self.schedules = {}, {}
         self._show(f"MISSION END: {reason}")
         self.wake.notice(f"MISSION END. {reason} No further orders are needed. End your turn.")
@@ -404,7 +416,8 @@ class Runtime:
     def save(self) -> None:
         self.records.save_state({
             "t0": self.t0, "turn": self.turn, "cursor": self.cursor, "delivered": self.delivered,
-            "ended": self.ended, "success_at": self.success_at, "success_reason": self.success_reason,
+            "ended": self.ended, "ended_at": self.ended_at, "restarted": self.restarted,
+            "success_at": self.success_at, "success_reason": self.success_reason,
             "next_id": self.next_id, "routes": self.routes, "schedules": self.schedules, "missed": self.missed,
             "markers": self.markers, "checked": self.checked, "last_checkin": self.last_checkin,
             "last_heard": self.last_heard,

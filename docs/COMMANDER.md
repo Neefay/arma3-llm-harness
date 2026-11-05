@@ -746,7 +746,7 @@ The first version of the deny list named only the obvious tools, and that check 
 | Event stream | `killed` events include killer, weapon and distance. `arma_status` lists machines and players | Pass through only `cmd_report` events. Expose no status tool |
 | Report wording | Class names or exact values give away information | Broad categories and rounded values only |
 | Base map | The export could reveal mission-placed objects | On VR, the export's `objects` group was empty with a scripted hamlet present. Other worlds are still unchecked |
-| Truth log | It sits in the same run folder | The commander has no file access and no tool that reads it |
+| Truth log and review page | They sit in the same run folder | The commander has no file access and no tool that reads them |
 
 ### 13.3 Tests
 
@@ -835,6 +835,7 @@ These run on the normal harness, separate from the commander's tools, and may re
 arma-harness commander start <scenario> [--mode hold|deliver]    set up a battle; repeating it reuses the running game
 arma-harness commander status                                    state, pending wakes, "no wake scheduled", turn counts
 arma-harness commander aar                                       radio, turns, timers and true positions on one timeline
+arma-harness commander review [--run R] [--attempt N] [--out F]  write a replayable page of a battle (15.3)
 arma-harness commander stop                                      end it and shut the game down
 arma-harness commander check-lockdown                            prove which tools a commander session really gets
 ```
@@ -849,9 +850,23 @@ The MCP server delivers it, in its startup instructions and again in the `comman
 
 ### 15.3 Replay and review
 
-The belief-versus-truth view is the main payoff, and it can't be rebuilt unless truth is recorded during the battle. So the truth recorder is in the first version. `arma-harness commander aar` is for humans and overlays the commander's markers on true positions.
+The belief-versus-truth view is the main payoff, and it can't be rebuilt unless truth is recorded during the battle. So the truth recorder is in the first version. It records every soldier's position every 5 seconds and every death, and it stops 15 seconds after the battle ends. A server whose session stays open would otherwise go on recording whichever mission the game moves to, which is what happened to the first Haiku run.
 
-Measures for comparing runs, computed from the logs: marker accuracy, staleness, confidence calibration, turn counts, timer use and outcome.
+`arma-harness commander aar` prints one text timeline. `arma-harness commander review` writes one self-contained HTML page, by default `review.html` beside the battle's records. It needs no server, and it still opens after the rest of the run is gone. By default it reviews the newest battle.
+
+| Part of the page | What it shows |
+|---|---|
+| Two maps side by side | Left: what the commander believed, meaning its markers and each station's last reported position, fading with age, plus its checked buildings and where it last sent each station. Right: every soldier's true position, and where each one died. Zooming or dragging one moves both |
+| Timeline | Soldiers alive on each side, turns, orders and deaths. Drag it to scrub, or press Play at 1, 5 or 20 times speed |
+| Belief against reality | For each station, the last thing heard, how long ago, how many are really alive, and how far it really is from its last reported position |
+| In the commander's head | Its latest words and its notes at that moment |
+| Radio log, Deaths, Commander's turns | Each scrolls with the replay, and clicking a row jumps to that moment. Turns list the orders, questions, timers and markers issued in them |
+
+The left map is built only from words the commander received: positions are read from the same radio text it read, so the map can't know more than the commander did. An acknowledgement like "Copy, moving to grid 041 034" names a destination, so it isn't plotted. Reading every radio message recorded so far found no other phrase that gives a position and gets missed.
+
+The commander's words, actions, model and token use come from the client's session transcript, matched to the battle by time. Only its own text and `commander_*` calls are read, so the transcript's system prompt, account details and any chat with a person stay out of the page. The header says who commanded. A battle with no matching session is labelled as a scripted test, because it's either that or its transcript is gone. Only Claude Code transcripts are read so far. Other agent clients would show the same label until someone adds their format. The model's thinking isn't in the transcript, so the page can't show it.
+
+Measures for comparing runs, still to be computed from the logs: marker accuracy, staleness, confidence calibration, turn counts, timer use and outcome.
 
 ### 15.4 Failure handling
 

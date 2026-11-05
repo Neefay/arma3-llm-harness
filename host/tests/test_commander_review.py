@@ -1,0 +1,283 @@
+"""The after-action review page's data, offline. See also the truth-recording tests at the end."""
+from __future__ import annotations
+
+import json
+import os
+from datetime import UTC, datetime
+from pathlib import Path
+
+import pytest
+from test_commander import Battle
+
+from arma_harness.commander import aar
+from arma_harness.config import Home
+
+START = 1_800_000_000.0  # any fixed moment: transcripts are matched to battles by time
+SCENARIO = {
+    "name": "take_the_village", "text": "Clear the village.", "mid_turn_messages": "hold",
+    "stations": [{"callsign": "Alpha", "units": 8, "role": "infantry squad"}],
+    "enemies": [{"id": "East Garrison", "units": 8}, {"id": "East Patrol", "units": 6}],
+    "markers": [{"id": "O1", "kind": "objective", "label": "The village", "at": "041 041"}],
+}
+BUILDINGS = [{"id": "B1", "pos": [4000, 4210], "at": "040 042", "name": "Tower", "positions": 18, "width": 14,
+              "length": 13, "dir": 160}]
+
+
+def rows(path: Path, *items: dict) -> None:
+    path.write_text("".join(json.dumps(item) + "\n" for item in items), encoding="utf-8")
+
+
+def stamp(seconds: float) -> str:
+    return datetime.fromtimestamp(START + seconds, UTC).isoformat().replace("+00:00", "Z")
+
+
+@pytest.fixture
+def battle(tmp_path) -> Path:
+    folder = tmp_path / "runs" / "20261105-043541" / "commander-2" / "west"
+    folder.mkdir(parents=True)
+    (folder.parent / "battle.json").write_text(json.dumps({
+        "scenario": SCENARIO, "buildings": BUILDINGS, "world_size": 8192, "run": "20261105-043541", "attempt": 2}))
+    rows(folder.parent / "truth.jsonl",
+         {"t": 5, "groups": [{"group": "Alpha 1-1", "side": "WEST", "alive": 1, "pos": [4100, 3800],
+                              "units": [[4100, 3800, 0]]},
+                             {"group": "Alpha", "side": "WEST", "alive": 8, "pos": [3950, 3550],
+                              "units": [[3950, 3550, 0]]}]},
+         {"t": 90, "groups": [{"group": "East Patrol", "side": "EAST", "alive": 6, "pos": [4250, 3950]}]},
+         {"t": 130, "groups": []},  # past the end
+         {"t": -120, "groups": [{"group": "Alpha", "side": "WEST", "alive": 8, "pos": [1, 1]}]})  # the next mission
+    rows(folder.parent / "kills.jsonl",
+         {"t": 20, "victim": "Owen King", "side": "WEST", "victimPos": [4100, 3700, 0], "killer": "Khalil Amani",
+          "killerSide": "EAST", "weapon": "AK", "distance": 208},
+         {"t": 76, "victim": "Habib Noori", "side": "EAST", "victimPos": [4250, 3950, 0], "killer": "Kyle Smith",
+          "killerSide": "WEST", "weapon": "MX", "distance": 337})
+    rows(folder / "radio.jsonl",
+         {"t": 1, "from": "HQ", "to": "Alpha", "text": "O-0001: MOVE 041 040", "kind": "order"},
+         {"t": 2, "from": "Alpha", "to": "HQ", "text": "Copy, moving to grid 041 040.", "kind": "report",
+          "precedence": "routine"},
+         {"t": 50, "from": "Alpha", "to": "HQ", "text": "On the objective, attacking grid 041 041, at grid 041 040.",
+          "kind": "report", "precedence": "routine"},
+         {"t": 60, "from": "Alpha", "to": "HQ", "text": "B1 checked, nothing seen.", "kind": "report"})
+    rows(folder / "radio_events.jsonl", {"t": 100, "mission_end": "Objective achieved."})
+    rows(folder / "turns.jsonl",
+         {"turn": 1, "start": 0.0, "woke_on": "mission start", "end": 1.0, "note": "Orders out", "duration": 1.0},
+         {"turn": 2, "start": 5.0, "woke_on": "1 message", "end": 6.0, "note": "Fine", "duration": 1.0})
+    rows(folder / "orders.jsonl",
+         {"id": "O-0001", "t": 1, "request": {"to": "Alpha", "legs": [{"type": "MOVE", "at": "041 040"}]}},
+         {"id": "O-0002", "t": 2, "request": {"to": "Alpha", "legs": [{"type": "CLEAR", "at": "B1"}]}},
+         {"id": "O-0003", "t": 3, "request": {"to": "Alpha", "legs": [{"type": "MOVE", "at": "O1"}]}})
+    rows(folder / "markers.jsonl", {"id": "E1", "kind": "enemy", "at": "042 039", "label": "Seen", "t": 30},
+         {"id": "E1", "t": 80, "retired": True},
+         {"id": "L1", "kind": "phase_line", "at": ["040 040", "042 040"], "label": "", "t": 31})
+    (folder / "state.json").write_text(json.dumps({"ended": "Objective achieved.", "turn": 3, "turn_row": {
+        "turn": 3, "start": 100.0, "woke_on": "notice"}}))
+    return folder
+
+
+@pytest.mark.parametrize("text, grid", [
+    ("Copy, moving to grid 041 034.", None),
+    ("Copy, defending grid 041 041.", None),
+    ("Copy, sweeping around grid 041 041.", None),
+    ("Arrived, grid 034 030.", "034 030"),
+    ("On station, grid 040 041.", "040 041"),
+    ("Holding at grid 040 041.", "040 041"),
+    ("On the objective, attacking grid 041 041, at grid 041 040.", "041 040"),
+    ("Passing grid 038 038, at grid 039 039.", "039 039"),
+    ("Not making progress toward grid 041 041, at grid 040 035.", "040 035"),
+    ("Grid 043 042, moving south-east. Patrolling around grid 043 041.", "043 042"),
+    ("Contact, a few infantry, north, roughly 400 metres. Engaging.", None),
+])
+def test_only_a_stations_own_position_goes_on_the_belief_map(text, grid):
+    assert aar.reported_position(text) == grid
+
+
+def test_the_page_holds_this_battle_and_nothing_else(battle):
+    data = aar.battle_data(battle)
+    assert data["name"] == "Take the village" and data["attempt"] == 2 and data["enemy_total"] == 14
+    assert [frame["t"] for frame in data["frames"]] == [5, 90]  # not past the end, and not the next mission
+    assert [group["group"] for group in data["frames"][0]["groups"]] == ["Alpha"]  # no observer
+    assert data["frames"][1]["groups"][0]["units"] == [[4250, 3950]]  # one position stands in for missing soldiers
+    assert data["duration"] == 100 and data["ended_at"] == 100
+    assert data["commander"] == {}
+
+
+def test_belief_comes_from_the_words_alone(battle):
+    radio = aar.battle_data(battle)["radio"]
+    assert radio[1]["pos"] is None  # a destination isn't a position
+    assert radio[2]["pos"] == [4150.0, 4050.0]
+    assert radio[3]["checked"] == "B1"
+    assert "pos" not in radio[0]  # HQ isn't plotted
+
+
+def test_orders_and_markers_resolve_to_places(battle):
+    data = aar.battle_data(battle)
+    assert [order["target"] for order in data["orders"]] == [[4150.0, 4050.0], [4000, 4210], [4150.0, 4150.0]]
+    assert data["markers"][0]["id"] == "O1" and data["markers"][0]["pos"] == [4150.0, 4150.0]
+    line = next(marker for marker in data["markers"] if marker["id"] == "L1")
+    assert line["points"] == [[4050.0, 4050.0], [4250.0, 4050.0]]
+
+
+def test_kills_know_which_side_they_hurt(battle):
+    assert [kill["friendly"] for kill in aar.battle_data(battle)["kills"]] == [True, False]
+
+
+def test_a_turn_still_open_at_the_end_is_kept(battle):
+    assert [turn["turn"] for turn in aar.battle_data(battle)["turns"]] == [1, 2, 3]
+
+
+def transcript(projects: Path, name: str = "session") -> None:
+    projects.mkdir(parents=True, exist_ok=True)
+    def said(seconds, message_id, *blocks, output=10):
+        return {"type": "assistant", "timestamp": stamp(seconds), "message": {
+            "id": message_id, "model": "claude-haiku-5-5", "content": list(blocks),
+            "usage": {"output_tokens": output, "input_tokens": 5, "cache_read_input_tokens": 100}}}
+
+    def use(tool, **data):
+        return {"type": "tool_use", "name": f"mcp__commander__commander_{tool}", "input": data}
+
+    rows(projects / f"{name}.jsonl",
+         said(-100, "old", use("order", to="Bravo")),  # another battle
+         {"type": "attachment", "timestamp": stamp(1), "attachment": {
+             "type": "session_context", "context": {"userEmail": "someone@example.com"}}},
+         {"type": "attachment", "timestamp": stamp(1), "attachment": {
+             "type": "model", "identity": {"marketingName": "Haiku 5.5"}}},
+         {"type": "user", "timestamp": stamp(2), "message": {"content": "start"}},
+         said(3, "m1", {"type": "thinking", "thinking": ""}),
+         said(3, "m1", use("mission")),
+         said(4, "m2", use("order", to="Alpha", legs=[{"type": "MOVE", "at": "041 040"}])),
+         said(5, "m3", {"type": "text", "text": "Alpha has its order."}),
+         {"type": "user", "timestamp": stamp(6), "message": {"content":
+          '<channel source="commander" turn="2" woke_on="1 message">\nT+00:05 | turn 2'}},
+         said(7, "m4", use("notes", text="Alpha moving.")),
+         said(7, "m5", {"type": "text", "text": "Waiting."}),
+         {"type": "user", "timestamp": stamp(8), "message": {"content": "Are you enjoying this?"}},
+         said(9, "m6", {"type": "text", "text": "I can't talk about the battle."}),
+         {"type": "user", "timestamp": stamp(10), "message": {"content":
+          '<channel source="commander" turn="3" woke_on="notice">\nMISSION END'}},
+         said(11, "m7", {"type": "text", "text": "Done."}))
+
+
+def in_window(battle: Path, end_s: float = 12) -> None:
+    os.utime(battle.parent / "battle.json", (START, START))
+    os.utime(battle / "state.json", (START + end_s, START + end_s))
+
+
+def test_the_commanders_own_words_and_actions_are_found_per_turn(battle, tmp_path):
+    projects = tmp_path / "projects"
+    transcript(projects)
+    in_window(battle)
+    session = aar.commander_session(battle, projects)
+    assert session["model"] == "Haiku 5.5"
+    assert session["turns"][1]["said"] == ["Alpha has its order."]
+    assert [action["tool"] for action in session["turns"][1]["actions"]] == ["order"]
+    assert session["turns"][1]["actions"][0]["input"]["to"] == "Alpha"
+    assert session["turns"][2]["actions"][0]["input"] == {"text": "Alpha moving."}
+    assert session["turns"][3]["said"] == ["Done."]
+    assert session["requests"] == 6 and session["output_tokens"] == 60  # each request once, however many blocks
+
+
+def test_a_chat_with_a_person_during_the_battle_is_left_out(battle, tmp_path):
+    projects = tmp_path / "projects"
+    transcript(projects)
+    in_window(battle)
+    assert "I can't talk about the battle." not in aar.commander_session(battle, projects)["turns"][2]["said"]
+
+
+def test_only_the_commanders_words_reach_the_page(battle, tmp_path):
+    projects = tmp_path / "projects"
+    transcript(projects)
+    in_window(battle)
+    data = aar.battle_data(battle, aar.commander_session(battle, projects))
+    assert "someone@example.com" not in aar.render(data)
+    assert data["turns"][0]["said"] == ["Alpha has its order."]
+    assert data["commander"]["model"] == "Haiku 5.5" and "turns" not in data["commander"]
+
+
+def test_no_session_means_the_page_says_nobody_commanded(battle, tmp_path):
+    in_window(battle)
+    assert aar.commander_session(battle, tmp_path / "nothing") is None
+    other_time = tmp_path / "projects"
+    transcript(other_time)
+    os.utime(battle.parent / "battle.json", (START + 5000, START + 5000))
+    os.utime(battle / "state.json", (START + 6000, START + 6000))
+    assert aar.commander_session(battle, other_time) is None
+
+
+def test_a_broken_transcript_line_doesnt_stop_the_review(battle, tmp_path):
+    projects = tmp_path / "projects"
+    transcript(projects)
+    with (projects / "session.jsonl").open("a", encoding="utf-8") as file:
+        file.write('{"type": "assistant", "timest\n')
+    in_window(battle)
+    assert aar.commander_session(battle, projects)["model"] == "Haiku 5.5"
+
+
+def test_text_in_the_data_cant_break_out_of_the_page(battle):
+    rows(battle / "radio.jsonl", {"t": 1, "from": "Alpha", "to": "HQ", "text": "</script><script>alert(1)</script>",
+                                  "kind": "report"})
+    page = aar.render(aar.battle_data(battle))
+    assert "</script><script>alert" not in page
+    assert aar.DATA_SLOT not in page
+
+
+def test_write_puts_the_page_beside_the_records(battle, tmp_path):
+    result = aar.write(battle, projects=tmp_path / "nothing")
+    assert Path(result["review"]) == battle.parent / "review.html"
+    assert result["commander"] == "no model session found" and Path(result["review"]).stat().st_size > 1000
+
+
+def test_finding_a_battle(battle, tmp_path):
+    home = Home(tmp_path)
+    assert aar.find_battle(home) == battle
+    later = tmp_path / "runs" / "20261105-043541" / "commander-11" / "west"
+    later.mkdir(parents=True)
+    rows(later / "radio.jsonl")
+    assert aar.find_battle(home) == later  # 11 comes after 2
+    assert aar.find_battle(home, "20261105-043541", 2) == battle
+    with pytest.raises(ValueError, match="no run called"):
+        aar.find_battle(home, "nope")
+    with pytest.raises(ValueError, match="no commander battle"):
+        aar.find_battle(home, "20261105-043541", 5)
+
+
+# -- what gets recorded in the first place ---------------------------------------------------------------------------
+
+GROUP = {"group": "Alpha", "side": "WEST", "alive": 4, "pos": [3050, 3050]}
+
+
+def test_truth_stops_soon_after_the_battle_ends(tmp_path):
+    b = Battle(tmp_path)
+    b.start()
+    b.game.emit(type="cmd_truth", t=110, groups=[GROUP])
+    b.silent(110)
+    b.runtime._end("Time limit reached.")
+    b.game.emit(type="cmd_truth", t=112, groups=[GROUP])
+    b.game.emit(type="killed", t=113, victim="Late", side="WEST")
+    b.silent(113)
+    b.game.emit(type="cmd_truth", t=140, groups=[GROUP])
+    b.game.emit(type="killed", t=141, victim="Next battle", side="WEST")
+    b.silent(141)
+    assert [row["t"] for row in b.records.read_truth()] == [10.0, 12.0]
+    assert [row["victim"] for row in b.records.read_kills()] == ["Late"]
+
+
+def test_truth_from_the_next_mission_isnt_recorded(tmp_path):
+    b = Battle(tmp_path)
+    b.start()
+    b.game.emit(type="cmd_truth", t=110, groups=[GROUP])
+    b.silent(110)
+    b.game.emit(type="cmd_truth", t=20, groups=[GROUP])  # a new mission's clock, seen by a server still running
+    b.silent(20)
+    b.game.queue.append({"seq": 99, "k": "mission", "state": "start"})
+    b.game.emit(type="cmd_truth", t=150, groups=[GROUP])
+    b.silent(150)
+    assert [row["t"] for row in b.records.read_truth()] == [10.0]
+
+
+def test_a_saved_battle_remembers_it_has_ended(tmp_path):
+    b = Battle(tmp_path)
+    b.start()
+    b.silent(110)
+    b.runtime._end("Time limit reached.")
+    b.runtime.save()
+    resumed = b.new_runtime()
+    assert resumed.ended_at == 10 and resumed.restarted is False
