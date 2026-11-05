@@ -187,12 +187,37 @@ def test_the_commanders_own_words_and_actions_are_found_per_turn(battle, tmp_pat
     in_window(battle)
     session = aar.commander_session(battle, projects)
     assert session["model"] == "Haiku 5.5"
-    assert session["turns"][1]["said"] == ["Alpha has its order."]
+    assert session["turns"][1]["said"] == [{"t": 2.0, "text": "Alpha has its order."}]
     assert [action["tool"] for action in session["turns"][1]["actions"]] == ["order"]
     assert session["turns"][1]["actions"][0]["input"]["to"] == "Alpha"
     assert session["turns"][2]["actions"][0]["input"] == {"text": "Alpha moving."}
-    assert session["turns"][3]["said"] == ["Done."]
+    assert session["turns"][3]["said"] == [{"t": 8.0, "text": "Done."}]
+    assert session["turns"][1]["actions"][0]["t"] == 1.0  # counted from its first look at the mission
     assert session["requests"] == 6 and session["output_tokens"] == 60  # each request once, however many blocks
+
+
+def test_a_wake_during_a_busy_turn_is_placed_by_time(battle, tmp_path):
+    """A wake that arrives while the model is busy leaves only a queue row, with no channel message to go by."""
+    projects = tmp_path / "projects"
+    projects.mkdir()
+    rows(projects / "session.jsonl",
+         {"type": "user", "timestamp": stamp(2), "message": {"content": "start"}},
+         {"type": "assistant", "timestamp": stamp(3), "message": {"id": "a", "content": [
+             {"type": "tool_use", "name": "mcp__commander__commander_mission", "input": {}}]}},
+         {"type": "queue-operation", "timestamp": stamp(8), "operation": "enqueue"},
+         {"type": "assistant", "timestamp": stamp(9), "message": {"id": "b", "content": [
+             {"type": "tool_use", "name": "mcp__commander__commander_notes", "input": {"text": "Later."}},
+             {"type": "text", "text": "Six seconds in."}]}})
+    in_window(battle)
+    turns = aar.commander_session(battle, projects)["turns"]  # the battle's turn 2 starts at T+5
+    assert turns[2]["said"] == [{"t": 6.0, "text": "Six seconds in."}]
+    assert turns[2]["actions"][0]["t"] == 6.0 and not turns[1]["said"]
+
+
+def test_the_page_shows_only_what_was_said_by_each_moment(battle):
+    page = aar.render(aar.battle_data(battle))
+    assert "const by = item => item.t <= now || now >= duration;" in page
+    assert "if (t.start > now) break;\n    if (t.said" not in page
 
 
 def test_tools_the_session_was_really_offered_are_checked(battle, tmp_path):
@@ -211,7 +236,9 @@ def test_a_chat_with_a_person_during_the_battle_is_left_out(battle, tmp_path):
     projects = tmp_path / "projects"
     transcript(projects)
     in_window(battle)
-    assert "I can't talk about the battle." not in aar.commander_session(battle, projects)["turns"][2]["said"]
+    turns = aar.commander_session(battle, projects)["turns"].values()
+    words = [item["text"] for turn in turns for item in turn["said"]]
+    assert "Waiting." in words and "I can't talk about the battle." not in words
 
 
 def test_only_the_commanders_words_reach_the_page(battle, tmp_path):
@@ -220,7 +247,7 @@ def test_only_the_commanders_words_reach_the_page(battle, tmp_path):
     in_window(battle)
     data = aar.battle_data(battle, aar.commander_session(battle, projects))
     assert "someone@example.com" not in aar.render(data)
-    assert data["turns"][0]["said"] == ["Alpha has its order."]
+    assert [item["text"] for item in data["turns"][0]["said"]] == ["Alpha has its order."]
     assert data["commander"]["model"] == "Haiku 5.5" and "turns" not in data["commander"]
 
 

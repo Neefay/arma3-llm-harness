@@ -629,11 +629,12 @@ function updateStations() {
 const KIND = { enemy: "Enemy", danger: "Danger", hypothesis: "Possible enemy", objective: "Objective", friendly: "Friendly", note: "Note", phase_line: "Line", area: "Area" };
 
 function updateCommander() {
+  // Only what it had said and written by this moment. At the end of the battle, that includes its last words.
   let said = "", notes = "";
+  const by = item => item.t <= now || now >= duration;
   for (const t of D.turns) {
-    if (t.start > now) break;
-    if (t.said && t.said.length) said = t.said[t.said.length - 1].replace(/\*\*/g, "");
-    for (const a of t.actions || []) if (a.tool === "notes") notes = a.input.text || notes;
+    for (const s of t.said || []) if (by(s)) said = s.text.replace(/\*\*/g, "");
+    for (const a of t.actions || []) if (a.tool === "notes" && by(a)) notes = a.input.text || notes;
   }
   const model = D.commander.model;
   $("turnSaid").textContent = said;

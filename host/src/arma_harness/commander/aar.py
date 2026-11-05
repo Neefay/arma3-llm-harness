@@ -305,9 +305,10 @@ def commander_session(folder: Path, projects: Path | None = None) -> dict | None
     if projects is None:
         workspace = Home().root / "commander" / "workspace"
         projects = Path.home() / ".claude" / "projects" / re.sub(r"[^A-Za-z0-9]", "-", str(workspace))
+    starts = [(row["start"], row["turn"]) for row in Records(folder).read("turns") if "start" in row and "turn" in row]
     best, best_calls = None, 0
     for file in sorted(projects.glob("*.jsonl")) if projects.exists() else []:
-        session = _read_session(file, window)
+        session = _read_session(file, window, starts)
         if session and session["tool_calls"] > best_calls:
             best, best_calls = session, session["tool_calls"]
     return best
@@ -320,8 +321,12 @@ def _battle_window(folder: Path) -> tuple[float, float] | None:
     return info.stat().st_mtime, state.stat().st_mtime + 5
 
 
-def _read_session(file: Path, window: tuple[float, float]) -> dict | None:
+def _read_session(file: Path, window: tuple[float, float], starts: list[tuple[float, int]]) -> dict | None:
+    """Everything it said and did gets a battle time, counted from its first look at the mission, which is what starts
+    the battle clock. A wake that arrives while the model is busy leaves no user row in the transcript, so time places
+    what follows in the right turn."""
     turns: dict[int, dict] = {}
+    begun: float | None = None
     model, requests, output_tokens, peak_context, tool_calls = None, set(), 0, 0, 0
     other_calls: Counter[str] = Counter()
     turn, typed_before, answering_person = 1, False, False
@@ -351,15 +356,21 @@ def _read_session(file: Path, window: tuple[float, float]) -> dict | None:
                 output_tokens += usage.get("output_tokens", 0)
                 peak_context = max(peak_context, sum(usage.get(key, 0) for key in (
                     "input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")))
+            moment = _moment(row.get("timestamp"))
+            blocks = message.get("content") or []
+            if begun is None and any(block.get("name") == f"{_TOOL}mission" for block in blocks):
+                begun = moment
+            at = 0.0 if begun is None or moment is None else round(max(0.0, moment - begun), 1)
+            turn = max([turn, *(number for start, number in starts if begun is not None and start <= at)])
             entry = turns.setdefault(turn, {"said": [], "actions": []})
-            for block in message.get("content") or []:
+            for block in blocks:
                 if block.get("type") == "text" and block.get("text", "").strip():
-                    entry["said"].append(block["text"].strip())
+                    entry["said"].append({"t": at, "text": block["text"].strip()})
                 elif block.get("type") == "tool_use" and block.get("name", "").startswith(_TOOL):
                     tool_calls += 1
                     tool = block["name"][len(_TOOL):]
                     if tool in _ACTIONS:
-                        entry["actions"].append({"tool": tool, "input": block.get("input") or {}})
+                        entry["actions"].append({"t": at, "tool": tool, "input": block.get("input") or {}})
                 elif block.get("type") == "tool_use":
                     other_calls[block.get("name", "")] += 1
     if not tool_calls:
@@ -379,14 +390,16 @@ def _json(line: str) -> dict | None:
     return row if isinstance(row, dict) else None
 
 
-def _in_window(stamp, window: tuple[float, float]) -> bool:
-    if not stamp:
-        return False
+def _moment(stamp) -> float | None:
     try:
-        moment = datetime.fromisoformat(str(stamp).replace("Z", "+00:00")).timestamp()
+        return datetime.fromisoformat(str(stamp).replace("Z", "+00:00")).timestamp() if stamp else None
     except ValueError:
-        return False
-    return window[0] <= moment <= window[1]
+        return None
+
+
+def _in_window(stamp, window: tuple[float, float]) -> bool:
+    moment = _moment(stamp)
+    return moment is not None and window[0] <= moment <= window[1]
 
 
 # -- the page ----------------------------------------------------------------------------------------------------------
