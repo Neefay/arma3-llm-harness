@@ -546,7 +546,7 @@ How to read contacts, from the [spike](#17-engine-spike-results):
 - **Enemy set:** `leader targets [true, range]`. Passing `false` also returns friendlies, vehicles, buildings and street lamps, and so does an unfiltered `nearTargets`.
 - **Last known position and age:** `targetKnowledge` gives the position (index 6) and last-seen time (index 2, compared with `time`).
 - **Perceived type and accuracy:** `nearTargets` entries, matched to perceived enemy sides. Accuracy (index 5) grew with age, from 4 m at 8 s to 20 m at 46 s, while `targetKnowledge`'s error field stayed near 0, so wording should use age and the `nearTargets` value.
-- **Contact lost has to be calculated from age.** Knowledge never expired by itself: a squad out of view for over 6 minutes stayed listed at its old position.
+- **Contact lost has to be calculated from age.** Knowledge didn't expire by itself in testing: a squad out of view for nearly 6 minutes was still listed.
 - **Class names are exact,** so type must always be reduced to a broad category.
 
 The commander hears:
@@ -856,7 +856,7 @@ Run on 2026-11-05 on the `demo_vr` mission, on a dedicated server with one headl
 
 | Question | Result |
 |---|---|
-| Does perception avoid leaking true positions? | Yes. A squad teleported 500 m away stayed listed at its old position, 500 m wrong, for over 6 minutes |
+| Does perception avoid leaking true positions? | Yes. A squad teleported 500 m away stayed at its old position, 500 m wrong, in every check up to about 4 minutes, and was still listed at nearly 6 |
 | Do hidden enemies stay unknown? | Yes. A squad among buildings 474 m away stayed at `knowsAbout` 0 |
 | How is perception before it goes stale? | Exact. Position error was 0 m at 200 m, with exact class names. The fog comes from what's seen, how old it is and how reports are rounded, not from position noise |
 | Grid format | `mapGridPosition` gives 6 digits and rounds down to 100 m, such as `"040040"` |
@@ -873,7 +873,7 @@ Run on 2026-11-05 on the `demo_vr` mission, on a dedicated server with one headl
 ### Partly answered
 
 - **Server reading a headless client's group:** `knowsAbout`, `targetKnowledge`, `targets [false, ...]` and `nearTargets` matched on both machines. The test enemy died early, because the test group was left free to fire, so enemy-filtered reads weren't compared. `setGroupOwner` returned false in the same frame the group was created, and worked later.
-- **Detection range:** four soldiers saw a four-man squad at 200 m within 11 s. A separate two-man pair saw nothing after 110 s, including a lone soldier in the open at 300 m. A squad 700 m away was never reacquired. Detection may be shorter-ranged than expected, which affects scenario spacing and recon, and it needs a proper look.
+- **Detection range:** an eight-man squad saw a four-man squad at 200 m within 11 s. A separate two-man pair saw nothing after 110 s, including a lone soldier in the open at 300 m. A squad 700 m away was never reacquired. Detection may be shorter-ranged than expected, which affects scenario spacing and recon, and it needs a proper look.
 
 ### Still unverified
 
