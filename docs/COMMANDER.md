@@ -1,6 +1,6 @@
 # Commander Mode: design
 
-**Status:** the [A to B proof of concept](#141-proof-of-concept-one-subordinate-a-to-b) is built and has run on a real game with a scripted stand-in for the LLM. Section 12 marks which tools exist so far. The rest of this document is still the design. Updated 2026-11-05.
+**Status:** the [A to B proof of concept](#141-proof-of-concept-one-subordinate-a-to-b) is built. It has run on a real game with a scripted stand-in for the LLM, and once with a real commander on Claude Opus 5.5, in `hold` mode. Section 12 marks which tools exist so far. The rest of this document is still the design. Updated 2026-11-05.
 
 **Audience:** developers and agents building or reviewing this feature. Read [ARCHITECTURE.md](ARCHITECTURE.md) first for how the harness itself works.
 
@@ -898,8 +898,8 @@ Run on 2026-11-05 on the `demo_vr` mission, on a dedicated server with one headl
 
 1. **Channel test.** Done. See the [results](#510-channel-test-results).
 2. **Engine spike.** Done. See the [results](#17-engine-spike-results).
-3. **Proof of concept.** Built: stations, orders, questions, reports, wake logic and timers, enough for [one subordinate from A to B](#141-proof-of-concept-one-subordinate-a-to-b), plus the truth log, the failure variant and both turn interruption modes. It still needs a run with a real LLM.
-4. **Lockdown.** The allowlist, leak tests and a locked-down workspace exist. Still to do: confirm the lockdown holds in a real session, and a commander profile in `setup-agents`.
+3. **Proof of concept.** Built: stations, orders, questions, reports, wake logic and timers, enough for [one subordinate from A to B](#141-proof-of-concept-one-subordinate-a-to-b), plus the truth log, the failure variant and both turn interruption modes. A real commander completed A to B in `hold` mode on 2026-11-05, in 4 turns and 13 model requests with no refusals. Its own timer didn't get to fire, because the mission ended first. The failure variant and `deliver` mode haven't been run with a real LLM yet.
+4. **Lockdown.** The allowlist, leak tests and a locked-down workspace exist. Still to do: confirm the lockdown blocks a real attempt, since the first real commander never tried another tool, and a commander profile in `setup-agents`.
 5. **World model.** Markers, notes, log, map image and resume.
 6. **Timed actions.** Timed orders and questions.
 7. **Larger scenarios.** The village and the held position, then tune from what happens.
