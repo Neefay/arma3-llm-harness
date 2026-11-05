@@ -104,8 +104,8 @@ td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
       <button type="button" data-speed="5" aria-pressed="true">5×</button>
       <button type="button" data-speed="20">20×</button>
     </span>
-    <button id="prevEvent" type="button" title="Previous kill">◀ Kill</button>
-    <button id="nextEvent" type="button" title="Next kill">Kill ▶</button>
+    <button id="prevEvent" type="button">◀ Previous death</button>
+    <button id="nextEvent" type="button">Next death ▶</button>
     <span class="chips" role="group" aria-label="Map zoom">
       <button type="button" id="zoomIn" title="Zoom in. The mouse wheel works too, and dragging moves the map.">Zoom in</button>
       <button type="button" id="zoomOut">Zoom out</button>
@@ -300,7 +300,7 @@ function drawBelief() {
   buildings(ctx, p, id => checked.has(id));
   for (const m of markersAt(now).values()) {
     const colour = MARKER[m.kind] || C.text, age = m.t == null ? 0 : now - m.t;
-    ctx.globalAlpha = Math.max(.35, 1 - age / 600);
+    ctx.globalAlpha = ["enemy", "danger", "hypothesis"].includes(m.kind) ? Math.max(.55, 1 - age / 600) : 1;
     const text = [m.id, m.label, m.confidence].filter(Boolean).join(" ");
     if (m.points) {
       const pts = m.points.map(q => p.xy(q[0], q[1]));
@@ -330,7 +330,7 @@ function drawBelief() {
       ctx.setLineDash([5, 5]); ctx.strokeStyle = C.amber; ctx.lineWidth = 1; ctx.globalAlpha = .6;
       ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(tx, ty); ctx.stroke(); ctx.setLineDash([]); ctx.globalAlpha = 1;
     }
-    ctx.globalAlpha = Math.max(.4, 1 - age / 400);
+    ctx.globalAlpha = Math.max(.6, 1 - age / 400);
     ctx.strokeStyle = C.blue; ctx.lineWidth = 2; ctx.strokeRect(x - 11, y - 7, 22, 14);
     ctx.beginPath(); ctx.moveTo(x - 11, y - 7); ctx.lineTo(x + 11, y + 7); ctx.moveTo(x - 11, y + 7); ctx.lineTo(x + 11, y - 7); ctx.stroke();
     label(ctx, `${station} · ${ago(age)} ago`, x + 14, y + 4, C.blue);

@@ -811,7 +811,30 @@ To run it, `arma-harness commander start poc_a_to_b [--mode hold|deliver]` boots
 
 Enemies come from the scenario's `enemies` list, each with a `mode` of `hold`, `garrison` or `patrol`. They're never on the net. Run with `--watch` to open a game window in the mission's one observer slot: a free spectator camera with radio traffic in chat. The commander's markers are mirrored onto the game's map. Both feeds are one-way, so nothing reads them back.
 
-The enemy stays as it is for now, so that an LLM's run compares directly with the scripted baseline. BLUFOR lost only 5 of 27 in the first scripted run, so it will need toughening later.
+The enemy stays as it is for now, so that an LLM's run compares directly with the scripted baselines. Both baselines use the fixed village, and neither has a model in it:
+
+| | Rigid script (`20261105-043541:2`) | Script that clears on a stall (`20261105-050251:1`) |
+|---|---|---|
+| Rule | Sends everyone on SEARCH, and orders CLEAR only after "Finished searching" | The same, but also orders CLEAR after "Not making progress" |
+| Result | Time limit | Time limit |
+| Friendly lost | 2 of 27 | 13 of 27 |
+| Enemy killed | 12 of 14 | 13 of 14 |
+| Orders | 4 | 6 |
+| Turns | 39 | 57 |
+| Marker error | 82 m | 78 m |
+| Position error | 79 m | 48 m |
+
+The earlier script's first run, before the trap houses were fixed, lost 5 of 27.
+
+What these runs show:
+
+- **One battle says little.** The second script lost 13 mainly because a single soldier in B3 killed 7 of Charlie from about 115 to 180 m, wiping the squad out by T+10. The first run had nothing like that. An LLM's result needs reading against this spread, and ideally needs several runs.
+- **SEARCH can run for the whole battle.** In the first run it never finished, so the rigid script never ordered CLEAR. It kept fighting anything it knew of, and left enemies inside buildings alone.
+- **Neither script won, because the last enemies stay put.** In the second run, both remaining squads reported "B5 checked, nothing seen" with a soldier still inside. The records show friendlies passing within 1.4 m of him, on the floors above, without either side engaging. He had killed two of them at 2 to 3 m about a minute earlier, and neither script ordered a second look. Reports already avoid saying "all clear" for this reason, but it means a commander has to reason from casualties in a building, not from "checked".
+
+Open: whether close-range noticing in section 10.5 should ignore floors at very short range. It's left alone so that LLM runs and these baselines stay comparable. BLUFOR also lost only 2 to 13 of 27, so the enemy will need toughening later.
+
+House models matter here too: `Land_i_House_Small_01_V3_F` trapped soldiers inside, and `Land_i_House_Big_01_V3_F` rarely let them in, however they were placed. That's why one garrison soldier survived three clearing sweeps in early runs. The village no longer uses them, and [host/tests/live_buildings.py](../host/tests/live_buildings.py) checks any building before a scenario relies on it.
 
 ### 14.3 Following scenarios
 
@@ -960,7 +983,7 @@ Tested on the real game, with five groups each given a task, then a new order:
 | Function | Did what the docs say | Getting out of it |
 |---|---|---|
 | `CBA_fnc_taskAttack` | Yes, a slow advance in `COMBAT` | Works, but stays slow until behaviour is reset |
-| `CBA_fnc_taskDefend` | Yes, garrisoned | Trapped until pathfinding is re-enabled |
+| `CBA_fnc_taskDefend` | Yes, garrisoned | Sets `LIMITED` speed and disables pathfinding, and its scripts disable it again on arrival. So a new order resets speed and behaviour, and re-enables pathfinding repeatedly for 150 s. Confirmed live: all 7 squads walked out of their tasks |
 | `CBA_fnc_taskPatrol` | Yes | Clean |
 | `CBA_fnc_taskSearchArea` | Yes | Clean |
 | `CBA_fnc_searchNearby` | Yes, for the nearest building only, with no signal when it finishes | Clean |

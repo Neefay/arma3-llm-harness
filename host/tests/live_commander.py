@@ -284,9 +284,11 @@ def play_village(client: Client) -> list[str]:
             snap(harness, "first contact")
         if len(seen) == 6:
             snap(harness, "mid battle")
-        # Send everyone in once they've finished sweeping: SEARCH alone leaves garrisons untouched.
+        # Send everyone in once they've finished sweeping or have stalled: SEARCH alone leaves garrisons untouched, and
+        # it can go on for the whole battle while there's still an enemy it knows of.
         for callsign in ("Alpha", "Bravo", "Charlie"):
-            if callsign not in clearing and f"{callsign}: Finished searching" in wake["content"]:
+            if callsign not in clearing and (f"{callsign}: Finished searching" in wake["content"]
+                                             or f"{callsign}: Not making progress" in wake["content"]):
                 clearing.add(callsign)
                 client.tool("commander_order", to=callsign, legs=[{"type": "CLEAR", "at": "O1", "radius": 130}])
                 print(f"    {callsign} ordered to clear", flush=True)
