@@ -1,6 +1,6 @@
 # Commander Mode: design
 
-**Status:** design proposal. No commander code exists yet. Claude Code channels passed testing as the wake route, and every engine behaviour listed in [Verify in game](#17-verify-in-game) still needs checking. Updated 2026-11-05.
+**Status:** design proposal. No commander code exists yet. Claude Code channels passed testing as the wake route, and an engine spike checked the core commands. [Section 17](#17-engine-spike-results) lists the results and what's still unverified. Updated 2026-11-05.
 
 **Audience:** developers and agents building or reviewing this feature. Read [ARCHITECTURE.md](ARCHITECTURE.md) first for how the harness itself works.
 
@@ -22,7 +22,7 @@
 14. [Scenarios](#14-scenarios)
 15. [Operating a battle](#15-operating-a-battle)
 16. [Fit with the existing harness](#16-fit-with-the-existing-harness)
-17. [Verify in game](#17-verify-in-game)
+17. [Engine spike results](#17-engine-spike-results)
 18. [Build order](#18-build-order)
 19. [Decisions](#19-decisions)
 20. [Later ideas](#20-later-ideas)
@@ -388,7 +388,7 @@ The commander knows only what's been reported, so its view of an order can lag o
 | `SEARCH` | `SAD` | Search and destroy around a point | Grid, radius | Area searched | First |
 | `SENTRY` | `SENTRY` | Waits until it detects enemies, then continues to its next leg | Grid | Contact report | First |
 | `PATROL` | `MOVE` + `CYCLE` | Repeats a route until told otherwise | 2+ grids | Each lap, optional | First |
-| `HALT` | Clears waypoints | Stops where it is | None | Halted | First |
+| `HALT` | Clears waypoints, then `doStop` | Stops where it is | None | Halted | First |
 | `POSTURE` | Group commands | Changes speed, formation, behaviour or firing rules and keeps its route | Any setting | Acknowledged | First |
 | `BOARD` | `GETIN` | Mounts its assigned vehicle | Assigned vehicle | Mounted | Later |
 | `DISMOUNT` | `GETOUT` | Leaves its vehicle at a point | Grid | Dismounted | Later |
@@ -397,7 +397,16 @@ The commander knows only what's been reported, so its view of an order can lag o
 | `LOITER` | `LOITER` | An aircraft circles a point | Grid, radius | On station | Later |
 | `JOIN` | `JOIN` | Merges into another station | Callsign | Joined | Later |
 
-Left out on purpose: `DESTROY` needs a target object, which would leak engine references. `SCRIPTED` and `TALK` run code or dialogue the commander shouldn't reach.
+Left out on purpose: `DESTROY` needs a target object, which would leak engine references. `SCRIPTED` and `TALK` run code or dialogue the commander shouldn't reach. `GUARD` stays out of the first version because a test group left its waypoint and walked off elsewhere.
+
+Engine behaviour the waypoint writer has to handle, from the [spike](#17-engine-spike-results):
+
+- **Waypoint numbering:** a group starts with a hidden waypoint at index 0, and its first added waypoint is index 1.
+- **Finishing:** `currentWaypoint` equals `count waypoints` once a route is complete. `waypointPosition` then returns a meaningless position, so don't read it.
+- **`HOLD` and `SENTRY`** stay current on arrival, so "on station" has to come from distance.
+- **`SEARCH`** completes on its own, about 48 s in with no enemies present, and the group then wanders nearby.
+- **Replacing a route:** delete all waypoints, add the new one, then call `setCurrentWaypoint`. Index numbering restarts at 0.
+- **`HALT`:** clearing waypoints alone doesn't stop a group, and neither does adding `doFollow` or `doMove`. Those groups kept walking for over 110 m. `doStop` stopped one within a metre. Whether a later order releases a stopped group is still untested.
 
 ### 7.3 Parameters
 
@@ -438,9 +447,9 @@ commander_ask(to="all", topics=["position"])                  # one reply per st
 | `position` | Grid 052 191, moving north-east. | `getPosATL`, `mapGridPosition`, `getDir` | First |
 | `task` | Moving to grid 058 196, about 400 metres out. | Order book, `currentWaypoint` | First |
 | `strength` | 6 of 8 effective, 1 wounded. Sergeant Novak has command. | `units`, `alive`, `lifeState`, `damage`, `leader` | First |
-| `ammo` | Ammo amber, about half. | `magazinesAmmo` against the enrolment baseline | First |
+| `ammo` | Ammo amber, about half. | `magazinesAmmoFull` against the enrolment baseline, counting magazines from `compatibleMagazines` of the primary weapon. `magazinesAmmo` omits the loaded magazine | First |
 | `vehicle` | Fuel about a quarter, vehicle damaged, still mobile. | `fuel`, `damage`, `canMove`, `someAmmo` | First |
-| `contacts` | About 4 infantry, north-east, roughly 300 metres, last seen a minute ago. | `nearTargets` or `targets` with `targetKnowledge` | First |
+| `contacts` | About 4 infantry, north-east, roughly 300 metres, last seen a minute ago. | `targets [true, range]` with `targetKnowledge`, plus `nearTargets` for type and accuracy | First |
 | `eta` | About 6 minutes to grid 058 196, if unopposed. | Remaining distance over recent speed | First |
 | `surroundings` | On a ridge. Church 200 metres north, road below us to the east. | `nearestLocations`, `nearestTerrainObjects`, height | Later |
 | `can_see` | Clear view of that grid. Nothing seen there at the moment. | `terrainIntersectASL` from the leader's eye height, plus contacts | Later |
@@ -532,6 +541,14 @@ Never shown to the commander:
 
 Enemy `pos` is the group's perceived position, never the enemy's true position. Object references must not leave SQF.
 
+How to read contacts, from the [spike](#17-engine-spike-results):
+
+- **Enemy set:** `leader targets [true, range]`. Passing `false` also returns friendlies, vehicles, buildings and street lamps, and so does an unfiltered `nearTargets`.
+- **Last known position and age:** `targetKnowledge` gives the position (index 6) and last-seen time (index 2, compared with `time`).
+- **Perceived type and accuracy:** `nearTargets` entries, matched to perceived enemy sides. Accuracy (index 5) grew with age, from 4 m at 8 s to 20 m at 46 s, while `targetKnowledge`'s error field stayed near 0, so wording should use age and the `nearTargets` value.
+- **Contact lost has to be calculated from age.** Knowledge never expired by itself: a squad out of view for over 6 minutes stayed listed at its old position.
+- **Class names are exact,** so type must always be reduced to a broad category.
+
 The commander hears:
 
 ```text
@@ -570,7 +587,7 @@ The monitor compares each new packet with the last one and reports only meaningf
 | Contact update | Count bucket or direction changes | Priority | 90 s |
 | Contact lost | No fresh knowledge for 2 minutes | Routine | Once |
 | Casualties | Effective strength drops | Priority | Grouped over 30 s |
-| New leader | `leader` changes | Priority | None |
+| New leader | `leader` changes. This took about 6 s after a leader died, and until then `leader` returns the dead unit | Priority | None |
 | Ammo, fuel, vehicle | Falls into a worse band, or vehicle disabled | Priority | Only when worsening |
 | Stuck | Active move, under 20 m progress in 2 minutes, no contact | Priority | 3 minutes |
 
@@ -578,7 +595,9 @@ These values are starting points to tune in play. Precedence sets the order in t
 
 ### 10.4 Monitor design
 
-Polling every 2 to 5 seconds, rather than engine event handlers, keeps the monitor simple and independent of locality. It runs on the server and on each headless client and handles only groups local to that machine, because AI knowledge may be stale elsewhere. Per-group state lives on the group, so it survives a locality change. A per-frame budget stops the monitor from costing visible performance at larger scales.
+Polling every 2 to 5 seconds, rather than engine event handlers, keeps the monitor simple and independent of locality. In the spike, the server and a headless client reported matching knowledge for a group local to the client, so the proof of concept runs the monitor on the server alone. A per-machine monitor stays as the fallback if that comparison fails under more demanding tests. Per-group state lives on the group, so it survives a locality change. A per-frame budget stops the monitor from costing visible performance at larger scales.
+
+A dead leader has to be handled: skip the reading, or use an alive unit, until `leader` updates. A deleted group keeps its `groupId` if created with `deleteWhenEmpty` false, but `leader` becomes null, and the monitor must stop reporting for it without error.
 
 Events are emitted with `["evt", createHashMapFromArray [["type", "cmd_report"], ...]] call BRMH_fnc_emit`, like existing adapter events.
 
@@ -691,7 +710,7 @@ The fog is only worth having if the commander can't get around it, even by accid
 | Error text | `safe()` returns exception text and tracebacks | The commander server has its own wrapper with generic errors. Details go to the operator's log |
 | Event stream | `killed` events include killer, weapon and distance. `arma_status` lists machines and players | Pass through only `cmd_report` events. Expose no status tool |
 | Report wording | Class names or exact values give away information | Broad categories and rounded values only |
-| Base map | The export might include mission-placed objects | Check in game |
+| Base map | The export could reveal mission-placed objects | On VR, the export's `objects` group was empty with a scripted hamlet present. Other worlds are still unchecked |
 | Truth log | It sits in the same run folder | The commander has no file access and no tool that reads it |
 
 ### 13.3 Tests
@@ -829,21 +848,45 @@ commander/                                            client config and doctrine
 scenarios/commander/                                  scenario files
 ```
 
-## 17. Verify in game
+## 17. Engine spike results
 
-These come from memory of the engine, and none has been tested for this design:
+Run on 2026-11-05 on the `demo_vr` mission, on a dedicated server with one headless client, while the host machine was under heavy unrelated load. No script errors came from the game beyond one typo in a test snippet. These are small samples on flat, empty terrain, so they show that commands behave as expected, not how a real battle will go.
 
-- Which perception commands give usable, non-leaking data, and whether they work on groups local to a headless client.
-- Whether `HOLD` and `GUARD` ever complete on their own, and what `GUARD` requires without triggers.
-- Whether the terrain export includes mission-placed objects, and how large the Altis SVG gets with contours.
-- How quickly AI knowledge sharpens, since overly precise AI could weaken the fog.
-- How well ammo bands work across mixed loadouts.
-- Whether `CBA_missionTime` is the right clock for hosted and paused games.
+### Confirmed
+
+| Question | Result |
+|---|---|
+| Does perception avoid leaking true positions? | Yes. A squad teleported 500 m away stayed listed at its old position, 500 m wrong, for over 6 minutes |
+| Do hidden enemies stay unknown? | Yes. A squad among buildings 474 m away stayed at `knowsAbout` 0 |
+| How is perception before it goes stale? | Exact. Position error was 0 m at 200 m, with exact class names. The fog comes from what's seen, how old it is and how reports are rounded, not from position noise |
+| Grid format | `mapGridPosition` gives 6 digits and rounds down to 100 m, such as `"040040"` |
+| Waypoints | `MOVE`, `SAD`, `SENTRY` and `CYCLE` behaved as designed. `SENTRY` fired about 2 s after an enemy appeared at 50 m. See [section 7.2](#72-order-types) |
+| `GUARD` without triggers | Unusable. The group walked 256 m off in another direction |
+| Replacing a route mid-move | Works, and needs `setCurrentWaypoint` |
+| Stopping a group | Only `doStop` worked promptly |
+| Health | `lifeState` reads `HEALTHY`, `INJURED` or `DEAD`, alongside `damage`. Incapacitation wasn't seen |
+| Leader death | The next soldier took over after about 6 s, and `units` dropped the dead leader at the same time |
+| Deleted group | Keeps its `groupId`, with `units` empty and `leader` null, which suits the failure variant |
+| Radio | Standard units carry `ItemRadio` in `assignedItems`, if radio gear ever matters |
+| Base map | The VR export was 20 KB, with an empty `objects` group and no locations |
+
+### Partly answered
+
+- **Server reading a headless client's group:** `knowsAbout`, `targetKnowledge`, `targets [false, ...]` and `nearTargets` matched on both machines. The test enemy died early, because the test group was left free to fire, so enemy-filtered reads weren't compared. `setGroupOwner` returned false in the same frame the group was created, and worked later.
+- **Detection range:** four soldiers saw a four-man squad at 200 m within 11 s. A separate two-man pair saw nothing after 110 s, including a lone soldier in the open at 300 m. A squad 700 m away was never reacquired. Detection may be shorter-ranged than expected, which affects scenario spacing and recon, and it needs a proper look.
+
+### Still unverified
+
+- Whether a new order releases a group stopped with `doStop`, and whether `POSTURE` settings and `setWaypointCompletionRadius` behave as described.
+- Ammo bands in real firefights and across mixed loadouts, and fuel and vehicle states.
+- Whether `CBA_missionTime` handles pausing correctly. A dedicated server doesn't pause, so this needs a hosted game. It read correctly during the run on the server and the headless client.
+- The size of an Altis SVG with contours, and whether other worlds' exports reveal mission-placed objects. The map image isn't part of the proof of concept.
+- Perception in real terrain, with vegetation and at night.
 
 ## 18. Build order
 
 1. **Channel test.** Done. See the [results](#510-channel-test-results).
-2. **Engine spike.** Perception commands, waypoint behaviour and map export.
+2. **Engine spike.** Done. See the [results](#17-engine-spike-results).
 3. **Proof of concept.** Stations, orders, questions, reports, wake logic and timers, enough for [one subordinate from A to B](#141-proof-of-concept-one-subordinate-a-to-b), plus the truth log and the failure variant. Run it in both turn interruption modes.
 4. **Lockdown.** Separate client profile, allowlist and leak tests.
 5. **World model.** Markers, notes, log, map image and resume.
