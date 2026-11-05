@@ -53,7 +53,7 @@ def _wobble(spread: float) -> float:
 
 
 def spoken_bearing(dx: float, dy: float, accuracy_m: float = 0) -> str:
-    """A compass bearing as someone would call it out. It's an estimate, so each call can come out a little differently."""
+    """A compass bearing as someone would call it out. It's an estimate, so each call can come out differently."""
     spread = min(BEARING_ERROR_MAX_DEG, BEARING_ERROR_DEG + math.degrees(math.atan2(accuracy_m, math.hypot(dx, dy))))
     bearing = math.degrees(math.atan2(dx, dy)) + _wobble(spread)
     return f"bearing {round(bearing / BEARING_ROUND_DEG) * BEARING_ROUND_DEG % 360:03d}"
