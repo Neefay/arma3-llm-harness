@@ -30,7 +30,7 @@ This is bigger than a new order type. Vehicles become things the commander knows
 | Mortar load | 4 HE magazines of 8, plus 8 smoke, 8 flare and 8 illumination | Words for the commander: HE, SMOKE, FLARE, ILLUM |
 | Rate of fire | First round about 2 s after the order, then one every 1.8 s | |
 | Flight time | 14 s at 100 m, 14 s at 300 m, 28 s at 800 m, 40 s at 2,000 m, 36 s at 3,500 m. `getArtilleryETA` agreed | It isn't linear, so never estimate it |
-| Accuracy over 8 rounds | Mean miss 5 m at 100 m, 7 m at 300 m, 10 m at 800 m, 14 m at 2,000 m, 16 m at 3,500 m. Worst 32 m | Far better than a 100 m grid square, so the aim point is the main error, which is what makes spotting matter |
+| Accuracy over 8 rounds | Mean miss 5 m at 100 m, 7 m at 300 m, 10 m at 800 m, 14 m at 2,000 m, 16 m at 3,500 m. Worst 32 m | Far better than a 100 m grid square, so the aim point is the main error, which is what makes spotting and 8-figure grids matter |
 | Asking for 12 rounds | Fires 8, then stops at the end of the magazine | The controller re-issues in chunks |
 | Next magazine | 7.4 s after the last round | |
 | Changing shell type | 6 to 7 s | |
@@ -156,16 +156,18 @@ commander_order(to="Hammer", legs=[{"type": "MOUNT", "vehicle": "V1", "seat": "g
 commander_order(to="Alpha",  legs=[{"type": "MOUNT", "vehicle": "V2"}])     # everyone who fits, driver and gunner first
 commander_order(to="Hammer", legs=[{"type": "DISMOUNT", "vehicle": "V1"}])  # or leave vehicle out, for everyone
 
-# Fire
-commander_order(to="Hammer", legs=[{"type": "FIRE_MISSION", "at": "E1", "ammo": "HE", "rounds": 6, "radius": 30,
+# Fire, by grid reference only
+commander_order(to="Hammer", legs=[{"type": "FIRE_MISSION", "at": "041 041", "ammo": "HE", "rounds": 2, "radius": 0,
                                     "observer": "Recon"}])
-# Correction, relative to the last aim point, in metres
-commander_order(to="Hammer", legs=[{"type": "FIRE_MISSION", "at": "LAST", "shift": {"north": -60, "east": 20},
-                                    "ammo": "HE", "rounds": 3}])
+# Correction: a new, more exact grid, which the commander works out from what the spotter said
+commander_order(to="Hammer", legs=[{"type": "FIRE_MISSION", "at": "0408 0416", "ammo": "HE", "rounds": 6, "radius": 30}])
 commander_order(to="Hammer", legs=[{"type": "CHECK_FIRE"}])
 ```
 
-- **`at`** takes anything an order takes today: a grid, a marker, or a building id. A grid means the centre of its square, so a first round can easily be 50 m off. A building or pinned marker means its exact position, because the map really does show that.
+**Fire missions are relayed only as grid references.** An infantry order can say `CLEAR B1`, because "B1" stands in for "that house", which a squad leader can see. A radio operator can't call fire on a token. So `FIRE_MISSION` refuses building and marker ids, and there's no "from last" shortcut: the commander has to work out the grid, and that's where its mistakes can come from.
+
+- **`at`:** 6 figures, the centre of a 100 m square, or 8 figures, the centre of a 10 m square. A 6-figure aim can be up to about 70 m from the real target, and an 8-figure one up to about 7 m, so 8 figures is what makes precise correction possible. 8 figures apply to fire missions and markers, and other orders stay at 6.
+- **Where 8 figures come from:** the commander's own arithmetic and map reading. The building list stays at 6 figures, so getting a building's 8-figure grid means reading it off `commander_map`, which can be zoomed to a 50 m radius. A spotter's offset has to be added to the last grid by hand. Mistakes here land on the map as real shells.
 - **`vehicle`** must be on the list. Anything else is refused, which reveals nothing.
 - **`seat`:** `driver`, `gunner`, `commander`, `cargo`, or `turret:0` and so on, taken from the game's own list. A seat the type doesn't have is refused from the commander's own knowledge of the type.
 - **`ammo`:** HE, SMOKE, FLARE or ILLUM, by mapping the gun's own magazines.
@@ -236,9 +238,9 @@ A new station field, `spotter: true`. Reports depend on who's watching:
 - **Can it see?** At each impact, checked from any living soldier in the station: `checkVisibility` in `VIEW`, from eyes to 1 m above the impact, above 0.3, within 1,500 m. Smoke blinds it for free.
 - **Grouped:** one report per burst, a few seconds after the last round lands. Offsets are rounded to 10 m up to 100 m, then to 50 m. That keeps it good enough to correct, and not perfect.
 - **Target:** relative to the mission's aim point. Assigning an observer is what tells it the aim point. That's the point of assigning one.
-- **The correction is the commander's job.** The spotter says where it landed, and the commander decides the `shift`. A report may not name friendlies near the impact, unless they're that spotter's own station.
+- **The correction is the commander's job.** The spotter says where it landed, and the commander works out the new grid. A report may not name friendlies near the impact, unless they're that spotter's own station.
 
-This gives the classic loop: first round off by up to the grid's error, the observer calls it, the commander shifts, then fire for effect. Without a spotter, it can still fire by map, at unknown effect, and find out only from casualty reports or an enemy that stops showing up.
+This gives the classic loop: a first round off by up to the grid's error, the observer calls it, the commander works out a corrected 8-figure grid and sends it, then fire for effect. Without a spotter, it can still fire by map, at unknown effect, and find out only from casualty reports or an enemy that stops showing up.
 
 ## 7. How it runs in the game
 
@@ -360,9 +362,9 @@ Agreed with the owner:
 4. **Self-firing:** the commander's guns never fire by themselves, and enemy guns do, since that's real engine behaviour and a real threat that needs no script.
 5. **Ammunition:** 16 HE and 4 smoke for the test scenario, set per scenario, with no resupply yet.
 
-Still open:
+6. **Fire missions by grid reference only.** No building or marker ids, and no relative shifts. 6 figures, or 8 for precision. See section 4.
 
-6. **Exact aim on buildings.** A grid aims at the centre of its 100 m square, up to about 70 m from any point in it. A building or pinned marker aims at its exact centre, so with a gun's 10 m spread, the first rounds can land right on it with no spotter. Recommended: keep that, since a map shows that much. The alternative, rounding every aim to its grid centre, means a building can only be hit after correcting.
+Chosen by me and easy to change: the building list stays at 6 figures, so 8-figure grids have to be read off the map. If that proves too error-prone for a model reading an image, the list could give 8 figures instead, which keeps the rule that the commander has to relay a grid.
 
 ## 14. Build order
 

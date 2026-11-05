@@ -230,7 +230,7 @@ W4  due 14:03, delivered 2 s late: "Has Alpha reached the objective?"
 
 TRAFFIC
 [14:00] Alpha: Reached objective, grid 041 187, holding.
-[14:02] FLASH Bravo: Contact, a few infantry, bearing 045, roughly 300 metres. Engaging, at grid 052 191.
+[14:02] FLASH Bravo: Contact, a few infantry, bearing 045, roughly 300 metres. Engaging.
 
 OVERDUE
 Charlie: last heard 6 min ago. Scheduled check-in missed at 13:30.
@@ -460,7 +460,7 @@ commander_ask(to="all", topics=["position"])                  # one reply per st
 | `strength` | 6 of 8 effective, 1 wounded. Sergeant Novak has command. | `units`, `alive`, `lifeState`, `damage`, `leader` | First |
 | `ammo` | Ammo amber, about half. | `magazinesAmmoFull` against the enrolment baseline, counting magazines from `compatibleMagazines` of the primary weapon. `magazinesAmmo` omits the loaded magazine | First |
 | `vehicle` | Fuel about a quarter, vehicle damaged, still mobile. | `fuel`, `damage`, `canMove`, `someAmmo` | First |
-| `contacts` | At grid 052 191. A few infantry, bearing 045, roughly 300 metres, near B3, last seen a minute ago. | `targets [true, range]` with `targetKnowledge`, plus `nearTargets` for type and accuracy | First |
+| `contacts` | A few infantry, bearing 045, roughly 300 metres, near B3, last seen a minute ago. | `targets [true, range]` with `targetKnowledge`, plus `nearTargets` for type and accuracy | First |
 | `eta` | About 6 minutes to grid 058 196, if unopposed. | Remaining distance over recent speed | First |
 | `surroundings` | On a ridge. Church 200 metres north, road below us to the east. | `nearestLocations`, `nearestTerrainObjects`, height | Later |
 | `can_see` | Clear view of that grid. Nothing seen there at the moment. | `terrainIntersectASL` from the leader's eye height, plus contacts | Later |
@@ -567,7 +567,7 @@ How to read contacts, from the [spike](#17-engine-spike-results):
 The commander hears:
 
 ```text
-[13:48] FLASH Bravo: Contact, a couple of infantry, bearing 045, roughly 300 metres. Engaging, at grid 052 191.
+[13:48] FLASH Bravo: Contact, a couple of infantry, bearing 045, roughly 300 metres. Engaging.
 
 [13:49] Bravo: SITREP. Grid 052 191. Moving to grid 058 196, in contact.
 6 of 8 effective, 1 wounded. Ammo amber, about half.
@@ -579,7 +579,7 @@ The commander hears:
 |---|---|---|
 | Own position | Grid 052 191 | 100 m grid, 6 digits |
 | Own movement | moving north-east | 8-point compass |
-| Bearing to an enemy | bearing 045, always with the squad's own grid | Degrees, rounded to 5. An estimate: a random error of 5 degrees either way, widening with how vaguely the target's position is known, up to 20 |
+| Bearing to an enemy | bearing 045 | Degrees, rounded to 5. An estimate: a random error of 5 degrees either way, widening with how vaguely the target's position is known, up to 20 |
 | Enemy range | roughly 300 metres | Nearest 50 m up to 500 m, nearest 100 m beyond, "distant" past a limit |
 | Enemy count | one (1), a couple (2), a few (3-5), about 8 (6-9), a dozen (10-14), many (15+) | Contacts in the same 45-degree sector are grouped into one report, using the bearing to the nearest |
 | Enemy type | infantry, vehicle, armour, aircraft, unknown | Broad categories from perceived type, never class names |
@@ -643,7 +643,7 @@ The map holds **belief**, and it will be wrong in instructive ways. The base ter
 | Order and schedule book | What it asked for, and what's still pending | Harness | Active items |
 | Truth log | Sampled real positions and events for review | Separate game-side recorder | Never |
 
-**Friendly positions** plot only when a subordinate included a position or grid. Arrival reports and SITREPs do. Contact reports do too, since a bearing means nothing without where it's measured from. Otherwise the commander updates its belief manually, using a `friendly` marker.
+**Friendly positions** plot only when a subordinate included a position or grid. Arrival reports and SITREPs do. A contact report doesn't: a squad under fire isn't checking a map or a GPS to work out its own grid, so "bearing 045, roughly 300 metres" changes nothing on the map, and the commander has to judge where it was measured from. Otherwise the commander updates its belief manually, using a `friendly` marker.
 
 ### 11.2 Storage
 

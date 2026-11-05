@@ -178,11 +178,8 @@ def answer(packet: dict, route: dict | None, topics: list[str] | None = None,
                 parts.append(f"Ammo {band}, {_AMMO_WORDS[band]}.")
             case "contacts":
                 groups = contact_groups(packet)
-                # A bearing means nothing without where it's measured from.
-                origin = "" if "position" in (topics or DEFAULT_TOPICS) or not groups \
-                    else f"At grid {format_grid(packet['grid'])}. "
-                parts.append(origin + (" ".join(f"{_sentence(contact_phrase(g, buildings))}, {age_words(g['age_s'])}."
-                                                for g in groups) if groups else "No contacts."))
+                parts.append(" ".join(f"{_sentence(contact_phrase(g, buildings))}, {age_words(g['age_s'])}."
+                                      for g in groups) if groups else "No contacts.")
             case "eta":
                 parts.append(_eta_words(packet, route))
             case _:
@@ -355,13 +352,13 @@ class Tracker:
                                  sorted(fresh, key=lambda g: g["direction"]))
             summary = "; ".join(contact_phrase(g, buildings) for g in fresh)
             action = "Engaging" if packet.get("combat_mode") in ("YELLOW", "RED") else "Holding fire"
-            grid = format_grid(packet["grid"])
+            # No grid of their own here: working one out takes a map or a GPS, and nobody's doing that under fire.
             if not self.contact_active:
                 self.contact_active, self.contact_signature, self.contact_said = True, signature, now
-                return [Report(FLASH, f"Contact, {summary}. {action}, at grid {grid}.", grid)]
+                return [Report(FLASH, f"Contact, {summary}. {action}.")]
             if signature != self.contact_signature and now - self.contact_said >= CONTACT_UPDATE_S:
                 self.contact_signature, self.contact_said = signature, now
-                return [Report(PRIORITY, f"Contact update, {summary}, at grid {grid}.", grid)]
+                return [Report(PRIORITY, f"Contact update, {summary}.")]
             return []
         if self.contact_active and now - self.contact_seen >= CONTACT_LOST_S:
             self.contact_active, self.contact_signature = False, ""

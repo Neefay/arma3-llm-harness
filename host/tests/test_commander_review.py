@@ -85,9 +85,8 @@ def battle(tmp_path) -> Path:
     ("Not making progress toward grid 041 041, at grid 040 035.", "040 035"),
     ("Grid 043 042, moving south-east. Patrolling around grid 043 041.", "043 042"),
     ("Contact, a few infantry, north, roughly 400 metres. Engaging.", None),
-    ("Contact, a few infantry, bearing 045, roughly 400 metres. Engaging, at grid 041 038.", "041 038"),
-    ("Contact update, one infantry, bearing 310, roughly 50 metres, near B3, at grid 041 041.", "041 041"),
-    ("At grid 033 030. One infantry, bearing 045, roughly 300 metres, seen now.", "033 030"),
+    ("Contact, a few infantry, bearing 045, roughly 400 metres. Engaging.", None),
+    ("Contact update, one infantry, bearing 310, roughly 50 metres, near B3.", None),
 ])
 def test_only_a_stations_own_position_goes_on_the_belief_map(text, grid):
     assert aar.reported_position(text) == grid

@@ -140,7 +140,7 @@ def test_clear_with_no_buildings_says_so():
 def test_contacts_near_a_numbered_building_say_which():
     buildings = [{"id": "B3", "pos": [3260.0, 3260.0]}, {"id": "B4", "pos": [3700.0, 3700.0]}]
     said = Tracker().update(packet(contacts=[contact(3250, 3250)]), None, 0, buildings)
-    assert said[0].text == "Contact, one infantry, bearing 045, roughly 300 metres, near B3. Engaging, at grid 030 030."
+    assert said[0].text == "Contact, one infantry, bearing 045, roughly 300 metres, near B3. Engaging."
     assert "near" not in Tracker().update(packet(contacts=[contact(3500, 3100)]), None, 0, buildings)[0].text
     assert "near B3" in reports.answer(packet(contacts=[contact(3250, 3250)]), None, ["contacts"], buildings)
 
@@ -197,23 +197,17 @@ def test_real_bearings_stay_within_their_error(monkeypatch):
     assert said <= {"bearing 085", "bearing 090", "bearing 095"} and len(said) == 3
 
 
-def test_a_bearing_always_comes_with_where_its_measured_from():
+def test_contact_reports_dont_state_the_squads_own_grid(tmp_path):
+    """Under fire, nobody's checking a map or a GPS. A squad gives its grid when asked, and on arrival."""
     seen = packet(contacts=[contact()])
-    assert reports.answer(seen, None, ["contacts"]).startswith("At grid 030 030. One infantry, bearing 045")
-    assert reports.answer(packet(), None, ["contacts"]) == "No contacts."
-    both = reports.answer(seen, None, ["position", "contacts"])
-    assert both.count("030 030") == 1 and both.startswith("Grid 030 030, stationary. One infantry")
-    assert reports.answer(seen, None).count("Grid 030 030") == 1
-
-
-def test_contact_reports_and_answers_put_the_reporter_on_the_map(tmp_path):
+    said = Tracker().update(seen, None, 0)[0]
+    assert said.grid is None and "grid" not in said.text
+    assert "grid" not in reports.answer(seen, None, ["contacts"]).lower()
+    assert reports.answer(seen, None, ["position", "contacts"]).startswith("Grid 030 030, stationary. One infantry")
     b = Battle(tmp_path)
     b.start()
     b.advance(102, contacts=[contact()], pos=[3250, 3050], grid="032030")
-    assert b.runtime.positions["Alpha"]["grid"] == "032 030"
-    b.advance(150, contacts=[contact()], pos=[3350, 3050], grid="033030")
-    assert b.runtime.ask("Alpha", ["contacts"])["replies"][0]["text"].startswith("At grid 033 030.")
-    assert b.runtime.positions["Alpha"]["grid"] == "033 030"
+    assert "Alpha" not in b.runtime.positions
 
 
 def test_posture_doesnt_restart_the_route():
@@ -234,8 +228,7 @@ def test_contact_flashes_once_then_goes_quiet_then_is_lost():
     tracker = Tracker()
     said = tracker.update(packet(contacts=[contact()]), None, 0)
     assert said[0].precedence == reports.FLASH
-    assert said[0].text == "Contact, one infantry, bearing 045, roughly 300 metres. Engaging, at grid 030 030."
-    assert said[0].grid == "030 030"
+    assert said[0].text == "Contact, one infantry, bearing 045, roughly 300 metres. Engaging."
     assert tracker.update(packet(contacts=[contact()]), None, 2) == []
     two_more = [contact(), contact(3260, 3260), contact(3270, 3270)]
     assert tracker.update(packet(contacts=two_more), None, 30) == []  # within the repeat limit
@@ -246,7 +239,7 @@ def test_contact_flashes_once_then_goes_quiet_then_is_lost():
 
 def test_holding_fire_is_said_when_the_group_cant_engage():
     said = Tracker().update(packet(contacts=[contact()], combat_mode="BLUE"), None, 0)
-    assert "Holding fire, at grid 030 030." in said[0].text
+    assert said[0].text.endswith("Holding fire.")
 
 
 def test_casualties_group_then_leader_and_ammo_report():
