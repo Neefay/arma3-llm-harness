@@ -15,8 +15,17 @@ from .records import Records
 from .runtime import Runtime
 
 SERVER_NAME = "commander"
-DENIED_TOOLS = ["Bash", "PowerShell", "Read", "Write", "Edit", "Glob", "Grep", "WebFetch", "WebSearch", "NotebookEdit",
-                "Agent", "Task", "Skill", "mcp__arma", "mcp__MCP_DOCKER", "mcp__plugin_a3ref_a3ref"]
+# Named one by one because the client offers whatever isn't denied, and that list grows. A live check of what a session
+# actually received found SendMessage, for one, which could ask another local session what's really happening.
+DENIED_TOOLS = [
+    "Bash", "PowerShell", "Read", "Write", "Edit", "Glob", "Grep", "WebFetch", "WebSearch", "NotebookEdit", "Agent",
+    "Task", "TaskStop", "Skill", "Workflow", "SendMessage", "ListAgents", "RemoteTrigger", "CronCreate", "CronDelete",
+    "CronList", "ScheduleWakeup", "PushNotification", "Monitor", "Artifact", "ArtifactComments", "ArtifactData",
+    "DesignSync", "ReportFindings", "EnterWorktree", "ExitWorktree", "EnterPlanMode", "ExitPlanMode", "Advisor",
+    "AskUserQuestion", "ListMcpResourcesTool", "ReadMcpResourceTool", "ReadMcpResourceDirTool", "mcp__arma",
+    "mcp__MCP_DOCKER", "mcp__taskboard", "mcp__plugin_a3ref_a3ref", "mcp__claude_ai_Claude_Docs",
+    "mcp__claude_ai_Gmail", "mcp__claude_ai_Google_Calendar", "mcp__claude_ai_Google_Drive", "mcp__claude-vscode",
+]
 
 
 def _commander_home(home: Home) -> Path:
@@ -69,8 +78,8 @@ def start(path: str, mode: str | None = None, harness: Harness | None = None) ->
         raise HarnessError(f"this world's grid isn't a plain 100 m grid ({sample!r}), which isn't supported yet")
     _result(h.exec(load_sqf("commander_boot.sqf"), "server", timeout=20, strip=False))
     # A repeat start reuses the running game, so clear the previous attempt's soldiers first.
-    _result(h.exec("{ [_x] call brmh_cmd_fnc_deleteStation } forEach (keys brmh_cmd_stations); "
-                   "brmh_cmd_stations = createHashMap; true", "server", timeout=10))
+    _result(h.exec('{ [_x] call brmh_cmd_fnc_deleteStation; _y setGroupIdGlobal ["Retired"] } '
+                   "forEach brmh_cmd_stations; brmh_cmd_stations = createHashMap; true", "server", timeout=10))
     for station in scenario.stations.values():
         at, _ = parse_grid(station["at"], world_size)
         _result(h.exec('[_this # 0, [west, east] select (_this # 1 isEqualTo "east"), _this # 2, _this # 3, _this # 4] '
@@ -171,12 +180,24 @@ def aar(home: Home | None = None) -> str:
         words = f"cancelled {row['id']}" if "cancelled" in row else f"{row['id']} for {format_time(row['due'])}"
         rows.append((row["t"], f"TIMER  {words}"))
     for row in records.read("radio_events"):
-        rows.append((row["t"], f"END    {row['mission_end']}"))
+        if "mission_end" in row:
+            rows.append((row["t"], f"END    {row['mission_end']}"))
+        else:
+            rows.append((row["t"], f"EVENT  {row['scenario_event']}"))
+    stations, dead = _stations(records), set()
     for row in records.read_truth():
-        where = "; ".join(f"{g['group']} {g['alive']} alive at {[round(c) for c in g['pos']]}"
-                          for g in row["groups"] if g.get("pos") and g["group"] in _stations(records))
-        if where:
-            rows.append((row["t"], f"TRUTH  {where}"))
+        parts = []
+        for group in row["groups"]:
+            if group["group"] not in stations:
+                continue
+            if group.get("pos"):
+                dead.discard(group["group"])
+                parts.append(f"{group['group']} {group['alive']} alive at {[round(c) for c in group['pos']]}")
+            elif group["group"] not in dead:  # once is enough: a wiped-out group is otherwise missing from the review
+                dead.add(group["group"])
+                parts.append(f"{group['group']} 0 alive")
+        if parts:
+            rows.append((row["t"], "TRUTH  " + "; ".join(parts)))
     rows.sort(key=lambda r: r[0])
     return "\n".join(f"{format_time(t)}  {text}" for t, text in rows)
 

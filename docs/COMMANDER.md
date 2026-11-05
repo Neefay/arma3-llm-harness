@@ -1,6 +1,6 @@
 # Commander Mode: design
 
-**Status:** the [A to B proof of concept](#141-proof-of-concept-one-subordinate-a-to-b) is built. It has run on a real game with a scripted stand-in for the LLM, and once with a real commander on Claude Opus 5.5, in `hold` mode. Section 12 marks which tools exist so far. The rest of this document is still the design. Updated 2026-11-05.
+**Status:** the [A to B proof of concept](#141-proof-of-concept-one-subordinate-a-to-b) is built. It has run on a real game with a scripted stand-in for the LLM, and with real commanders in `hold` mode: A to B on Claude Opus 5.5, and a killed group on Claude Haiku 5.5. Section 12 marks which tools exist so far. The rest of this document is still the design. Updated 2026-11-05.
 
 **Audience:** developers and agents building or reviewing this feature. Read [ARCHITECTURE.md](ARCHITECTURE.md) first for how the harness itself works.
 
@@ -699,7 +699,11 @@ The fog is only worth having if the commander can't get around it, even by accid
 ### 13.1 Separation
 
 - **Separate MCP server.** `mcp_server.py` registers every tool at import, so a mode flag would leave `arma_exec`, `arma_view` and `arma_snapshot` visible. The commander server has its own module and script entry, and doesn't import that module.
-- **Locked-down client.** The agent could otherwise use the shell (`arma-harness.exe exec`) or read `state.json`, RPTs and `audit.jsonl`. So the commander runs from its own folder with its own config and doctrine file, and no shell or general file tools. `setup-agents` needs a separate commander profile for this.
+- **Locked-down client.** The agent could otherwise use the shell (`arma-harness.exe exec`) or read `state.json`, RPTs and `audit.jsonl`. So the commander runs from a generated folder with its own MCP config and a long deny list, and the server delivers its doctrine. `setup-agents` needs a separate commander profile for this.
+
+**How to check it.** Asking the commander to break the rules proves little, because a well-behaved model simply declines. Read the tool list the client really sent instead: the session transcript's `api-request-shape` and `deferred_tools_delta` rows. On Claude Code 2.1.318, a one-shot session from the workspace received only `ToolSearch`, `advisor` and the ten `commander_*` tools. Deny rules remove a tool from the list altogether. `advisor` stayed despite an `Advisor` rule. It can't reach game data, though it does add cost.
+
+The first version of the deny list named only the obvious tools, and that check found `SendMessage`, `ListAgents`, `Workflow`, `RemoteTrigger`, cron tools, `Artifact` and claude.ai connectors still available. `SendMessage` could have asked another local session what was really happening. The list has to name tools one by one, so a new client version, plugin or connector can widen it silently. It should be rechecked with each one, and that check should become a command. The check also ran without the channel flag, so an interactive session's list hasn't been read directly.
 
 ### 13.2 Known leaks to close
 
@@ -766,7 +770,9 @@ To run it, `arma-harness commander start poc_a_to_b [--mode hold|deliver]` boots
 6. The mission ends, and the end message wakes it for a last turn.
 7. The radio log, turn log and truth log agree on what happened.
 
-**Failure variant:** the same mission, but Alpha is deleted partway. There is no report, so only the commander's own timer can catch it. The expected behaviour is that the timer fires, the log shows no arrival, the commander asks for a SITREP, and it gets "no answer". This is the smallest test of inference from silence.
+**Failure variants:** the same mission, but Alpha is deleted partway ([poc_a_to_b_lost](../scenarios/commander/poc_a_to_b_lost.yaml)) or killed 10 seconds in ([poc_a_to_b_killed](../scenarios/commander/poc_a_to_b_killed.yaml)). There is no report, so only the commander's own timer can catch it. The expected behaviour is that the timer fires, the log shows no arrival, the commander asks for a SITREP, and it gets "no answer". This is the smallest test of inference from silence.
+
+**First real result, on Claude Haiku 5.5 with `poc_a_to_b_killed`:** Alpha acknowledged at T+00:08 and died at T+00:10. The commander's timer woke it at T+02:39, and its question got no answer. It tried twice more, and re-sent the order in case the first had stalled. At T+04:37, with nothing left to try, it waited only for messages, and the time limit woke it. Its final position was that Alpha's status was unknown: it never claimed Alpha was dead or had arrived. This took 6 turns and 22 model requests. It wrote long summaries after each turn, about 8,500 output tokens in all, and loaded its tools piecemeal, so the doctrine now asks it not to.
 
 ### 14.2 Following scenarios
 
@@ -898,8 +904,8 @@ Run on 2026-11-05 on the `demo_vr` mission, on a dedicated server with one headl
 
 1. **Channel test.** Done. See the [results](#510-channel-test-results).
 2. **Engine spike.** Done. See the [results](#17-engine-spike-results).
-3. **Proof of concept.** Built: stations, orders, questions, reports, wake logic and timers, enough for [one subordinate from A to B](#141-proof-of-concept-one-subordinate-a-to-b), plus the truth log, the failure variant and both turn interruption modes. A real commander completed A to B in `hold` mode on 2026-11-05, in 4 turns and 13 model requests with no refusals. Its own timer didn't get to fire, because the mission ended first. The failure variant and `deliver` mode haven't been run with a real LLM yet.
-4. **Lockdown.** The allowlist, leak tests and a locked-down workspace exist. Still to do: confirm the lockdown blocks a real attempt, since the first real commander never tried another tool, and a commander profile in `setup-agents`.
+3. **Proof of concept.** Built: stations, orders, questions, reports, wake logic and timers, enough for [one subordinate from A to B](#141-proof-of-concept-one-subordinate-a-to-b), plus the truth log, the failure variant and both turn interruption modes. A real commander completed A to B in `hold` mode on 2026-11-05, in 4 turns and 13 model requests with no refusals. Its own timer didn't get to fire, because the mission ended first. A real commander also caught a killed group through its own timer, on Haiku. `deliver` mode hasn't been run with a real LLM yet.
+4. **Lockdown.** The allowlist, leak tests and a locked-down workspace exist. The tool list a session actually receives has been checked. Still to do: a command that repeats that check, and a commander profile in `setup-agents`.
 5. **World model.** Markers, notes, log, map image and resume.
 6. **Timed actions.** Timed orders and questions.
 7. **Larger scenarios.** The village and the held position, then tune from what happens.

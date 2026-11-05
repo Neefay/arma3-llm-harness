@@ -444,6 +444,25 @@ def test_lost_group_is_only_caught_by_the_commanders_own_timer(tmp_path):
     assert b.runtime.ask("Alpha") == {"replies": [{"from": "Alpha", "text": "No answer."}]}
 
 
+def test_review_shows_a_group_dying_though_the_commander_never_hears(tmp_path):
+    from arma_harness.commander import operator
+    from arma_harness.config import Home
+
+    b = Battle(tmp_path, events=[{"at": "0:10", "action": "kill_station", "station": "Alpha"}])
+    b.start()
+    b.runtime.order({"to": "Alpha", "legs": [{"type": "MOVE", "at": "B"}]})
+    alive = {"group": "Alpha", "side": "WEST", "alive": 4, "pos": [3060, 3050]}
+    gone = {"group": "Alpha", "side": "WEST", "alive": 0, "pos": []}
+    for t, group in ((102, alive), (112, gone), (117, gone)):
+        b.game.emit(type="cmd_truth", t=t, groups=[group])
+        b.silent(t)
+    current = operator._current_file(Home(tmp_path))
+    current.write_text(json.dumps({"folder": str(b.records.folder)}), encoding="utf-8")
+    review = operator.aar(Home(tmp_path))
+    assert "EVENT  kill_station Alpha" in review and review.count("Alpha 0 alive") == 1
+    assert "0 alive" not in json.dumps(b.records.read("radio"))
+
+
 def test_killed_group_says_nothing_about_it(tmp_path):
     b = Battle(tmp_path, events=[{"at": "0:10", "action": "kill_station", "station": "Alpha"}])
     b.start()
@@ -665,7 +684,8 @@ def test_workspace_locks_the_commander_down(tmp_path, monkeypatch):
     folder = operator.write_workspace(Home(tmp_path))
     settings = json.loads((folder / ".claude" / "settings.json").read_text(encoding="utf-8"))
     assert settings["permissions"]["allow"] == ["mcp__commander"]
-    assert {"Bash", "Read", "mcp__arma"} <= set(settings["permissions"]["deny"])
+    denied = set(settings["permissions"]["deny"])
+    assert {"Bash", "Read", "mcp__arma", "SendMessage", "ListAgents", "Workflow"} <= denied
     assert json.loads((folder / ".mcp.json").read_text(encoding="utf-8"))["mcpServers"]["commander"]["args"][-1] == \
         "arma_harness.commander.server"
     assert not (folder / "CLAUDE.md").exists()  # the Read deny would block it: the server delivers the doctrine

@@ -204,6 +204,8 @@ class Runtime:
         code = {"delete_station": DELETE_CODE, "kill_station": KILL_CODE}[event["action"]]
         self._game_exec(code, [event["station"]])
         self.records.operator_log(f"{format_time(self.rel())} scenario event: {event['action']} {event['station']}")
+        self.records.append("radio_events", {"t": round(self.rel(), 1),
+                                             "scenario_event": f"{event['action']} {event['station']}"})
         self.dirty = True
 
     def _game_exec(self, code: str, args: list) -> None:
@@ -439,7 +441,7 @@ class Runtime:
             self.records.append("schedule", {"id": timer_id, "t": round(self.rel(), 1), "due": rel_due, "note": note})
             self._used()
             self.save()
-            return {"id": timer_id, "wakes_at": format_time(rel_due)}
+            return {"id": timer_id, "wakes_at": format_time(rel_due), "time_now": format_time(self.rel())}
 
     def unschedule(self, timer_id: str) -> dict:
         with self.lock:
