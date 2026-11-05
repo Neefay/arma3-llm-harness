@@ -164,6 +164,7 @@ th:first-child, td:first-child { padding-left: 12px; }
               <span><svg viewBox="0 0 13 10" stroke="var(--green)"><circle cx="6.5" cy="5" r="4"/></svg>objective</span>
               <span><svg viewBox="0 0 13 10" stroke="var(--amber)"><path d="M0 5h13" stroke-dasharray="3 2"/></svg>last order</span>
               <span><svg viewBox="0 0 13 10" style="fill:var(--checked)"><path d="M2 1h9v8H2z"/></svg>checked</span>
+              <span class="fireKey"><svg viewBox="0 0 13 10" stroke="var(--orange)"><circle cx="6.5" cy="5" r="3.5"/><path d="M6.5 0v10M1.5 5h10"/></svg>fire mission</span>
             </div>
           </figcaption>
           <canvas id="beliefMap" role="img" aria-label="Map of what the commander believed at this moment"></canvas>
@@ -175,6 +176,8 @@ th:first-child, td:first-child { padding-left: 12px; }
               <span><svg viewBox="0 0 13 10" style="fill:var(--blue)"><circle cx="6.5" cy="5" r="3"/></svg>friendly soldier</span>
               <span><svg viewBox="0 0 13 10" style="fill:var(--red)"><circle cx="6.5" cy="5" r="3"/></svg>enemy soldier</span>
               <span><svg viewBox="0 0 13 10" stroke="var(--dim)"><path d="M3 1.5l7 7M10 1.5l-7 7"/></svg>a death</span>
+              <span class="fireKey"><svg viewBox="0 0 13 10" style="fill:var(--orange)"><circle cx="6.5" cy="5" r="3"/></svg>shell landing</span>
+              <span class="fireKey"><svg viewBox="0 0 13 10" stroke="var(--orange)"><circle cx="6.5" cy="5" r="3.5"/><path d="M6.5 0v10M1.5 5h10"/></svg>its aim</span>
               <span id="gridStep">Squares are 100 m</span>
             </div>
           </figcaption>
@@ -327,6 +330,8 @@ function fitWhole() {
   for (const f of D.frames) for (const g of f.groups) for (const u of g.units) if (u[0] > 1 || u[1] > 1) { xs.push(u[0]); ys.push(u[1]); }
   for (const m of D.markers) for (const q of m.points || (m.pos ? [m.pos] : [])) { xs.push(q[0]); ys.push(q[1]); }
   for (const r of D.radio) if (r.pos) { xs.push(r.pos[0]); ys.push(r.pos[1]); }
+  for (const m of D.missions) { xs.push(m.aim[0]); ys.push(m.aim[1]); }
+  for (const s of D.shells) if (s.pos) { xs.push(s.pos[0]); ys.push(s.pos[1]); }
   if (!xs.length) Object.assign(whole, { cx: (D.world_size || 8192) / 2, cy: (D.world_size || 8192) / 2, half: 500 });
   else {
     const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
@@ -433,10 +438,31 @@ function label(ctx, size, text, x, y, colour, clear) {
   lines.forEach((line, i) => { const base = spot.top + 11 + i * 14; ctx.strokeText(line, spot.left, base); ctx.fillText(line, spot.left, base); });
 }
 
+function drawAims(ctx, p) {
+  ctx.strokeStyle = C.orange; ctx.lineWidth = 1.5;
+  for (const m of D.missions) {
+    if (m.t > now || now > m.until) continue;
+    const [x, y] = p.xy(m.aim[0], m.aim[1]);
+    ctx.beginPath(); ctx.arc(x, y, 6, 0, 7); ctx.moveTo(x - 9, y); ctx.lineTo(x + 9, y); ctx.moveTo(x, y - 9); ctx.lineTo(x, y + 9); ctx.stroke();
+  }
+}
+
+function drawShells(ctx, p) {
+  for (const s of D.shells) {
+    if (s.t > now || !s.pos) continue;
+    const [x, y] = p.xy(s.pos[0], s.pos[1]), fresh = now - s.t < 6;
+    ctx.globalAlpha = fresh ? .9 : .35;
+    ctx.fillStyle = s.smoke ? C.dim : C.orange;
+    ctx.beginPath(); ctx.arc(x, y, fresh ? 6 : 2.5, 0, 7); ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+}
+
 function drawTruth() {
   const { ctx, w } = fit($("truthMap")), p = projector(w);
   placed = [];
   ground(ctx, w, p); buildings(ctx, p);
+  drawAims(ctx, p); drawShells(ctx, p);
   for (const k of D.kills) {
     if (k.t > now || !k.victimPos) continue;
     const [x, y] = p.xy(k.victimPos[0], k.victimPos[1]), fresh = now - k.t < 12;
@@ -475,6 +501,7 @@ function drawBelief() {
   ground(ctx, w, p);
   const checked = new Map(); for (const r of D.radio) { if (r.t > now) break; if (r.checked) checked.set(r.checked, r.t); }
   buildings(ctx, p, id => checked.has(id));
+  drawAims(ctx, p);
   const seen = {};
   for (const r of D.radio) { if (r.t > now) break; if (r.pos) seen[r.from] = r; }
   const marks = [...markersAt(now).values()];
@@ -549,6 +576,7 @@ function drawTimeline() {
   };
   line("west", C.blue); line("east", C.red);
   ctx.fillStyle = C.red; for (const k of D.kills) ctx.fillRect(x(k.t) - 1, bottom - 5, 2, 5);
+  ctx.fillStyle = C.orange; for (const s of D.shells) ctx.fillRect(x(s.t) - 1, top, 2, 5);
   ctx.strokeStyle = C.text; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(x(now), 0); ctx.lineTo(x(now), h); ctx.stroke();
 }
 
@@ -577,8 +605,10 @@ function renderRows() {
   }).join("");
   const lost = D.score.friendly_lost + D.score.enemy_killed;
   $("deaths").innerHTML = D.kills.length ? D.kills.map(k => {
-    const by = k.killer && k.killer !== k.victim ? `killed by ${esc(k.killer)}${k.distance != null ? ` at ${Math.round(k.distance)} m` : ""}` : "died";
-    return `<button type="button" class="row" data-t="${k.t}"><span class="t">${fmt(k.t).slice(2)}</span><span class="text" style="color:${k.friendly ? "var(--blue)" : "var(--red)"}"><span class="who">${esc(k.victim || "Someone")}</span> <span class="meta">${by}</span></span></button>`;
+    const by = k.shell ? `killed by a shell${k.shell.gun ? ` from ${esc(k.shell.gun)}` : ""}${k.shell.order ? `, ${esc(k.shell.order)}` : ""}`
+      : k.killer && k.killer !== k.victim ? `killed by ${esc(k.killer)}${k.distance != null ? ` at ${Math.round(k.distance)} m` : ""}` : "died";
+    const verdict = k.verdict ? `<br><span class="meta"><b class="${k.verdict.kind === "bug" ? "gap" : ""}">${{ fog: "Fog of war", decision: "The commander's decision", bug: "A harness bug" }[k.verdict.kind]}.</b> ${esc(k.verdict.why)}</span>` : "";
+    return `<button type="button" class="row" data-t="${k.t}"><span class="t">${fmt(k.t).slice(2)}</span><span class="text" style="color:${k.friendly ? "var(--blue)" : "var(--red)"}"><span class="who">${esc(k.victim || "Someone")}</span> <span class="meta">${by}</span>${verdict}</span></button>`;
   }).join("") : `<p class="note">${lost ? `${lost} soldiers died, but this record has no list of who died or when. The right map still shows them going.` : "Nobody died."}</p>`;
   const logged = D.kills.filter(k => k.friendly).length, counted = D.score.friendly_lost;
   $("deathNote").hidden = !D.kills.length || logged === counted;
@@ -791,6 +821,7 @@ function renderBattle() {
   $("who").innerHTML = whoLong(D);
   $("record").textContent = `Record ${D.run || ""}${D.attempt ? `, attempt ${D.attempt}` : ""}.`;
   $("turnStats").textContent = D.turns.length ? `Each lasted ${(D.turns.reduce((sum, t) => sum + (t.duration || 0), 0) / D.turns.length).toFixed(1)} s on average.` : "";
+  for (const key of document.querySelectorAll(".fireKey")) key.style.display = D.shells.length || D.missions.length ? "" : "none";
   $("turnMode").textContent = D.mode === "hold" ? "Messages arriving during a turn waited until it ended." : D.mode === "deliver" ? "Messages also reached it during a turn." : "";
   $("timeline").setAttribute("aria-valuemin", 0); $("timeline").setAttribute("aria-valuemax", Math.round(duration));
   const clock = t => t == null ? "None" : fmt(t).slice(2), metres = m => m == null ? "None" : `${m} m`;
@@ -798,6 +829,7 @@ function renderBattle() {
     ["Friendlies lost", `${s.friendly_lost} of ${s.friendly_total}`], ["Enemy killed", `${s.enemy_killed} of ${s.enemy_total}`], ["Duration", clock(s.duration_s)],
     ["First contact", clock(s.first_contact_s)], ["Turns", s.turns], ["Orders", s.orders], ["Questions", s.questions], ["Enemy markers", s.enemy_markers],
     ["Marker error", metres(s.marker_error_m)], ["Position error", metres(s.position_error_m)],
+    ...(s.rounds_fired ? [["Rounds fired", s.rounds_fired], ["Killed by own guns", s.own_fire_deaths]] : []),
     ["Requests", c.model ? c.requests : "None"], ["Tokens written", c.model ? `${Math.round(c.output_tokens / 100) / 10}k` : "None"],
   ];
   $("score").innerHTML = facts.map(([name, value]) => `<div><dt>${esc(name)}</dt><dd>${esc(value)}</dd></div>`).join("");

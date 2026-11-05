@@ -92,6 +92,95 @@ def test_only_a_stations_own_position_goes_on_the_belief_map(text, grid):
     assert aar.reported_position(text) == grid
 
 
+@pytest.mark.parametrize("text", [
+    "Mk6 Mortar, nobody on it, grid 041 035. Listed as V5.",
+    "V1 is wrecked, grid 039 040.",
+    "Splash seen, grid 028 020, about 200 m east of us.",
+    "Copy, fire mission, 2 HE at grid 028 020.",
+])
+def test_grids_of_other_things_arent_where_the_sender_is(battle, text):
+    rows(battle / "radio.jsonl", {"t": 2, "from": "Alpha", "text": text, "kind": "report", "grid": None},
+         {"t": 3, "from": "Alpha", "text": "Holding at grid 040 041.", "kind": "report", "grid": "040 041"})
+    positions = [row["pos"] for row in aar.battle_data(battle)["radio"]]
+    assert positions == [None, [4050.0, 4150.0]]
+
+
+def shelled(battle, *groups, position=None, order="O-0009", victim_at=(4100, 4100), landed=(4105, 4100),
+            aim=(4110, 4100)):
+    """One friendly dead, 2 s after a friendly shell, with a mission fired at t=30."""
+    rows(battle.parent / "truth.jsonl", {"t": 30, "groups": list(groups)}, {"t": 50, "groups": list(groups)})
+    rows(battle.parent / "kills.jsonl",
+         {"t": 50, "victim": "Owen King", "side": "WEST", "victimPos": [*victim_at, 0], "killer": "x"})
+    rows(battle.parent / "shells.jsonl",
+         {"t": 48, "order": order, "gun": "V1", "side": "WEST", "ammo": "Sh_82mm_AMOS", "pos": list(landed),
+          "aim": list(aim)})
+    rows(battle / "fire_missions.jsonl",
+         {"id": "O-0009", "t": 30, "by": "Hammer", "aim": list(aim), "grid": "041 041", "ammo": "HE", "rounds": 2,
+          "positions": {"Alpha": position} if position else {}})
+    data = aar.battle_data(battle)
+    return data, data["kills"][0]
+
+
+def alpha(x, y):
+    return {"group": "Alpha", "side": "WEST", "alive": 8, "pos": [x, y], "units": [[x, y, 0]]}
+
+
+def test_shelling_a_position_it_was_told_about_is_the_commanders_decision(battle):
+    _, kill = shelled(battle, alpha(4100, 4100), position={"grid": "041 041", "t": 20})
+    assert kill["shell"] == {"gun": "V1", "order": "O-0009"} and kill["verdict"]["kind"] == "decision"
+    assert kill["verdict"]["why"] == "Alpha's last report, 10 s before firing, was 64 m from the aim."
+
+
+def test_shelling_a_station_that_moved_since_its_last_report_is_fog(battle):
+    _, kill = shelled(battle, alpha(4100, 4100), position={"grid": "030 030", "t": 5})
+    assert kill["verdict"]["kind"] == "fog" and "It had moved" in kill["verdict"]["why"]
+
+
+def test_shelling_a_station_that_never_reported_is_fog(battle):
+    _, kill = shelled(battle, alpha(4100, 4100))
+    assert kill["verdict"]["kind"] == "fog" and "hadn't reported" in kill["verdict"]["why"]
+
+
+def test_a_gun_firing_by_itself_is_a_bug(battle):
+    _, kill = shelled(battle, alpha(4100, 4100), order=None)
+    assert kill["verdict"]["kind"] == "bug" and "no order" in kill["verdict"]["why"]
+
+
+def test_a_report_the_commander_didnt_get_is_a_bug(battle):
+    rows(battle / "radio.jsonl", {"t": 25, "from": "Alpha", "text": "At grid 041 041.", "kind": "report",
+                                  "grid": "041 041"})
+    _, kill = shelled(battle, alpha(4100, 4100), position={"grid": "020 020", "t": 5})
+    assert kill["verdict"]["kind"] == "bug" and "wasn't the place" in kill["verdict"]["why"]
+
+
+def test_a_station_shelled_where_it_said_it_was_is_fog_too(battle):
+    _, kill = shelled(battle, alpha(3700, 3700), position={"grid": "037 037", "t": 25}, victim_at=(3700, 3700),
+                      landed=(3695, 3700))
+    assert kill["verdict"]["kind"] == "fog" and "was where it said" in kill["verdict"]["why"]
+
+
+def test_deaths_nowhere_near_a_shell_are_just_deaths(battle):
+    _, kill = shelled(battle, alpha(4100, 4100), landed=(4300, 4100))
+    assert "shell" not in kill and "verdict" not in kill
+
+
+def test_an_enemy_killed_by_a_shell_says_so_with_no_verdict(battle):
+    shelled(battle, alpha(4100, 4100))
+    rows(battle.parent / "kills.jsonl",
+         {"t": 50, "victim": "Habib", "side": "EAST", "victimPos": [4100, 4100, 0], "killer": "x"})
+    kill = aar.battle_data(battle)["kills"][0]
+    assert kill["shell"]["gun"] == "V1" and "verdict" not in kill
+
+
+def test_the_page_shows_missions_shells_and_a_score_for_them(battle):
+    data, _ = shelled(battle, alpha(4100, 4100), position={"grid": "041 041", "t": 20})
+    assert data["missions"][0]["aim"] == [4110, 4100] and data["missions"][0]["until"] == 63
+    assert data["shells"][0] == {"t": 48, "pos": [4105, 4100], "aim": [4110, 4100], "gun": "V1", "order": "O-0009",
+                                 "smoke": False, "friendly": True}
+    assert data["score"]["rounds_fired"] == 1 and data["score"]["own_fire_deaths"] == 1
+    assert aar.render(data).count("fireKey") >= 4
+
+
 def test_the_page_holds_this_battle_and_nothing_else(battle):
     data = aar.battle_data(battle)
     assert data["name"] == "Take the village" and data["attempt"] == 2 and data["enemy_total"] == 14

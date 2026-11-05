@@ -428,9 +428,9 @@ class Runtime:
     # -- radio ------------------------------------------------------------------------------------
 
     def _log_radio(self, sender: str, to: str, text: str, kind: str, precedence: str = reports.ROUTINE,
-                   t: float | None = None) -> dict:
+                   t: float | None = None, **extra) -> dict:
         row = {"id": self._id("R"), "t": round(self.rel(t), 1), "from": sender, "to": to, "text": text, "kind": kind,
-               "precedence": precedence}
+               "precedence": precedence, **extra}
         self.radio.append(row)
         self.records.append("radio", row)
         self.dirty = True
@@ -444,7 +444,7 @@ class Runtime:
             self.positions[callsign] = {"grid": grid, "t": t}
 
     def _say(self, callsign: str, text: str, precedence: str, grid: str | None, t: float) -> None:
-        self._log_radio(callsign, "HQ", text, "report", precedence, t)
+        self._log_radio(callsign, "HQ", text, "report", precedence, t, grid=grid)  # the sender's own, if it gave it
         self._heard(callsign, grid, t)
         self.wake.message(t)
 

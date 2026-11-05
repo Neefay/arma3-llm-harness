@@ -24,6 +24,10 @@ DATA_SLOT = "/*BATTLE_DATA*/"
 _POSITION = re.compile(r"(?:^|\bat |, )grid (\d{3} \d{3})", re.IGNORECASE)
 _CHECKED = re.compile(r"^(B\d+) checked\b")
 _TOOL = "mcp__commander__commander_"
+SHELL_KILL_M = 60  # a shell landing this close, just before a death, is what did it
+SHELL_KILL_S = 5
+DANGER_CLOSE_M = 150  # a commander firing this near a station's reported place knows what it's risking
+MOVED_M = 100
 _ACTIONS = {"order", "ask", "schedule", "unschedule", "mark", "unmark", "notes"}
 
 
@@ -60,6 +64,10 @@ def battle_data(folder: Path, commander: dict | None = None) -> dict:
     truth = records.read_truth()
     kills = [_kill(row, folder.name) for row in _until_clock_restarts(records.read_kills())
              if in_battle(row) and not _outside_battle(row, truth, wanted)]
+    shells = [_shell(row, folder.name) for row in _until_clock_restarts(records.read_shells()) if in_battle(row)]
+    missions = [row for row in records.read("fire_missions") if in_battle(row)]
+    for kill in kills:
+        _judge_kill(kill, shells, missions, frames, radio, set(stations), world_size)
     turns = _turns(records, state, commander)
     orders = [_order(row, info.get("buildings") or [], markers, world_size) for row in records.read("orders")]
     latest = [row["t"] for rows in (frames, radio, kills) for row in rows[-1:]] + [t["start"] for t in turns[-1:]]
@@ -73,6 +81,7 @@ def battle_data(folder: Path, commander: dict | None = None) -> dict:
         "buildings": info.get("buildings") or [], "stations": stations, "enemies": enemy_ids,
         "enemy_total": sum(enemy.get("units", 4) for enemy in enemies), "frames": frames, "kills": kills,
         "radio": radio, "turns": turns, "markers": markers, "orders": orders, "notes": records.notes(),
+        "shells": shells, "missions": [_mission(row, shells) for row in missions],
     }
     return {**data, "score": scorecard(data)}
 
@@ -94,6 +103,8 @@ def scorecard(data: dict) -> dict:
         "questions": sum(row.get("kind") == "question" for row in data["radio"]),
         "enemy_markers": len({row["id"] for row in data["markers"] if row.get("kind") == "enemy"}),
         "marker_error_m": _marker_error(data), "position_error_m": _position_error(data),
+        "rounds_fired": sum(shell["friendly"] for shell in data["shells"]),
+        "own_fire_deaths": sum(bool(kill.get("verdict")) for kill in data["kills"]),
     }
 
 
@@ -227,7 +238,8 @@ def _group(group: dict) -> dict:
 def _radio(row: dict, world_size: float) -> dict:
     out = {key: row.get(key) for key in ("t", "from", "to", "text", "kind", "precedence")}
     if row.get("from") != "HQ":
-        grid = reported_position(row.get("text", ""))
+        # Older battles didn't record it, and their reports had no grids of other things to confuse this with.
+        grid = row["grid"] if "grid" in row else reported_position(row.get("text", ""))
         out["pos"] = _world(grid, world_size)
         checked = _CHECKED.match(row.get("text", ""))
         if checked:
@@ -244,6 +256,88 @@ def _world(grid, world_size: float) -> list[float] | None:
 
 def _kill(row: dict, own_side: str) -> dict:
     return {**row, "friendly": str(row.get("side", "")).lower() == own_side.lower()}
+
+
+def _shell(row: dict, own_side: str) -> dict:
+    ammo = str(row.get("ammo", ""))
+    return {"t": row["t"], "pos": row.get("pos"), "aim": row.get("aim"), "gun": row.get("gun"),
+            "order": row.get("order"), "smoke": "smoke" in ammo.lower(),
+            "friendly": str(row.get("side", "")).lower() == own_side.lower()}
+
+
+def _mission(row: dict, shells: list[dict]) -> dict:
+    landed = [shell["t"] for shell in shells if shell["order"] == row["id"]]
+    return {"t": row["t"], "id": row["id"], "by": row.get("by"), "aim": row["aim"], "grid": row.get("grid"),
+            "ammo": row.get("ammo"), "rounds": row.get("rounds"), "observer": row.get("observer"),
+            "until": max(landed, default=row["t"] + 60) + 15}
+
+
+def _judge_kill(kill: dict, shells: list[dict], missions: list[dict], frames: list[dict], radio: list[dict],
+                stations: set[str], world_size: float) -> None:
+    """What killed this man, if it was a shell, and for a friendly killed by a friendly gun, whether the commander was
+    misled by the fog, chose it, or the harness let it down."""
+    place = (kill.get("victimPos") or [])[:2]
+    if not place:
+        return
+    close = [shell for shell in shells if not shell["smoke"] and shell.get("pos")
+             and 0 <= kill["t"] - shell["t"] <= SHELL_KILL_S and math.dist(shell["pos"], place) <= SHELL_KILL_M]
+    if not close:
+        return
+    shell = min(close, key=lambda s: math.dist(s["pos"], place))
+    kill["shell"] = {"gun": shell["gun"], "order": shell["order"]}
+    if kill["friendly"] and shell["friendly"]:
+        mission = next((row for row in missions if row["id"] == shell["order"]), None)
+        kill["verdict"] = _verdict(kill, shell, mission, frames, radio, stations, world_size)
+
+
+def _verdict(kill, shell, mission, frames, radio, stations, world_size) -> dict:
+    if mission is None:
+        return {"kind": "bug", "why": f"{shell['gun']} fired with no order. Its crew should never fire by itself."}
+    aim, fired = mission["aim"], mission["t"]
+    station = _station_at(kill["victimPos"][:2], _frame_at(frames, kill["t"]), stations)
+    if station is None:
+        return {"kind": "fog", "why": "He wasn't in a station the record can place."}
+    report = (mission.get("positions") or {}).get(station)
+    really = _where(station, _frame_at(frames, fired))
+    away = f"really {round(math.dist(really, aim))} m from the aim" if really else "somewhere the record doesn't show"
+    if report is None:
+        return {"kind": "fog", "why": f"{station} hadn't reported a position when this was fired. It was {away}."}
+    reported = _world(report["grid"], world_size)
+    said = next((row for row in reversed(radio) if row["t"] <= fired and row.get("from") == station and row.get("pos")),
+                None)
+    if said and reported and math.dist(said["pos"], reported) > MOVED_M:
+        return {"kind": "bug", "why": f"{station}'s last report on the radio wasn't the place the commander was given."}
+    age, gap = round(fired - report["t"]), round(math.dist(reported, aim))
+    if gap <= DANGER_CLOSE_M:
+        return {"kind": "decision", "why": f"{station}'s last report, {age} s before firing, was {gap} m from the aim."}
+    if really and math.dist(really, reported) > MOVED_M:
+        return {"kind": "fog", "why": f"{station}'s last report, {age} s before firing, was {gap} m from the aim. "
+                                      f"It had moved, and was {away}."}
+    miss = round(math.dist(shell["pos"], aim))
+    return {"kind": "fog", "why": f"{station} was where it said, {gap} m from the aim. This round fell {miss} m from "
+                                  "the aim, or it moved after the order."}
+
+
+def _frame_at(frames: list[dict], t: float) -> dict | None:
+    return next((frame for frame in reversed(frames) if frame["t"] <= t), frames[0] if frames else None)
+
+
+def _where(station: str, frame: dict | None) -> list[float] | None:
+    for group in (frame or {}).get("groups", []):
+        if group["group"] == station and group["pos"]:
+            return group["pos"][:2]
+    return None
+
+
+def _station_at(place: list[float], frame: dict | None, stations: set[str]) -> str | None:
+    best, nearest = None, math.inf
+    for group in (frame or {}).get("groups", []):
+        if group["group"] in stations:
+            for unit in group["units"]:
+                metres = math.dist(unit[:2], place)
+                if metres < nearest:
+                    best, nearest = group["group"], metres
+    return best
 
 
 def _markers(records: Records, scenario: dict, world_size: float) -> list[dict]:

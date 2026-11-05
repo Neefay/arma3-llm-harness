@@ -456,13 +456,13 @@ def play_fire(client: Client) -> list[str]:
     _man disableAI "ALL";
     _man allowDamage false;
     [_man] spawn {
-    	params ["_man"];
-    	while {
-    		alive _man
-    	} do {
-    		(brmh_cmd_stations get "Recon") reveal [_man, 4];
-    		sleep 2;
-    	};
+        params ["_man"];
+        while {
+            alive _man
+        } do {
+            (brmh_cmd_stations get "Recon") reveal [_man, 4];
+            sleep 2;
+        };
     };
     true
     """)
