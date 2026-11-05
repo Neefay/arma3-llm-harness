@@ -89,7 +89,9 @@ def _grid_centre(grid: str) -> list[float]:
 def _marker(draw, marker: dict, xy, font) -> None:
     colour = _COLOURS.get(marker["kind"], _INK)
     at = marker["at"]
-    label = " ".join(str(part) for part in (marker["id"], marker.get("label"), marker.get("confidence")) if part)
+    pinned = f"in {marker['building']}" if marker.get("building") else ""
+    parts = (marker["id"], pinned, marker.get("label"), marker.get("confidence"))
+    label = " ".join(str(part) for part in parts if part)
     if isinstance(at, list):
         points = [xy(*_grid_centre(grid)) for grid in at]
         if marker["kind"] == "area":
@@ -97,7 +99,7 @@ def _marker(draw, marker: dict, xy, font) -> None:
         draw.line(points, fill=colour, width=3)
         draw.text(points[0], label, fill=colour, font=font, anchor="ld", stroke_width=2, stroke_fill=_PAPER)
         return
-    x, y = xy(*_grid_centre(at))
+    x, y = xy(*(marker.get("pos") or _grid_centre(at)))
     if marker["kind"] == "enemy" or marker["kind"] == "danger":
         draw.polygon([(x, y - 11), (x + 11, y), (x, y + 11), (x - 11, y)], outline=colour, width=3)
     elif marker["kind"] == "objective":

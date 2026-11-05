@@ -116,6 +116,17 @@ def test_orders_and_markers_resolve_to_places(battle):
     assert line["points"] == [[4050.0, 4050.0], [4250.0, 4050.0]]
 
 
+def test_a_pinned_marker_keeps_its_exact_place_in_the_review(battle):
+    rows(battle / "markers.jsonl", {"id": "E2", "kind": "enemy", "at": "040 042", "building": "B1",
+                                    "pos": [4000, 4210], "t": 40})
+    rows(battle / "orders.jsonl", {"id": "O-0001", "t": 41, "request": {"to": "Alpha", "legs": [{"type": "CLEAR",
+                                                                                               "at": "E2"}]}})
+    data = aar.battle_data(battle)
+    marker = next(row for row in data["markers"] if row["id"] == "E2")
+    assert marker["pos"] == [4000, 4210] and marker["building"] == "B1"
+    assert data["orders"][0]["target"] == [4000, 4210]
+
+
 def test_kills_know_which_side_they_hurt(battle):
     assert [kill["friendly"] for kill in aar.battle_data(battle)["kills"]] == [True, False]
 

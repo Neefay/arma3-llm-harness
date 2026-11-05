@@ -301,7 +301,7 @@ function drawBelief() {
   for (const m of markersAt(now).values()) {
     const colour = MARKER[m.kind] || C.text, age = m.t == null ? 0 : now - m.t;
     ctx.globalAlpha = ["enemy", "danger", "hypothesis"].includes(m.kind) ? Math.max(.55, 1 - age / 600) : 1;
-    const text = [m.id, m.label, m.confidence].filter(Boolean).join(" ");
+    const text = [m.id, m.building && `in ${m.building}`, m.label, m.confidence].filter(Boolean).join(" ");
     if (m.points) {
       const pts = m.points.map(q => p.xy(q[0], q[1]));
       ctx.strokeStyle = colour; ctx.lineWidth = 2; ctx.beginPath(); pts.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y));

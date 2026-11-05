@@ -285,7 +285,7 @@ class Runtime:
     def _mirror(self, marker: dict, removed: bool = False) -> None:
         if self.scenario.spectator:
             at = marker["at"] if isinstance(marker["at"], list) else [marker["at"]]
-            points = [parse_grid(grid, self.world_size)[0] for grid in at]
+            points = [marker["pos"]] if marker.get("pos") else [parse_grid(grid, self.world_size)[0] for grid in at]
             self._game_exec(MIRROR_CODE, [marker["id"], marker["kind"], points, marker.get("label", ""),
                                           marker.get("confidence", ""), removed])
 
@@ -404,6 +404,8 @@ class Runtime:
     def _marker_line(self, marker: dict) -> str:
         at = marker["at"]
         place = f"grids {'; '.join(at)}" if isinstance(at, list) else f"grid {at}"
+        if marker.get("building"):
+            place = f"in {marker['building']}, {place}"
         parts = [f"{marker['id']}  {marker['kind']} {marker.get('label', '')}".rstrip(), place]
         if marker.get("confidence"):
             parts.append(marker["confidence"])
@@ -455,7 +457,8 @@ class Runtime:
                 "time": format_time(self.rel()), "mission": self.scenario.text,
                 "time_limit": format_time(self.scenario.time_limit_s),
                 "roster": self.roster()["stations"],
-                "markers": [{"id": m["id"], "kind": m["kind"], "label": m.get("label"), "at": m["at"]}
+                "markers": [{"id": m["id"], "kind": m["kind"], "label": m.get("label"), "at": m["at"],
+                             **({"building": m["building"]} if m.get("building") else {})}
                             for m in self.markers.values()],
                 "buildings": [{"id": b["id"], "type": b["name"], "grid": b["at"], "positions": b["positions"]}
                               for b in self.buildings],
@@ -649,8 +652,9 @@ class Runtime:
                 raise Invalid(f"{marker_id} is a building's id. Choose another for this marker.")
             existing = self.markers.get(marker_id, {})
             if not existing and not args.get("at"):
-                raise Invalid("A new marker needs at: a grid, or a list of grids for a line or area.")
-            at = _marker_place(args["at"], self.world_size) if args.get("at") else existing["at"]
+                raise Invalid("A new marker needs at: a grid or building id, or a list of them for a line or area.")
+            place = self._marker_place(args["at"]) if args.get("at") else {
+                key: existing[key] for key in ("at", "building", "pos") if key in existing}
             kind = str(args.get("kind") or existing.get("kind") or "note").lower()
             if kind not in MARKER_KINDS:
                 raise Invalid(f"Bad kind {kind!r}: use one of {', '.join(sorted(MARKER_KINDS))}.")
@@ -658,7 +662,7 @@ class Runtime:
             if confidence and confidence not in MARKER_CONFIDENCE:
                 raise Invalid(f"Bad confidence {confidence!r}: use low, medium or high.")
             expires = parse_time(args["expires"]) if args.get("expires") else existing.get("expires")
-            marker = {"id": marker_id or self._id("M"), "kind": kind, "at": at,
+            marker = {"id": marker_id or self._id("M"), "kind": kind, **place,
                       "label": args.get("label", existing.get("label", "")), "confidence": confidence,
                       "sources": args.get("sources", existing.get("sources", [])), "expires": expires,
                       "t": round(self.rel(), 1)}
@@ -668,6 +672,27 @@ class Runtime:
             self._used()
             self.save()
             return {"id": marker["id"], "time_now": format_time(self.rel())}
+
+    def _marker_place(self, at) -> dict:
+        """A grid or a building id, or a list of them for a line or area. On a building, a marker is pinned to its
+        exact position, which a grid can't give."""
+        known = {building["id"]: building for building in self.buildings}
+        if isinstance(at, list):
+            if len(at) < 2:
+                raise Invalid("A line or area needs at least 2 grids.")
+            return {"at": [self._spoken_grid(item, known) for item in at]}
+        if isinstance(at, str) and at.strip() in known:
+            building = known[at.strip()]
+            return {"at": building["at"], "building": building["id"], "pos": list(building["pos"])}
+        return {"at": self._spoken_grid(at, known)}
+
+    def _spoken_grid(self, at, known: dict[str, dict]) -> str:
+        name = str(at).strip()
+        if name in known:
+            return known[name]["at"]
+        if re.fullmatch(r"B\d+", name):
+            raise Invalid(f"There's no building {name}. Your buildings are listed in commander_mission.")
+        return parse_grid(at, self.world_size)[1]
 
     def unmark(self, marker_id: str) -> dict:
         with self.lock:
@@ -743,15 +768,6 @@ class Runtime:
 
 def _clock(seconds: float) -> str:
     return f"{int(seconds) // 60}:{int(seconds) % 60:02d}"
-
-
-def _marker_place(at, world_size: float):
-    """A grid in its spoken form, or a list of them for a line or area."""
-    if isinstance(at, list):
-        if len(at) < 2:
-            raise Invalid("A line or area needs at least 2 grids.")
-        return [parse_grid(grid, world_size)[1] for grid in at]
-    return parse_grid(at, world_size)[1]
 
 
 def _schedule_words(kind: str, what) -> str:

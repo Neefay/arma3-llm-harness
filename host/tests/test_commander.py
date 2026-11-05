@@ -826,6 +826,74 @@ def with_buildings(tmp_path) -> Battle:
     return b
 
 
+def test_a_marker_can_be_pinned_to_a_building(tmp_path):
+    b = with_buildings(tmp_path)
+    b.start()
+    b.runtime.mark({"id": "E1", "kind": "enemy", "at": "B3", "label": "Sniper", "confidence": "high"})
+    marker = b.runtime.markers["E1"]
+    assert marker["building"] == "B3" and marker["at"] == "039 039" and marker["pos"] == [3900.0, 3900.0]
+    assert "E1  enemy Sniper  in B3, grid 039 039  high" in b.runtime.briefing()
+    assert b.records.read("markers")[-1]["building"] == "B3"  # the review needs it too
+
+
+def test_orders_naming_a_pinned_marker_mean_that_building(tmp_path):
+    b = with_buildings(tmp_path)
+    b.start()
+    b.runtime.mark({"id": "E1", "kind": "enemy", "at": "B1"})
+    b.runtime.mark({"id": "N1", "at": "034 030"})  # same square, not pinned
+    known = b.runtime.buildings
+
+    def order(at, kind="CLEAR"):
+        return orders.validate({"to": "Alpha", "legs": [{"type": kind, "at": at}]}, b.scenario.stations,
+                               b.runtime.markers, 8192, known)["route"]["legs"][0]
+
+    assert order("E1")["ids"] == ["B1"]
+    assert order(["E1", "B2"])["ids"] == ["B1", "B2"]
+    assert order("N1")["ids"] == ["B1", "B2"]  # a plain marker still clears around itself
+    assert order("E1", "OCCUPY")["building"] == "B1"
+    assert order("E1", "CORDON")["building"] == "B1"
+    assert order("E1", "MOVE")["pos"] == [3460.0, 3060.0]  # the building's place, not the middle of its grid square
+    with pytest.raises(Invalid, match="OCCUPY needs a building"):
+        order("N1", "OCCUPY")
+
+
+def test_updating_a_pinned_marker_keeps_the_pin_until_it_moves(tmp_path):
+    b = with_buildings(tmp_path)
+    b.start()
+    b.runtime.mark({"id": "E1", "kind": "enemy", "at": "B3"})
+    b.runtime.mark({"id": "E1", "confidence": "low"})
+    assert b.runtime.markers["E1"]["building"] == "B3" and b.runtime.markers["E1"]["kind"] == "enemy"
+    b.runtime.mark({"id": "E1", "at": "040 040"})
+    assert "building" not in b.runtime.markers["E1"] and "pos" not in b.runtime.markers["E1"]
+    assert b.runtime.markers["E1"]["at"] == "040 040"
+
+
+def test_marking_a_building_that_doesnt_exist_says_so(tmp_path):
+    b = with_buildings(tmp_path)
+    b.start()
+    with pytest.raises(Invalid, match="no building B9"):
+        b.runtime.mark({"at": "B9"})
+    with pytest.raises(Invalid, match="no building B9"):
+        b.runtime.mark({"at": ["B1", "B9"]})
+
+
+def test_a_line_can_run_between_buildings(tmp_path):
+    b = with_buildings(tmp_path)
+    b.start()
+    b.runtime.mark({"id": "L1", "kind": "phase_line", "at": ["B1", "039 039"]})
+    assert b.runtime.markers["L1"]["at"] == ["034 030", "039 039"] and "building" not in b.runtime.markers["L1"]
+
+
+def test_the_map_draws_a_pinned_marker_on_its_building(tmp_path):
+    b = with_buildings(tmp_path)
+    b.scenario.spectator = True
+    b.start()
+    b.runtime.mark({"id": "E1", "kind": "enemy", "at": "B1", "label": "Sniper"})
+    assert b.runtime.map_image(center="E1", radius=100)["png"].startswith(b"\x89PNG")
+    mirrored = [args for code, args in b.game.calls if args and args[0] == "E1"]
+    assert mirrored[-1][2] == [[3460.0, 3060.0]]  # the in-game map shows it on the building too
+
+
 def test_buildings_appear_in_the_brief_and_checked_ones_are_remembered(tmp_path):
     b = with_buildings(tmp_path)
     brief = b.start()

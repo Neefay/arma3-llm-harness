@@ -81,7 +81,8 @@ TOOLS = [
      "orders can use a marker id instead of a grid.", "inputSchema": {"type": "object", "properties": {
         "id": _STRING, "kind": {"type": "string", "description": "enemy, friendly, objective, phase_line, area, "
                                                                  "danger, hypothesis or note"},
-        "at": {"description": "A grid such as '034 030', or a list of grids for a line or area"}, "label": _STRING,
+        "at": {"description": "A grid such as '034 030', a building id such as 'B3' to pin the marker to that "
+                              "building, or a list of grids or building ids for a line or area"}, "label": _STRING,
         "confidence": {"type": "string", "description": "low, medium or high"},
         "sources": {"type": "array", "items": _STRING, "description": "Radio message ids behind this belief"},
         "expires": {"type": "string", "description": "Flag it as stale after this time, such as T+25:00"},

@@ -671,7 +671,7 @@ The briefing rebuilds the commander's picture every turn, so it survives context
 commander_mark(
     id="E1",                         # omit to create, reuse to update
     kind="enemy",                    # enemy | friendly | objective | phase_line | area | danger | hypothesis | note
-    at="056 195",                    # a point, or a list of grids for lines and areas
+    at="056 195",                    # a grid, a building id ("B3"), or a list of them for lines and areas
     label="Infantry, about 4",
     confidence="medium",             # low | medium | high
     sources=["R-0088", "R-0092"],    # radio message ids, optional
@@ -679,6 +679,8 @@ commander_mark(
 )
 ```
 
+- **Markers can be pinned to buildings.** With `at="B3"`, the marker sits at that building's exact position, not the centre of a 100 m square. The briefing says `E1  enemy Sniper  in B3, grid 040 041`. An order naming it means that building: `CLEAR at E1` checks only B3, and `OCCUPY` and `CORDON` work the same way. This reveals nothing new, because the commander already has the building list. Giving a grid later unpins it. In a line or area, a building id just stands for its grid.
+- **Only buildings can be pinned.** Enterable buildings are the only objects the commander is told about. Other objects would first need a way into its knowledge.
 - **Age is automatic.** Every update is timestamped, and the briefing shows each marker's age so old information looks old.
 - **History is retained.** A marker's earlier positions and confidence stay in the record, available for the belief-versus-truth replay.
 - **Sources expose bad corroboration.** If two markers rest on the same report, the commander or a reviewer can see that they aren't independent.

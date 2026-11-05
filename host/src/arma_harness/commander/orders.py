@@ -130,6 +130,17 @@ def validate(request: dict, stations: dict[str, dict], markers: dict[str, dict],
             "route": {"kind": "route", "legs": route_legs}}
 
 
+def _building_of(at, places: dict[str, dict], known: dict[str, dict]) -> str | None:
+    """The building a place means: its own id, or a marker pinned to it."""
+    if not isinstance(at, str):
+        return None
+    name = at.strip()
+    if name in known:
+        return name
+    pinned = places.get(name, {}).get("building")
+    return pinned if pinned in known else None
+
+
 def _single_leg(to, leg, kind, posture, places, world_size, known) -> dict:
     """Orders that aren't a route of waypoints: buildings, cordons and CBA tasks."""
     at = leg.get("at")
@@ -138,10 +149,10 @@ def _single_leg(to, leg, kind, posture, places, world_size, known) -> dict:
         raise Invalid(f"{kind} covers at most {MAX_RADIUS_M} metres.")
     if kind == "CLEAR":
         return _clear(to, at, radius, posture, places, world_size, known)
-    if kind == "OCCUPY" and (not isinstance(at, str) or at.strip() not in known):
+    building = _building_of(at, places, known)
+    if kind == "OCCUPY" and not building:
         raise Invalid("OCCUPY needs a building id, such as B3. Your buildings are listed in commander_mission.")
     pos, grid = _place(at, places, world_size)
-    building = at.strip() if isinstance(at, str) and at.strip() in known else None
     return {"to": to, "mode": "replace", "engine_legs": [[kind, pos, radius, 0, 0]], "posture": posture,
             "route": {"kind": "route", "legs": [{"type": kind, "pos": pos, "grid": grid, "completion": 0,
                                                  "radius": radius, "building": building}]}}
@@ -150,13 +161,13 @@ def _single_leg(to, leg, kind, posture, places, world_size, known) -> dict:
 def _clear(to, at, radius, posture, places, world_size, known) -> dict:
     """Clearing always works from numbered buildings, so reports can say which ones have been checked."""
     if isinstance(at, list):
-        unknown = [item for item in at if item not in known]
+        unknown = [item for item in at if not _building_of(item, places, known)]
         if unknown or not at:
             raise Invalid(f"CLEAR with a list needs building ids, and these aren't: {unknown}.")
-        chosen = [known[item] for item in at]
+        chosen = [known[_building_of(item, places, known)] for item in at]
         pos, grid = list(chosen[0]["pos"]), chosen[0]["at"]
-    elif isinstance(at, str) and at.strip() in known:
-        chosen = [known[at.strip()]]
+    elif _building_of(at, places, known):
+        chosen = [known[_building_of(at, places, known)]]
         pos, grid = list(chosen[0]["pos"]), chosen[0]["at"]
     else:
         pos, grid = _place(at, places, world_size)

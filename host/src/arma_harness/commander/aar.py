@@ -234,7 +234,7 @@ def _markers(records: Records, scenario: dict, world_size: float) -> list[dict]:
         if isinstance(at, list):
             row["points"] = [point for point in (_world(grid, world_size) for grid in at) if point]
         elif at:
-            row["pos"] = _world(at, world_size)
+            row["pos"] = row.get("pos") or _world(at, world_size)
     return rows
 
 
