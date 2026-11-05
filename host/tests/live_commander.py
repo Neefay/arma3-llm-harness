@@ -304,7 +304,8 @@ def play_village(client: Client) -> list[str]:
 def run(name: str, scenario: str, mode: str | None, play, watch: bool = False) -> None:
     print(f"\n========== {name} ==========", flush=True)
     harness = Harness()
-    started = operator.start(scenario, mode, harness, watch=watch)
+    # LIVE_NO_WATCH=1: nobody's watching, so don't open a game window.
+    started = operator.start(scenario, mode, harness, watch=watch and not os.environ.get("LIVE_NO_WATCH"))
     print(json.dumps({k: v for k, v in started.items() if k != "launch"}), flush=True)
     client = Client()
     try:

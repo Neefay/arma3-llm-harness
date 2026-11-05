@@ -31,7 +31,7 @@ stations:
     units: 3
     class: B_recon_F
 enemies:
-  - { id: East Garrison, at: "041 041", units: 8, mode: garrison, radius: 130 }
+  - { id: East Garrison, at: "041 041", units: 8, mode: garrison, radius: 110 }
   - { id: East Patrol, at: "042 039", units: 6, mode: patrol, radius: 150 }
 markers:
   - { id: O1, kind: objective, label: The village, at: "041 041" }

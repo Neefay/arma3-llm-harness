@@ -31,6 +31,17 @@ class Records:
             return []
         return [json.loads(line) for line in self.truth_file.read_text(encoding="utf-8").splitlines() if line.strip()]
 
+    def kill(self, row: dict) -> None:
+        with (self.truth_file.parent / "kills.jsonl").open("a", encoding="utf-8") as f:
+            f.write(json.dumps(row, ensure_ascii=False) + "
+")
+
+    def read_kills(self) -> list[dict]:
+        file = self.truth_file.parent / "kills.jsonl"
+        if not file.exists():
+            return []
+        return [json.loads(line) for line in file.read_text(encoding="utf-8").splitlines() if line.strip()]
+
     def notes(self) -> str:
         file = self.folder / "notes.md"
         return file.read_text(encoding="utf-8") if file.exists() else ""

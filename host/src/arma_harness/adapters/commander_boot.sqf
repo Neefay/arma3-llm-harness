@@ -144,6 +144,10 @@ brmh_cmd_fnc_truth = {
 				[]
 			} else {
 				(getPosATL (_alive # 0)) select [0, 2]
+			}],
+			["units", _alive apply {
+				private _position = getPosATL _x;
+				[round (_position # 0), round (_position # 1), round (_position # 2)]
 			}]
 		]
 	};
@@ -277,6 +281,7 @@ brmh_cmd_fnc_startTask = {
 	params ["_group", "_type", "_at", "_radius"];
 	private _centre = _at + [0];
 	_group setVariable ["brmh_cmd_task", true];
+	_group setVariable ["brmh_cmd_releaseUntil", 0];
 	switch (_type) do {
 		case "ATTACK": {
 			[_group, _centre, _radius, true] call CBA_fnc_taskAttack;
@@ -316,6 +321,11 @@ brmh_cmd_fnc_step = {
 		};
 		if ((_y getVariable ["brmh_cmd_placed", -1]) isEqualTo 0) then {
 			[_y] call brmh_cmd_fnc_stepPlacing;
+		};
+		if (time < (_y getVariable ["brmh_cmd_releaseUntil", 0])) then {
+			{
+				_x enableAI "PATH";
+			} forEach units _y;
 		};
 	} forEach brmh_cmd_stations;
 	{
@@ -412,13 +422,16 @@ brmh_cmd_fnc_order = {
 		_group setVariable ["brmh_cmd_clearLeft", -1];
 		_group setVariable ["brmh_cmd_cleared", []];
 		_group setVariable ["brmh_cmd_placed", -1];
-		// DEFEND disables pathing and ATTACK leaves a group crawling in COMBAT. Spike-tested: without this, they ignore new orders.
 		{
 			_x enableAI "PATH";
 		} forEach units _group;
 		if (_group getVariable ["brmh_cmd_task", false]) then {
 			_group setVariable ["brmh_cmd_task", false];
+			// ATTACK leaves a group crawling in COMBAT, and DEFEND at LIMITED speed. Both tested on a real game.
 			_group setBehaviour "AWARE";
+			_group setSpeedMode "NORMAL";
+			// DEFEND's scripts keep running, and disable each soldier's pathing as he reaches his post. See the monitor step.
+			_group setVariable ["brmh_cmd_releaseUntil", time + 150];
 		};
 	};
 	if ((_legs findIf {

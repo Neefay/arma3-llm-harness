@@ -94,6 +94,10 @@ def start(path: str, mode: str | None = None, harness: Harness | None = None, wa
     attempt = _next_attempt(h.home, state.run_id)
     records_folder = h.home.runs / state.run_id / f"commander-{attempt}" / scenario.side
     records_folder.mkdir(parents=True, exist_ok=True)
+    # What the battle was, kept with its records so a replay still works after later battles have replaced current.json.
+    (records_folder.parent / "battle.json").write_text(json.dumps(
+        {"scenario": raw, "buildings": buildings, "world_size": world_size, "run": state.run_id, "attempt": attempt},
+        indent=2), encoding="utf-8")
     current = {"run": state.run_id, "attempt": attempt, "folder": str(records_folder), "scenario": raw,
                "world_size": world_size, "buildings": buildings}
     _current_file(h.home).write_text(json.dumps(current, indent=2), encoding="utf-8")

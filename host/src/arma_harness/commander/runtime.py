@@ -1,7 +1,7 @@
 """The running commander: turns game events into radio traffic and wakes, and carries out its tool calls.
 
-Only three event types are ever read from the game: cmd_tick, cmd_report and cmd_truth. Truth goes straight
-to a file. Tool results reveal nothing about what happened to a unit: consequences arrive by radio, or don't.
+Only four event types are ever read from the game: cmd_tick, cmd_report, cmd_truth and killed. Truth and kills go
+straight to files for review. Tool results reveal nothing about what happened to a unit: consequences arrive by radio, or don't.
 """
 from __future__ import annotations
 
@@ -142,6 +142,9 @@ class Runtime:
         if event.get("k") != "evt":
             return
         kind = event.get("type")
+        if kind == "killed":
+            self._kill(event)
+            return
         if kind not in ("cmd_tick", "cmd_report", "cmd_truth"):
             return
         self.mission_t, self.seen_at = float(event.get("t", 0)), self.wall()
@@ -181,6 +184,14 @@ class Runtime:
         self.records.truth({"t": round(self.rel(float(event.get("t", 0))), 1), "groups": event.get("groups")})
         if not self.ended:
             self._judge(event.get("groups") or [])
+
+    def _kill(self, event: dict) -> None:
+        """For the after-action review only. It's written to its own file, and nothing the commander sees reads it."""
+        if self.t0 is None:
+            return
+        self.records.kill({"t": round(self.rel(float(event.get("t", 0))), 1),
+                           **{key: event.get(key) for key in ("victim", "side", "victimPos", "killer", "killerSide",
+                                                              "weapon", "distance")}})
 
     def _judge(self, groups: list[dict]) -> None:
         """The harness alone decides how a battle ends. The commander only hears the result."""
