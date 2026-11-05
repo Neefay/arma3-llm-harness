@@ -14,6 +14,7 @@ from importlib import resources
 from pathlib import Path
 
 from ..config import Home
+from .operator import judge_lockdown, tools_received
 from .orders import Invalid, parse_grid
 from .records import Records
 from .runtime import RECORD_AFTER_END_S
@@ -79,7 +80,7 @@ def scorecard(data: dict) -> dict:
     left = {group["group"]: group["alive"] for group in frames[-1]["groups"]} if frames else {}
     friendly_total = sum(station["units"] for station in data["stations"].values())
     return {
-        "ended": data["ended"] or "Didn't finish", "duration_s": round(data["duration"]),
+        "ended": data["ended"] or "Didn't finish", "duration_s": round(data["ended_at"] or data["duration"]),
         "friendly_lost": friendly_total - sum(left.get(name, 0) for name in data["stations"]),
         "friendly_total": friendly_total,
         "enemy_killed": data["enemy_total"] - sum(left.get(name, 0) for name in data["enemies"]),
@@ -302,9 +303,9 @@ def _read_session(file: Path, window: tuple[float, float]) -> dict | None:
     turns: dict[int, dict] = {}
     model, requests, output_tokens, peak_context, tool_calls = None, set(), 0, 0, 0
     turn, typed_before, answering_person = 1, False, False
-    for line in file.read_text(encoding="utf-8").splitlines():
-        row = _json(line)
-        if not row or not _in_window(row.get("timestamp"), window):
+    rows = [row for row in map(_json, file.read_text(encoding="utf-8").splitlines()) if row]
+    for row in rows:
+        if not _in_window(row.get("timestamp"), window):
             continue
         kind = row.get("type")
         if kind == "attachment" and (row.get("attachment") or {}).get("type") == "model":
@@ -340,7 +341,9 @@ def _read_session(file: Path, window: tuple[float, float]) -> dict | None:
     if not tool_calls:
         return None
     return {"model": model, "requests": len(requests), "output_tokens": output_tokens, "peak_context": peak_context,
-            "tool_calls": tool_calls, "turns": turns}
+            "tool_calls": tool_calls, "turns": turns,
+            # What this session was really offered. A one-shot lockdown check can see fewer tools than this one did.
+            "tools_outside_lockdown": judge_lockdown(tools_received(rows)).get("unexpected", [])}
 
 
 def _json(line: str) -> dict | None:
@@ -386,4 +389,5 @@ def write(folder: Path, out: Path | None = None, projects: Path | None = None) -
     out = out or folder.parent / "review.html"
     out.write_text(render(data), encoding="utf-8")
     return {"review": str(out), "battle": data["name"], "run": data["run"], "attempt": data["attempt"],
-            "ended": data["ended"], "commander": data["commander"].get("model") or "no model session found"}
+            "ended": data["ended"], "commander": data["commander"].get("model") or "no model session found",
+            "tools_outside_lockdown": data["commander"].get("tools_outside_lockdown", [])}

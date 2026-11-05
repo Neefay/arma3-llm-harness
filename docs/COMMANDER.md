@@ -1,6 +1,6 @@
 # Commander Mode: design
 
-**Status:** the [A to B proof of concept](#141-proof-of-concept-one-subordinate-a-to-b) and a [combat scenario](#142-take-the-village) are built. Real commanders have run A to B on Claude Opus 5.5 and a killed group on Claude Haiku 5.5, both in `hold` mode. So far, only a scripted stand-in has fought the combat scenario, so no LLM has commanded a battle yet. Section 12 marks which tools exist. The rest of this document is still the design. Updated 2026-11-05.
+**Status:** the [A to B proof of concept](#141-proof-of-concept-one-subordinate-a-to-b) and a [combat scenario](#142-take-the-village) are built. Real commanders have run A to B on Claude Opus 5.5 and a killed group on Claude Haiku 5.5, both in `hold` mode. Haiku has also won the [combat scenario](#142-take-the-village) once, in `hold` mode. Section 12 marks which tools exist. The rest of this document is still the design. Updated 2026-11-05.
 
 **Audience:** developers and agents building or reviewing this feature. Read [ARCHITECTURE.md](ARCHITECTURE.md) first for how the harness itself works.
 
@@ -680,7 +680,7 @@ commander_mark(
 ```
 
 - **Markers can be pinned to buildings.** With `at="B3"`, the marker sits at that building's exact position, not the centre of a 100 m square. The briefing says `E1  enemy Sniper  in B3, grid 040 041`. An order naming it means that building: `CLEAR at E1` checks only B3, and `OCCUPY` and `CORDON` work the same way. This reveals nothing new, because the commander already has the building list. Giving a grid later unpins it. In a line or area, a building id just stands for its grid.
-- **Only buildings can be pinned.** Enterable buildings are the only objects the commander is told about. Other objects would first need a way into its knowledge.
+- **Only buildings can be pinned.** Enterable buildings are the only objects the commander is told about, and marking other objects was considered and dropped.
 - **Age is automatic.** Every update is timestamped, and the briefing shows each marker's age so old information looks old.
 - **History is retained.** A marker's earlier positions and confidence stay in the record, available for the belief-versus-truth replay.
 - **Sources expose bad corroboration.** If two markers rest on the same report, the commander or a reviewer can see that they aren't independent.
@@ -734,7 +734,9 @@ The fog is only worth having if the commander can't get around it, even by accid
 - **Separate MCP server.** `mcp_server.py` registers every tool at import, so a mode flag would leave `arma_exec`, `arma_view` and `arma_snapshot` visible. The commander server has its own module and script entry, and doesn't import that module.
 - **Locked-down client.** The agent could otherwise use the shell (`arma-harness.exe exec`) or read `state.json`, RPTs and `audit.jsonl`. So the commander runs from a generated folder with its own MCP config and a long deny list, and the server delivers its doctrine. `setup-agents` needs a separate commander profile for this.
 
-**How to check it.** Asking the commander to break the rules proves little, because a well-behaved model simply declines. `arma-harness commander check-lockdown` starts a real one-shot session in the workspace, using one small model call, then reads the tool list the client really sent from the session transcript's `api-request-shape` and `deferred_tools_delta` rows. It fails on anything unexpected, on a missing commander tool, and if it can't read the transcript. On Claude Code 2.1.318, the session received only `ToolSearch`, `advisor` and the `commander_*` tools. Deny rules remove a tool from the list altogether. `advisor` stayed despite an `Advisor` rule. It can't reach game data, though it does add cost.
+**How to check it.** Asking the commander to break the rules proves little, because a well-behaved model simply declines. `arma-harness commander check-lockdown` starts a real one-shot session in the workspace, using one small model call, then reads the tool list the client really sent from the session transcript's `api-request-shape` and `deferred_tools_delta` rows. It fails on anything unexpected, on a missing commander tool, and if it can't read the transcript. On Claude Code 2.1.318, the session received only `ToolSearch`, `advisor` and the `commander_*` tools. Deny rules remove a tool from the list altogether. `advisor` can't be removed this way, because the old `Advisor` rule matched nothing. It can't reach game data, though it would add cost if called.
+
+That check runs a one-shot session, and an interactive session can be offered more. Haiku's battle session also had `SendFeedback`, which the one-shot check never saw. Haiku used it once to draft a bug report. It can't read game data, and its result says the draft stays local until a person sends it with `/feedback`, so the fog held. It's now denied. So `arma-harness commander review` also checks the tool list of the session that really fought, and names anything outside the lockdown at the top of the page.
 
 The first version of the deny list named only the obvious tools, and that check found `SendMessage`, `ListAgents`, `Workflow`, `RemoteTrigger`, cron tools, `Artifact` and claude.ai connectors still available. `SendMessage` could have asked another local session what was really happening. The list has to name tools one by one, so a new client version, plugin or connector can widen it silently. So rerun the check after each one. The check also runs without the channel flag, so an interactive session's list hasn't been read directly.
 
@@ -827,6 +829,17 @@ The enemy stays as it is for now, so that an LLM's run compares directly with th
 | Position error | 79 m | 48 m |
 
 The earlier script's first run, before the trap houses were fixed, lost 5 of 27.
+
+**First LLM result, on Claude Haiku 5.5 (`20261105-133935:1`):** it won in T+08:44, killing all 14 enemies for 3 of 27 lost, using 26 orders, 41 turns and 92 questions. That took 113 model requests, 51,404 output tokens and a peak context of about 116k tokens. Its marker error was 62 m and its position error 63 m. It's one run, so it can't yet say how much of this was skill, given the spread above.
+
+- **It found before committing.** It moved everyone to a line 300 m short of the village, holding fire, with Recon forward. The patrol came to that line and died there by T+02:44. Its marker for that group was placed within about 25 m of where they really fell.
+- **It never learned that.** It counted the group as about 8 when it was 6, wrote that they "may have pulled back", and never retired the marker. That's the fog working.
+- **It aimed `CLEAR` using reports.** Scripts cleared by radius. Haiku named buildings, starting with B6 because of a contact "near B6", and switched Bravo to B5 alone after repeated contacts "near B5". The last enemy died in B5 at T+08:30, shot from 3 m by a clearing squad. B1 and B2 were never checked, and weren't needed.
+- **It managed casualties.** It pulled Charlie out at T+02:08 after two leader losses, and kept it in reserve to the end.
+- **It never pinned a marker to a building,** though the doctrine mentions it. Its E4 said "near B6" in the label, on a grid.
+- **It made mistakes.** It ended a turn with three squads' orders failed, which it fixed on its next turn. It replaced `ATTACK` after 27 seconds, calling that "18 minutes". Its near-constant questions to everyone drove up its token use.
+
+A `HOLD` with no grid failed in that run with "Bad grid None". `HOLD` and `SENTRY` now stay where the previous leg ended, and a leg that really has no place says what it needs.
 
 What these runs show:
 

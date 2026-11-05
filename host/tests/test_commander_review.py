@@ -186,6 +186,18 @@ def test_the_commanders_own_words_and_actions_are_found_per_turn(battle, tmp_pat
     assert session["requests"] == 6 and session["output_tokens"] == 60  # each request once, however many blocks
 
 
+def test_tools_the_session_was_really_offered_are_checked(battle, tmp_path):
+    projects = tmp_path / "projects"
+    transcript(projects)
+    with (projects / "session.jsonl").open("a", encoding="utf-8") as file:
+        shape = {"type": "api-request-shape", "tools": [{"name": "SendFeedback"}, {"name": "ToolSearch"}]}
+        file.write(json.dumps(shape) + "\n")
+    in_window(battle)
+    session = aar.commander_session(battle, projects)
+    assert session["tools_outside_lockdown"] == ["SendFeedback"]
+    assert aar.battle_data(battle, session)["commander"]["tools_outside_lockdown"] == ["SendFeedback"]
+
+
 def test_a_chat_with_a_person_during_the_battle_is_left_out(battle, tmp_path):
     projects = tmp_path / "projects"
     transcript(projects)

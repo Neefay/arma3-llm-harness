@@ -47,6 +47,8 @@ def parse_grid(text: str, world_size: float) -> tuple[list[float], str]:
 
 
 def _place(at, markers: dict[str, dict], world_size: float) -> tuple[list[float], str]:
+    if at in (None, ""):
+        raise Invalid("This leg needs at: a grid, marker or building id.")
     if isinstance(at, str) and at.strip() in markers:
         if "pos" in markers[at.strip()]:  # a numbered building knows its exact position
             return list(markers[at.strip()]["pos"]), markers[at.strip()]["at"]
@@ -121,7 +123,10 @@ def validate(request: dict, stations: dict[str, dict], markers: dict[str, dict],
         return _patrol(to, legs, types, posture, markers, world_size)
     engine_legs, route_legs = [], []
     for leg, kind in zip(legs, types, strict=True):
-        pos, grid = _place(leg.get("at"), {**markers, **known}, world_size)
+        if kind in ("HOLD", "SENTRY") and not leg.get("at") and route_legs:  # stay where the last leg ended
+            pos, grid = list(route_legs[-1]["pos"]), route_legs[-1]["grid"]
+        else:
+            pos, grid = _place(leg.get("at"), {**markers, **known}, world_size)
         radius, completion = _number(leg.get("radius"), "radius"), _number(leg.get("completion"), "completion")
         hold_for = parse_time(leg["hold_for"]) if leg.get("hold_for") else 0
         engine_legs.append([LEG_TYPES[kind], pos, radius, completion, hold_for])

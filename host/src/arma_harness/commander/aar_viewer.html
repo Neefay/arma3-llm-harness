@@ -90,6 +90,7 @@ td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
     <h1 id="name">Battle Review</h1>
     <span class="result" id="result"></span>
     <span class="result" id="who"></span>
+    <span class="result loss" id="lockdown" hidden></span>
     <span class="meta" id="meta"></span>
     <p class="mission" id="mission" style="flex-basis: 100%"></p>
   </header>
@@ -531,6 +532,9 @@ function init() {
   const c = D.commander;
   $("who").textContent = c.model ? `Commanded by ${c.model}: ${c.requests} requests, ${Math.round(c.output_tokens / 100) / 10}k tokens written` : "Scripted test: no model session found";
   $("who").className = "result " + (c.model ? "llm" : "scripted");
+  const outside = c.tools_outside_lockdown || [];
+  $("lockdown").hidden = !outside.length;
+  $("lockdown").textContent = `Tools outside the lockdown: ${outside.join(", ")}`;
   $("meta").textContent = `${fmt(duration)}, ${D.turns.length} turns, ${D.mode || ""} mode, run ${D.run || ""}${D.attempt > 1 ? ` attempt ${D.attempt}` : ""}`;
   $("turnStats").textContent = D.turns.length ? `average ${(D.turns.reduce((s, t) => s + (t.duration || 0), 0) / D.turns.length).toFixed(1)} s` : "";
   $("timeline").setAttribute("aria-valuemin", 0); $("timeline").setAttribute("aria-valuemax", Math.round(duration));

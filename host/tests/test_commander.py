@@ -379,6 +379,23 @@ def wide(**over) -> dict:
     return orders.validate({"to": "Alpha", **over}, stations, MARKERS, 8192, BUILDINGS)
 
 
+def test_holding_without_a_grid_means_where_the_last_leg_ended():
+    route = wide_hold(legs=[{"type": "MOVE", "at": "034 030"}, {"type": "HOLD"}])["route"]["legs"]
+    assert route[1]["type"] == "HOLD" and route[1]["grid"] == "034 030" and route[1]["pos"] == route[0]["pos"]
+
+
+def test_a_leg_with_no_place_says_what_it_needs():
+    with pytest.raises(Invalid, match="needs at: a grid, marker or building id"):
+        wide_hold(legs=[{"type": "HOLD"}])
+    with pytest.raises(Invalid, match="needs at: a grid, marker or building id"):
+        wide_hold(legs=[{"type": "MOVE"}])
+
+
+def wide_hold(**over) -> dict:
+    stations = {"Alpha": {**STATIONS["Alpha"], "capabilities": [*ALL_TYPES, "HOLD"]}}
+    return orders.validate({"to": "Alpha", **over}, stations, MARKERS, 8192, BUILDINGS)
+
+
 def test_clear_works_from_numbered_buildings():
     assert wide(legs=[{"type": "CLEAR", "at": "B1"}])["route"]["legs"][0]["ids"] == ["B1"]
     assert wide(legs=[{"type": "CLEAR", "at": ["B3", "B1"]}])["route"]["legs"][0]["ids"] == ["B3", "B1"]

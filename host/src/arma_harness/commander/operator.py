@@ -18,7 +18,7 @@ from .records import Records
 from .runtime import Runtime
 
 SERVER_NAME = "commander"
-# ToolSearch loads the commander's own tools. advisor stayed despite a deny rule: it can't reach game data.
+# ToolSearch loads the commander's own tools. A deny rule can't remove advisor, but it can't reach game data.
 HARMLESS_TOOLS = {"ToolSearch", "DeferredToolPlaceholder", "advisor"}
 # Named one by one because the client offers whatever isn't denied, and that list grows. A live check of what a session
 # actually received found SendMessage, for one, which could ask another local session what's really happening.
@@ -26,7 +26,7 @@ DENIED_TOOLS = [
     "Bash", "PowerShell", "Read", "Write", "Edit", "Glob", "Grep", "WebFetch", "WebSearch", "NotebookEdit", "Agent",
     "Task", "TaskStop", "Skill", "Workflow", "SendMessage", "ListAgents", "RemoteTrigger", "CronCreate", "CronDelete",
     "CronList", "ScheduleWakeup", "PushNotification", "Monitor", "Artifact", "ArtifactComments", "ArtifactData",
-    "DesignSync", "ReportFindings", "EnterWorktree", "ExitWorktree", "EnterPlanMode", "ExitPlanMode", "Advisor",
+    "DesignSync", "ReportFindings", "EnterWorktree", "ExitWorktree", "EnterPlanMode", "ExitPlanMode", "SendFeedback",
     "AskUserQuestion", "ListMcpResourcesTool", "ReadMcpResourceTool", "ReadMcpResourceDirTool", "mcp__arma",
     "mcp__MCP_DOCKER", "mcp__taskboard", "mcp__plugin_a3ref_a3ref", "mcp__claude_ai_Claude_Docs",
     "mcp__claude_ai_Gmail", "mcp__claude_ai_Google_Calendar", "mcp__claude_ai_Google_Drive", "mcp__claude-vscode",
