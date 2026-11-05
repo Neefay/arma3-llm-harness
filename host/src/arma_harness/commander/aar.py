@@ -431,7 +431,7 @@ def write(folder: Path, out: Path | None = None, projects: Path | None = None) -
             "tools_outside_lockdown": data["commander"].get("tools_outside_lockdown", [])}
 
 
-def site(home: Home, battles: list[str], out: Path, projects: Path | None = None) -> dict:
+def site(home: Home, battles: list[str], out: Path, projects: Path | None = None, note: str = "") -> dict:
     """Several battles in one page, with a picker and a comparison, to publish or send. Each is RUN[:ATTEMPT][=Label],
     or a records folder in place of the run. The page opens on the first, and compares those that share its mission."""
     if not battles:
@@ -446,7 +446,8 @@ def site(home: Home, battles: list[str], out: Path, projects: Path | None = None
         picked.append({**data, "id": run_id, "label": label or model or "Script"})
     alike = [data for data in picked if data["name"] == picked[0]["name"]]
     cards = [(data["label"], data["commander"].get("model") or "Script, no AI", data) for data in alike]
-    page = {"battles": picked, "compare": {"ids": [data["id"] for data in alike], "rows": _comparison(cards)}}
+    compared = {"ids": [data["id"] for data in alike], "rows": _comparison(cards), "note": note}
+    page = {"battles": picked, "compare": compared}
     out.write_text(render(page), encoding="utf-8")
     return {"site": str(out), "bytes": out.stat().st_size, "opens_on": picked[0]["label"],
             "battles": [{"id": data["id"], "label": data["label"], "ended": data["ended"],

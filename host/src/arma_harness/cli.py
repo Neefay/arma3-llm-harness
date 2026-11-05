@@ -115,6 +115,7 @@ def main(argv: list[str] | None = None) -> int:
     co.add_argument("--attempt", type=int, help="review: which battle in that run (default: the last)")
     co.add_argument("--out", help="review: where to write the page (default: review.html beside the battle's records); "
                                   "site: where to write the page (required)")
+    co.add_argument("--note", help="site: a sentence added to the comparison's caveat, such as what changed in a run")
     co.add_argument("--battle", action="append", metavar="RUN[:ATTEMPT][=LABEL]",
                     help="compare: a battle to include, repeatable (default: all of the newest battle's scenario); "
                          "site: a battle for the picker, repeatable, with its label there. It opens on the first")
@@ -234,7 +235,7 @@ def _commander(h: Harness, a):
 
             if not a.out:
                 raise ValueError("commander site needs --out FILE")
-            return aar.site(h.home, a.battle or [], Path(a.out))
+            return aar.site(h.home, a.battle or [], Path(a.out), note=a.note or "")
         case "stop":
             return operator.stop(h)
     raise ValueError(a.action)

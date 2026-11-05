@@ -120,7 +120,9 @@ th:first-child, td:first-child { padding-left: 12px; }
 .measures dd { margin: 0; display: inline; color: var(--dim); }
 .measures div { min-width: 0; }
 .marks { list-style: none; margin: 0; padding: 4px 12px; display: grid; gap: 5px; font-size: 12.5px; line-height: 1.35; }
-.compare th:not(:first-child), .compare td:not(:first-child) { min-width: 78px; }
+.compare { font-size: 12px; }
+.compare th, .compare td { padding-left: 4px; padding-right: 4px; }
+.compare th:not(:first-child), .compare td:not(:first-child) { min-width: 52px; }
 .compare td:first-child { color: var(--dim); }
 .compare th button { font: 600 12px/1.2 var(--display); text-align: left; padding: 3px 6px; width: 100%; background: none; border: 1px solid transparent; color: var(--text); }
 .compare th button:hover { border-color: var(--line); }
@@ -775,7 +777,7 @@ function renderCompare() {
   $("notCompared").textContent = "The battle you've selected had a different mission, so it isn't in this table.";
   const scripts = BATTLES.filter(b => !b.commander.model && table.ids.includes(b.id)).map(b => b.score.friendly_lost);
   const spread = scripts.length > 1 ? ` The scripts alone varied from ${Math.min(...scripts)} to ${Math.max(...scripts)} friendlies lost on the same mission.` : "";
-  $("caveat").textContent = `Each column is a single run.${spread} So this doesn't prove that one commander is better than another.`;
+  $("caveat").textContent = `Each column is a single run.${spread}${table.note ? ` ${table.note}` : ""} So this doesn't prove that one commander is better than another.`;
 }
 
 function renderBattle() {
