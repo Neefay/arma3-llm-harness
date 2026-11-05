@@ -485,6 +485,28 @@ def play_fire(client: Client) -> list[str]:
     return log
 
 
+def play_fire_support(client: Client) -> list[str]:
+    """A real fight with a mortar, by the commander's tools: scouts forward, a round to adjust, then fire for effect on
+    the village. It doesn't try to win. It's to see what a fight sounds like, and what the rounds really do."""
+    begin(client)
+    client.tool("commander_order", to="Recon", legs=[{"type": "MOVE", "at": "041 037"}, {"type": "SENTRY"}])
+    finish_turn(client, "Scouts forward")
+    log = [heard(client, "In position", 120)]
+    client.tool("commander_order", to="Hammer", legs=[{
+        "type": "FIRE_MISSION", "at": "041 041", "rounds": 1, "observer": "Recon"}])
+    log.append(heard(client, "Rounds complete", 60))
+    time.sleep(35)  # for the observer's call, if it can see it land at all
+    client.tool("commander_order", to="Hammer", legs=[{
+        "type": "FIRE_MISSION", "at": "041 041", "rounds": 8, "radius": 60}])
+    log.append(heard(client, "Rounds complete", 60))
+    client.tool("commander_order", to="Hammer", legs=[{
+        "type": "FIRE_MISSION", "at": "041 041", "rounds": 7, "radius": 60}])
+    log.append(heard(client, "Rounds complete", 60))
+    time.sleep(40)
+    client.tool("commander_ask", to="Hammer", topics=["ammo"])
+    return log
+
+
 def play_village(client: Client) -> list[str]:
     """Plumbing for the combat scenario: timed attack, repeating check-in, markers, contact reports, an ending."""
     harness = Harness()
@@ -566,6 +588,7 @@ def main() -> None:
                ("every order type", "orders_check", "hold", play_orders),
                ("vehicles and crews", "vehicles_check", "hold", play_vehicles),
                ("fire missions", "fire_check", "hold", play_fire),
+               ("fire support", "village_with_mortar", "hold", play_fire_support),
                ("combat: take the village", "take_the_village", "hold", play_village, True)]
     wanted = sys.argv[1:]  # words to match in battle names; none means all of them
     try:

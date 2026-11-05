@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 
 import pytest
+import yaml
 
 from arma_harness.commander import orders, reports, scenario
 from arma_harness.commander.orders import Invalid
@@ -1787,6 +1788,15 @@ def test_impact_reports_survive_a_restart_of_the_host(tmp_path):
     assert b.runtime.trackers["Alpha"].spotter is True and b.runtime.fire_orders["O-0001"]["observer"] == "Alpha"
     b.advance(116, order="O-0001")
     assert "Splash on your grid. 1 round seen." in latest(b)
+
+
+def test_the_mortar_scenario_is_a_real_battle():
+    raw = yaml.safe_load((Path(__file__).parents[2] / "scenarios/commander/village_with_mortar.yaml").read_text())
+    built = scenario.build(raw)
+    assert built.stations["Recon"]["spotter"] and not built.stations["Alpha"]["spotter"]
+    assert built.stations["Hammer"]["crew"] == {"V1": "gunner"}
+    assert built.vehicles[0]["ammo"] == {"HE": 16, "SMOKE": 4}
+    assert {"FIRE_MISSION", "CHECK_FIRE"} <= set(built.stations["Hammer"]["capabilities"])
 
 
 def in_the_fight(tmp_path) -> Battle:

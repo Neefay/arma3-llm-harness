@@ -1,6 +1,6 @@
 # Commander Mode: fire support design
 
-**Status:** design only. Nothing here is in the main system yet. Every engine fact below was measured on Arma 3 2.22 in throwaway tests, unless it's listed under [Still unverified](#12-still-unverified). Written 2026-11-05. It extends [COMMANDER.md](COMMANDER.md), and the fog rules there still apply.
+**Status:** built and passing live, as of 2026-11-05, and not yet tried by an LLM. Where the build differs from the design, [section 14](#14-build-order) says so. Every engine fact below was measured on Arma 3 2.22 in throwaway tests, unless it's listed under [Still unverified](#12-still-unverified). Written 2026-11-05. It extends [COMMANDER.md](COMMANDER.md), and the fog rules there still apply.
 
 ## 1. Summary
 
@@ -207,10 +207,12 @@ Rounds complete. 26 HE left.
 Holding, weapons tight. Mission waiting.    (currentCommand is FIRE AT POSITION, nothing fired after 8 s)
 Unable, out of range.
 Unable, can't lay on that target.           (unitReady, all checks passed, and nothing fired after 10 s)
-Unable, no gunner on V1.
+Unable, no gunner on V1.                    (when the order names V1)
+Unable, no gun crewed.                      (when it doesn't, and the squad isn't on one)
 Out of HE, 2 of 6 fired.
-Check fire. 3 rounds still in the air.
-V1 destroyed.                               (if crew or squad survive to say so; otherwise silence, as usual)
+Copy, check fire.
+3 rounds still in the air.
+V1 destroyed, 2 of 6 fired.                 (if crew or squad survive to say so; otherwise silence, as usual)
 ```
 
 **SITREP topics:** a new `vehicles` topic, and `ammo` includes a crewed gun's rounds by type: `Reed on V1 as gunner, 3 on foot. V1: 24 HE, 8 smoke.`
@@ -384,7 +386,7 @@ Chosen by me and easy to change: the building list stays at 6 figures, so 8-figu
 
 ## 14. Build order
 
-Nothing starts on the main system until the design's agreed and the prototype passes.
+All of these are done, and each passed its live check on the real game, in [live_commander.py](../host/tests/live_commander.py). A scripted fight in `village_with_mortar` then fired all 16 HE at the village through the commander's tools. It killed 2 of the garrison, and the spotter's offsets matched the true positions. What's left is a real LLM run.
 
 1. **Prototype, outside the commander:** done. [prototype_loop.py](../host/tests/spikes/fire_support/prototype_loop.py) drives one full loop on a real game, and passed 16 of 16 checks: mount by seat, no self-firing, impossible shots refused aloud, a 6-figure mission that missed by 45 m on average, a spotter's report, a corrected 8-figure grid that missed by 12 m and killed 4 of 4, a mission across a magazine change, check fire, friendly fire recorded against the gun, and dismounting. A script played the commander, so none of this has been through the commander's tools or reports yet.
 2. **Vehicle list and reports:** `V` ids, sightings, the `vehicles` topic, and the `CLEAR` ruin fix.
@@ -395,3 +397,12 @@ Nothing starts on the main system until the design's agreed and the prototype pa
 7. **Scenario, doctrine, real LLM run.**
 
 Each step gets offline tests, as the rest of commander mode has, and its own live check. The tests behind this document are in [host/tests/spikes/fire_support](../host/tests/spikes/fire_support).
+
+**Found while building, and not in the design above:**
+
+- **The engine makes a hidden enemy at each aim point.** `doArtilleryFire` creates an `ArtilleryTargetE`, with no shape, on the side opposite the gun. For about 3 s the leader of the firing group knows it as an enemy. Once it's deleted, what's known of it is a place at the map's origin, so a firing squad reported a contact pointing at [0, 0]. Contacts now leave these out. See [spike_ghost_contact.py](../host/tests/spikes/fire_support/spike_ghost_contact.py). A firing group also goes to `COMBAT` for about 35 s, which is one more reason `in_combat` doesn't read behaviour.
+- **Observers have to be spotters.** Naming any other station is refused, like a capability it doesn't have, and `commander_roster` shows `corrects_fire`.
+- **Reports keep their order when a squad leaves a fight.** Those said out of combat used to go straight out, ahead of what was still queued from a moment before.
+- **The review works out kills by shell from the records,** not from the `Killed` killer. A death within 60 m and 5 s of a shell landing is put down to that shell, which gives the gun and the mission, even when the killer is null. `kills.jsonl` is unchanged.
+- **A radio row now records the sender's own grid.** Reports now hold grids of other things, such as `V1 is wrecked, grid 039 040`, which the belief map would plot as the sender's position. Older battles still go by the wording.
+- **A known gap:** two orders to one station in the same second, such as a posture followed by a fire mission, both take effect, but only the last gets acknowledged. Both are in the order log.

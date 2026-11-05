@@ -389,6 +389,10 @@ The commander knows only what's been reported, so its view of an order can lag o
 | `SENTRY` | `SENTRY` | Waits until it detects enemies, then continues to its next leg | Grid | Contact report | First |
 | `PATROL` | `MOVE` + `CYCLE` | Repeats a route until told otherwise | 2+ grids | Each lap, optional | First |
 | `HALT` | Clears waypoints, then `doStop` | Stops where it is | None | Halted | First |
+| `MOUNT` | `moveIn` when close | Boards a known vehicle, in a named seat or wherever fits | Vehicle id | On V1 as gunner | Fire support |
+| `DISMOUNT` | Gets out | Leaves one vehicle, or all of them | None | Off V1 | Fire support |
+| `FIRE_MISSION` | `doArtilleryFire` from a real gun | Fires its crewed guns. The squad's other orders carry on | Grid of 6 or 8 figures, only | Shot, then rounds complete | Fire support |
+| `CHECK_FIRE` | `doStop` on the gun | Stops firing. What's in the air still lands | None | Rounds still in the air | Fire support |
 | `CLEAR` | Scripted moves | Walks soldiers through every position in the named buildings, one building at a time | Building ids, or a place and radius | Each building checked, then finished | First |
 | `OCCUPY` | Scripted moves, then `doStop` | Moves into a building and holds it | Building id | In position | First |
 | `CORDON` | Scripted moves, then `doStop` and `doWatch` | Spreads out in a ring around a place and watches it | Place, radius | In position | First |
@@ -865,7 +869,11 @@ Open: why soldiers that close don't engage, and whether close-range noticing in 
 
 House models matter here too: `Land_i_House_Small_01_V3_F` trapped soldiers inside, and `Land_i_House_Big_01_V3_F` rarely let them in, however they were placed. That's why one garrison soldier survived three clearing sweeps in early runs. The village no longer uses them, and [host/tests/live_buildings.py](../host/tests/live_buildings.py) checks any building before a scenario relies on it.
 
-### 14.3 Following scenarios
+### 14.3 Village with a mortar
+
+`village_with_mortar` is the same village and enemy as above, adding Hammer, a mortar section crewing V1 at grid 041 032 with 16 HE and 4 smoke and no resupply, and making Recon a spotter. `fire_check` and `vehicles_check` have no enemy, and only exist so `host/tests/live_commander.py` can try the plumbing. The orders, reports and records are all in [COMMANDER_FIRE_SUPPORT.md](COMMANDER_FIRE_SUPPORT.md).
+
+### 14.4 Following scenarios
 
 | Scenario | What it adds |
 |---|---|
@@ -873,7 +881,7 @@ House models matter here too: `Land_i_House_Small_01_V3_F` trapped soldiers insi
 
 Every scenario needs stations, an enemy setup, end conditions and a time limit. `orders_check` has no enemies, and only exists so `host/tests/live_commander.py` can try every order on a real game.
 
-### 14.4 Win and loss
+### 14.5 Win and loss
 
 The harness alone judges end conditions, and the commander learns the result only from the mission-end wake.
 
