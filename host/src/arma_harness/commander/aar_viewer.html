@@ -4,197 +4,345 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="claude:viewport-fit-sides" content="cover">
-<title>Battle Review</title>
+<title>Commander Battle Review</title>
 <style>
-/* Layout concept: an after-action review table. Two maps side by side, one for belief and one for truth, over a shared
-   timeline, with the radio log running alongside. Deliberately single-theme: a dark ops room, and only blue and red shout. */
+/* Layout concept: an after-action review table that fits one screen. Two square maps, belief and truth, sit over a shared
+   timeline, with a tabbed side rail for everything else. Only blue and red shout. On a phone it all stacks and scrolls. */
 :root {
-  color-scheme: dark;
-  --bg: #11161b; --panel: #1a2128; --panel2: #232c35; --line: #36424e;
-  --text: #e6ebef; --dim: #9aa8b4; --blue: #5aa9f5; --red: #f2685c; --green: #5cc58a; --amber: #e8b04a; --violet: #b28cf0;
-  --land: #171d23; --grid: #27313a; --building: #4b5763; --checked: #3f8a63;
+  --bg: #e6eae8; --panel: #f4f6f4; --panel2: #dce2df; --line: #b4bfba;
+  --text: #172027; --dim: #4f5e66; --blue: #1a5fb4; --red: #c0322a; --green: #1b7a4b; --amber: #8f5f00; --violet: #6a42c2; --orange: #b85a14;
+  --on-accent: #ffffff; --land: #f0f3ee; --grid: #d3dad3; --building: #a3aeaa; --checked: #6fb892; --outline: #17202766;
   --display: "Bahnschrift", "DIN Alternate", "Roboto Condensed", "Arial Narrow", system-ui, sans-serif;
   --body: "Segoe UI", system-ui, -apple-system, sans-serif;
   --mono: "Cascadia Mono", Consolas, "SF Mono", Menlo, monospace;
 }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #11161b; --panel: #1a2128; --panel2: #232c35; --line: #36424e;
+  --text: #e6ebef; --dim: #9aa8b4; --blue: #5aa9f5; --red: #f2685c; --green: #5cc58a; --amber: #e8b04a; --violet: #b28cf0; --orange: #e8843a;
+  --on-accent: #08131e; --land: #171d23; --grid: #27313a; --building: #4b5763; --checked: #3f8a63; --outline: #00000088;
+  color-scheme: dark;
+} }
+:root[data-theme="dark"] {
+  --bg: #11161b; --panel: #1a2128; --panel2: #232c35; --line: #36424e;
+  --text: #e6ebef; --dim: #9aa8b4; --blue: #5aa9f5; --red: #f2685c; --green: #5cc58a; --amber: #e8b04a; --violet: #b28cf0; --orange: #e8843a;
+  --on-accent: #08131e; --land: #171d23; --grid: #27313a; --building: #4b5763; --checked: #3f8a63; --outline: #00000088;
+  color-scheme: dark;
+}
 * { box-sizing: border-box; }
-html, body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 var(--body); }
-.page { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; padding-block: 14px 24px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); max-width: 1680px; margin-inline: auto; }
-header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 18px; }
-h1 { font: 700 26px/1.1 var(--display); margin: 0; letter-spacing: .01em; }
-.meta { color: var(--dim); font-size: 13px; }
-.result { font: 600 15px var(--display); padding: 2px 10px; border: 1px solid var(--line); }
+[hidden] { display: none !important; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.4 var(--body); }
+
+/* Stacked by default, for phones and small windows. */
+.page { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; padding-block: 10px 20px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+.top { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 16px; }
+h1 { font: 700 20px/1.15 var(--display); margin: 0; letter-spacing: .01em; }
+#intro { margin: 0; flex: 1 1 320px; min-width: 0; font-size: 13px; line-height: 1.35; max-width: 130ch; }
+.picker { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr)); gap: 6px; }
+.pick { display: grid; gap: 1px; text-align: left; padding: 4px 10px; font: 400 12px/1.3 var(--body); background: var(--panel); min-width: 0; }
+.pick b { font: 600 14px/1.25 var(--display); }
+.pick span.how { color: var(--dim); }
+.pick[aria-pressed="true"] { background: var(--panel); color: var(--text); border-color: var(--blue); box-shadow: inset 0 0 0 1px var(--blue); }
+.chip { font: 600 11px/1.2 var(--body); padding: 0 5px; border: 1px solid currentColor; white-space: nowrap; display: inline-block; }
+.chip.llm { color: var(--violet); }
+.chip.script { color: var(--amber); }
+.stage { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
+.left { display: grid; gap: 6px; min-width: 0; }
+.maps { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: 8px; }
+figure { margin: 0; background: var(--panel); min-width: 0; }
+figcaption { padding: 3px 8px 2px; display: grid; gap: 0; }
+.title { font: 600 15px/1.25 var(--display); display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 0 8px; }
+.title small { font: 400 11.5px var(--body); color: var(--dim); }
+.belief .title > span { color: var(--blue); }
+.truth .title > span { color: var(--red); }
+.key { display: flex; flex-wrap: wrap; gap: 0 9px; font-size: 11px; line-height: 1.4; color: var(--dim); }
+.key span { white-space: nowrap; }
+.key svg { width: 13px; height: 10px; vertical-align: -1px; margin-right: 3px; fill: none; stroke-width: 1.6; }
+figure canvas { display: block; width: 100%; aspect-ratio: 1; max-width: 100%; cursor: grab; touch-action: pan-y; }
+figure canvas:active { cursor: grabbing; }
+.timeline { background: var(--panel); padding: 4px 8px 3px; display: flex; flex-direction: column; gap: 2px; min-height: 0; }
+.timeline canvas { width: 100%; height: 86px; display: block; cursor: pointer; touch-action: none; }
+.legend { display: flex; flex-wrap: wrap; gap: 0 12px; color: var(--dim); font-size: 11.5px; line-height: 1.35; }
+.legend i { display: inline-block; width: 9px; height: 9px; margin-right: 4px; vertical-align: -1px; }
+.legend b { color: var(--text); font-variant-numeric: tabular-nums; }
+.controls { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; background: var(--panel); padding: 3px 8px; }
+button { font: 600 12.5px var(--body); color: var(--text); background: var(--panel2); border: 1px solid var(--line); padding: 3px 9px; cursor: pointer; }
+button:hover { border-color: var(--dim); }
+button:focus-visible, canvas:focus-visible, .row:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
+button[aria-pressed="true"]:not(.pick) { background: var(--blue); color: var(--on-accent); border-color: var(--blue); }
+#clock { font: 700 19px var(--mono); font-variant-numeric: tabular-nums; min-width: 7ch; }
+.chips { display: flex; gap: 3px; flex-wrap: wrap; }
+.chips button { font-size: 12px; padding: 2px 7px; font-weight: 500; }
+
+.rail { display: flex; flex-direction: column; background: var(--panel); min-width: 0; min-height: 0; }
+.head { padding: 6px 10px; display: grid; gap: 4px; border-bottom: 1px solid var(--line); }
+.headline { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 2px 8px; }
+h2 { font: 600 16px/1.2 var(--display); margin: 0; }
+.result { font: 600 13px/1.3 var(--display); padding: 0 7px; border: 1px solid var(--line); white-space: nowrap; }
 .result.win { color: var(--green); border-color: var(--green); }
 .result.loss { color: var(--red); border-color: var(--red); }
-.result.llm, .result.scripted { font: 500 13px var(--body); }
-.result.llm { color: var(--violet); border-color: var(--violet); }
-.result.scripted { color: var(--amber); border-color: var(--amber); }
-.mission { color: var(--dim); max-width: 90ch; margin: 0; }
-.score { display: flex; flex-wrap: wrap; gap: 6px 26px; margin: 0; background: var(--panel); padding: 10px 12px; }
-.score div { display: grid; gap: 1px; }
-.score dt { color: var(--dim); font-size: 12px; }
-.score dd { margin: 0; font: 600 18px var(--display); font-variant-numeric: tabular-nums; }
-.controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; background: var(--panel); padding: 8px 12px; }
-button { font: 600 13px var(--body); color: var(--text); background: var(--panel2); border: 1px solid var(--line); padding: 5px 12px; cursor: pointer; }
-button:hover { border-color: var(--dim); }
-button:focus-visible, input:focus-visible, .row:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
-button[aria-pressed="true"] { background: var(--blue); color: #08131e; border-color: var(--blue); }
-#clock { font: 700 22px var(--mono); font-variant-numeric: tabular-nums; min-width: 6.5ch; }
-.timeline { background: var(--panel); padding: 8px 12px 10px; display: grid; gap: 4px; }
-.timeline canvas { width: 100%; height: 86px; display: block; cursor: pointer; touch-action: none; }
-.legend { display: flex; flex-wrap: wrap; gap: 3px 14px; color: var(--dim); font-size: 12px; }
-.legend i { display: inline-block; width: 10px; height: 10px; margin-right: 5px; vertical-align: -1px; }
-.maps { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); gap: 12px; }
-figure { margin: 0; background: var(--panel); min-width: 0; }
-figcaption { font: 600 15px var(--display); padding: 7px 12px; display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
-figcaption small { font: 400 12px var(--body); color: var(--dim); }
-.truth figcaption { color: var(--red); }
-.belief figcaption { color: var(--blue); }
-figure canvas { display: block; width: 100%; aspect-ratio: 1; cursor: grab; touch-action: pan-y; }
-figure canvas:active { cursor: grabbing; }
-.lower { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); gap: 12px; align-items: start; }
-.panel { background: var(--panel); min-width: 0; }
-h2 { font: 600 15px var(--display); margin: 0; padding: 8px 12px; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+#who, #extra { margin: 0; font-size: 12.5px; line-height: 1.35; }
+#extra { color: var(--dim); }
+#extra b { color: var(--text); font-weight: 600; }
+.score { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px 6px; margin: 0; }
+.score div { display: flex; flex-direction: column; justify-content: flex-end; min-width: 0; }
+.score dt { color: var(--dim); font-size: 10.5px; line-height: 1.1; }
+.score dd { margin: 0; font: 600 14.5px/1.25 var(--display); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tabs { display: flex; border-bottom: 1px solid var(--line); overflow-x: auto; flex: none; }
+.tabs button { flex: 1 0 auto; background: none; border: 0; border-bottom: 2px solid transparent; padding: 5px 5px 4px; font: 600 12.5px var(--body); color: var(--dim); }
+.tabs button:hover { color: var(--text); }
+.tabs button[aria-selected="true"] { color: var(--text); border-bottom-color: var(--blue); }
+.pane { display: flex; flex-direction: column; min-height: 0; flex: 1 1 auto; max-height: 70vh; }
+.pane.flow { display: block; overflow-y: auto; padding-bottom: 8px; }
+.bar { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 2px 8px; padding: 4px 10px; font-size: 12px; color: var(--dim); flex: none; border-bottom: 1px solid var(--panel2); }
+h3 { font: 600 14px/1.25 var(--display); margin: 0; padding: 7px 10px 2px; }
 .scroll { overflow-x: auto; }
-table { border-collapse: collapse; width: 100%; font-size: 13px; }
-th { text-align: left; color: var(--dim); font-weight: 500; padding: 6px 10px; border-bottom: 1px solid var(--line); }
-td { padding: 6px 10px; border-bottom: 1px solid var(--panel2); vertical-align: top; }
-td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
-.gap { color: var(--amber); }
+table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+th { text-align: left; color: var(--dim); font-weight: 500; padding: 3px 6px; border-bottom: 1px solid var(--line); vertical-align: bottom; }
+td { padding: 3px 6px; border-bottom: 1px solid var(--panel2); vertical-align: top; }
+td.num { font-variant-numeric: tabular-nums; }
+th:first-child, td:first-child { padding-left: 10px; }
+.gap { color: var(--amber); font-weight: 600; }
 .dead { color: var(--red); font-weight: 600; }
-.ok { color: var(--green); }
-.list { max-height: 460px; overflow-y: auto; }
-.list.short { max-height: 240px; }
-.row { display: grid; grid-template-columns: 52px minmax(0, 1fr); gap: 8px; padding: 4px 12px; border-bottom: 1px solid var(--panel2); cursor: pointer; background: none; border-left: 3px solid transparent; width: 100%; text-align: left; color: inherit; font: inherit; }
-.row:hover { background: var(--panel2); }
-.row .t { font: 12px var(--mono); color: var(--dim); }
-.row.future { opacity: .35; }
+.ok { color: var(--green); font-weight: 600; }
+.list { flex: 1 1 auto; min-height: 0; overflow-y: auto; position: relative; }
+.row { display: grid; grid-template-columns: 42px minmax(0, 1fr); gap: 6px; padding: 3px 10px 3px 7px; border: 0; border-bottom: 1px solid var(--panel2); border-left: 3px solid transparent; cursor: pointer; background: none; width: 100%; text-align: left; color: inherit; font: 12.5px/1.35 var(--body); }
+.row:hover { background: var(--panel2); border-color: transparent; border-bottom-color: var(--panel2); }
+.row .t { font: 11.5px/1.5 var(--mono); color: var(--dim); }
+.row.future { opacity: .4; }
 .row.now { background: var(--panel2); border-left-color: var(--amber); }
 .row.flash .text { color: var(--red); font-weight: 600; }
 .row.hq .text { color: var(--blue); }
 .row.quiet .text { color: var(--dim); }
 .row.silent .text { color: var(--amber); font-style: italic; }
 .who { font-weight: 600; }
-.note { color: var(--dim); font-size: 13px; padding: 8px 12px; margin: 0; }
-.notes { white-space: pre-wrap; max-height: 260px; overflow-y: auto; font: 12.5px/1.5 var(--mono); }
-.said { padding: 8px 12px 0; margin: 0; white-space: pre-wrap; max-height: 220px; overflow-y: auto; }
+.meta { color: var(--dim); font-size: 12px; font-weight: 400; }
+.note { color: var(--dim); font-size: 12.5px; line-height: 1.4; padding: 4px 10px; margin: 0; }
+.plain { color: var(--text); }
+.notes { white-space: pre-wrap; font: 12px/1.45 var(--mono); }
+.said { padding: 4px 10px 0; margin: 0; white-space: pre-wrap; font-size: 12.5px; }
 .did { color: var(--amber); }
-.chips { display: flex; gap: 6px; flex-wrap: wrap; }
-.chips button { font-size: 12px; padding: 2px 8px; font-weight: 500; }
-@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto; } }
+.measures { margin: 0; padding: 2px 10px 4px; display: grid; gap: 4px; font-size: 12.5px; line-height: 1.35; }
+.measures dt { font-weight: 600; display: inline; }
+.measures dd { margin: 0; display: inline; color: var(--dim); }
+.measures div { min-width: 0; }
+.marks { list-style: none; margin: 0; padding: 2px 10px; display: grid; gap: 3px; font-size: 12.5px; line-height: 1.35; }
+.compare th:not(:first-child), .compare td:not(:first-child) { min-width: 78px; }
+.compare td:first-child { color: var(--dim); }
+.compare th button { font: 600 12px/1.2 var(--display); text-align: left; padding: 2px 4px; width: 100%; background: none; border: 1px solid transparent; color: var(--text); }
+.compare th button:hover { border-color: var(--line); }
+.compare .sel { background: var(--panel2); }
+.compare th.sel button { color: var(--blue); }
+.compare td.lead { font-weight: 600; }
+
+/* One screen, with no page scroll. The maps stay square: 100cqh and 100cqw are the stage's size, and --chrome is what sits
+   above and below a map in its column. Lists scroll inside the rail. */
+@media (min-width: 1100px) and (min-height: 560px) {
+  html, body { height: 100%; }
+  .page { height: 100%; grid-template-rows: auto auto minmax(0, 1fr); gap: 6px; padding-block: 6px; }
+  .picker { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); }
+  .stage { grid-row: 3; container-type: size; min-height: 0; grid-template-columns: auto minmax(0, 1fr); gap: 8px; --chrome: 170px; --rail-min: 340px; }
+  .stage > * { --map: min(100cqh - var(--chrome), (100cqw - var(--rail-min) - 16px) / 2); }
+  .left { width: calc(2 * var(--map) + 8px); min-width: min(760px, 100cqw - var(--rail-min)); height: 100%; min-height: 0; grid-template-rows: auto minmax(0, 1fr) auto; }
+  .maps { grid-template-columns: var(--map) var(--map); justify-content: center; }
+  figure canvas { width: var(--map); height: var(--map); aspect-ratio: auto; }
+  .timeline canvas { flex: 1 1 0; height: 0; min-height: 0; }
+  .rail { height: 100%; }
+  .pane { max-height: none; flex: 1 1 0; }
+}
+/* Smaller maps wrap their keys onto a second line. */
+@media (min-width: 1100px) and (min-height: 560px) and (max-height: 705px) { .stage { --chrome: 186px; } }
+@media (min-width: 1100px) and (max-width: 1200px) and (min-height: 560px) { .stage { --chrome: 212px; } }
 </style>
 </head>
 <body>
 <div class="page">
-  <header>
-    <h1 id="name">Battle Review</h1>
-    <span class="result" id="result"></span>
-    <span class="result" id="who"></span>
-    <span class="result loss" id="lockdown" hidden></span>
-    <span class="meta" id="meta"></span>
-    <p class="mission" id="mission" style="flex-basis: 100%"></p>
+  <header class="top">
+    <h1>Commander Battle Review</h1>
+    <p id="intro"></p>
   </header>
 
-  <dl class="score" id="score"></dl>
+  <nav class="picker" id="picker" aria-label="Choose a battle" hidden></nav>
 
-  <div class="controls">
-    <button id="play" type="button">Play</button>
-    <span id="clock">T+00:00</span>
-    <span class="chips" role="group" aria-label="Playback speed">
-      <button type="button" data-speed="1">1×</button>
-      <button type="button" data-speed="5" aria-pressed="true">5×</button>
-      <button type="button" data-speed="20">20×</button>
-    </span>
-    <button id="prevEvent" type="button">◀ Previous death</button>
-    <button id="nextEvent" type="button">Next death ▶</button>
-    <span class="chips" role="group" aria-label="Map zoom">
-      <button type="button" id="zoomIn" title="Zoom in. The mouse wheel works too, and dragging moves the map.">Zoom in</button>
-      <button type="button" id="zoomOut">Zoom out</button>
-      <button type="button" id="zoomAll">Whole battle</button>
-    </span>
-    <span class="meta" id="tick"></span>
-  </div>
+  <main class="stage">
+    <div class="left">
+      <div class="maps">
+        <figure class="belief">
+          <figcaption>
+            <div class="title"><span id="beliefTitle">What the commander believed</span><small>built only from the radio text it received</small></div>
+            <div class="key">
+              <span><svg viewBox="0 0 13 10" stroke="var(--blue)"><path d="M1 1h11v8H1zM1 1l11 8M1 9l11-8"/></svg>last report</span>
+              <span><svg viewBox="0 0 13 10" stroke="var(--red)"><path d="M6.5 .8l4 4.2-4 4.2-4-4.2z"/></svg>enemy marker</span>
+              <span><svg viewBox="0 0 13 10" stroke="var(--green)"><circle cx="6.5" cy="5" r="4"/></svg>objective</span>
+              <span><svg viewBox="0 0 13 10" stroke="var(--amber)"><path d="M0 5h13" stroke-dasharray="3 2"/></svg>last order</span>
+              <span><svg viewBox="0 0 13 10" style="fill:var(--checked)"><path d="M2 1h9v8H2z"/></svg>checked</span>
+            </div>
+          </figcaption>
+          <canvas id="beliefMap" role="img" aria-label="Map of what the commander believed at this moment"></canvas>
+        </figure>
+        <figure class="truth">
+          <figcaption>
+            <div class="title"><span>What was really happening</span><small>never shown to the commander</small></div>
+            <div class="key">
+              <span><svg viewBox="0 0 13 10" style="fill:var(--blue)"><circle cx="6.5" cy="5" r="3"/></svg>friendly soldier</span>
+              <span><svg viewBox="0 0 13 10" style="fill:var(--red)"><circle cx="6.5" cy="5" r="3"/></svg>enemy soldier</span>
+              <span><svg viewBox="0 0 13 10" stroke="var(--dim)"><path d="M3 1.5l7 7M10 1.5l-7 7"/></svg>a death</span>
+              <span id="gridStep">Squares are 100 m</span>
+            </div>
+          </figcaption>
+          <canvas id="truthMap" role="img" aria-label="Map of the true positions at this moment"></canvas>
+        </figure>
+      </div>
 
-  <div class="timeline">
-    <canvas id="timeline" role="slider" tabindex="0" aria-label="Battle timeline"></canvas>
-    <div class="legend">
-      <span><i style="background:var(--blue)"></i>Friendly soldiers alive: <b id="westNow"></b></span>
-      <span><i style="background:var(--red)"></i>Enemy soldiers alive: <b id="eastNow"></b></span>
-      <span><i style="background:var(--violet)"></i>Commander taking a turn</span>
-      <span><i style="background:var(--amber)"></i>Order sent</span>
-      <span>Map squares are 100 m</span>
-    </div>
-  </div>
+      <div class="timeline">
+        <canvas id="timeline" role="slider" tabindex="0" aria-label="Battle timeline"></canvas>
+        <div class="legend">
+          <span><i style="background:var(--blue)"></i>Friendly soldiers alive: <b id="westNow"></b></span>
+          <span><i style="background:var(--red)"></i>Enemy soldiers alive: <b id="eastNow"></b></span>
+          <span><i style="background:var(--violet)"></i>Commander taking a turn</span>
+          <span><i style="background:var(--amber)"></i>Order sent</span>
+          <span>T+ is time since the start</span>
+        </div>
+      </div>
 
-  <div class="maps">
-    <figure class="belief">
-      <figcaption>What the commander believed <small>its markers and last reports, ageing</small></figcaption>
-      <canvas id="beliefMap"></canvas>
-    </figure>
-    <figure class="truth">
-      <figcaption>What was really happening <small>true positions, never shown to the commander</small></figcaption>
-      <canvas id="truthMap"></canvas>
-    </figure>
-  </div>
-
-  <div class="lower">
-    <section class="panel">
-      <h2>Belief against reality <small class="meta" id="gapNote"></small></h2>
-      <div class="scroll"><table id="stations"></table></div>
-      <p class="note" id="enemyGap"></p>
-      <h2>In the commander's head</h2>
-      <p class="said" id="turnSaid" hidden></p>
-      <p class="note notes" id="turnNote"></p>
-    </section>
-    <section class="panel">
-      <h2>Radio log
-        <span class="chips" role="group" aria-label="Filter">
-          <button type="button" id="followRadio" aria-pressed="true">Follow</button>
-          <button type="button" id="showAll">Hide routine</button>
+      <div class="controls">
+        <button id="play" type="button">Play</button>
+        <span id="clock">T+00:00</span>
+        <span class="chips" role="group" aria-label="Playback speed">
+          <button type="button" data-speed="1">1×</button>
+          <button type="button" data-speed="5" aria-pressed="true">5×</button>
+          <button type="button" data-speed="20">20×</button>
         </span>
-      </h2>
-      <div class="list" id="radio"></div>
-    </section>
-    <section class="panel">
-      <h2>Deaths <small class="meta">never shown to the commander</small></h2>
-      <div class="list short" id="deaths"></div>
-    </section>
-    <section class="panel">
-      <h2>Commander's turns <small class="meta" id="turnStats"></small></h2>
-      <div class="list" id="turns"></div>
-    </section>
-  </div>
+        <button id="prevEvent" type="button">◀ Previous death</button>
+        <button id="nextEvent" type="button">Next death ▶</button>
+        <span class="chips" role="group" aria-label="Map zoom">
+          <button type="button" id="zoomIn" title="Zoom in. The mouse wheel works too, and dragging moves the map.">Zoom in</button>
+          <button type="button" id="zoomOut">Zoom out</button>
+          <button type="button" id="zoomAll">Whole battle</button>
+        </span>
+      </div>
+    </div>
+
+    <aside class="rail">
+      <div class="head">
+        <div class="headline"><h2 id="name"></h2><span class="result" id="result"></span></div>
+        <p id="who"></p>
+        <p id="extra" hidden></p>
+        <dl class="score" id="score"></dl>
+      </div>
+      <div class="tabs" role="tablist" aria-label="Details" id="tabs">
+        <button type="button" role="tab" data-pane="reality" aria-selected="true">Reality</button>
+        <button type="button" role="tab" data-pane="commander" aria-selected="false">Commander</button>
+        <button type="button" role="tab" data-pane="radio" aria-selected="false">Radio</button>
+        <button type="button" role="tab" data-pane="deaths" aria-selected="false">Deaths</button>
+        <button type="button" role="tab" data-pane="turns" aria-selected="false">Turns</button>
+        <button type="button" role="tab" data-pane="compare" aria-selected="false" id="compareTab">Compare</button>
+      </div>
+
+      <section class="pane flow" id="pane-reality" role="tabpanel">
+        <p class="note plain" id="mission"></p>
+        <h3>How wrong was its picture?</h3>
+        <dl class="measures" id="measures"></dl>
+        <h3>Belief against reality <span class="meta" id="gapNote"></span></h3>
+        <div class="scroll"><table id="stations"></table></div>
+        <p class="note plain" id="enemyGap"></p>
+        <p class="note" id="record"></p>
+      </section>
+
+      <section class="pane flow" id="pane-commander" role="tabpanel" hidden>
+        <p class="note" id="commanderStats"></p>
+        <h3>Its latest words</h3>
+        <p class="said" id="turnSaid" hidden></p>
+        <p class="note" id="noWords" hidden></p>
+        <h3>Its notes</h3>
+        <p class="note notes" id="turnNote"></p>
+        <h3>Its markers at this moment</h3>
+        <ul class="marks" id="marks"></ul>
+      </section>
+
+      <section class="pane" id="pane-radio" role="tabpanel" hidden>
+        <div class="bar"><span id="radioCount"></span>
+          <span class="chips" role="group" aria-label="Radio log options">
+            <button type="button" id="followRadio" aria-pressed="true">Follow</button>
+            <button type="button" id="showAll" aria-pressed="false">Hide routine</button>
+          </span>
+        </div>
+        <div class="list" id="radio"></div>
+      </section>
+
+      <section class="pane" id="pane-deaths" role="tabpanel" hidden>
+        <div class="bar"><span>Never shown to the commander.</span><span id="deathCount"></span></div>
+        <p class="note plain" id="deathNote" hidden></p>
+        <div class="list" id="deaths"></div>
+      </section>
+
+      <section class="pane" id="pane-turns" role="tabpanel" hidden>
+        <div class="bar"><span>A turn is one time the commander woke, read new messages and acted. <span id="turnStats"></span> <span id="turnMode"></span></span></div>
+        <div class="list" id="turns"></div>
+      </section>
+
+      <section class="pane flow" id="pane-compare" role="tabpanel" hidden>
+        <p class="note plain" id="caveat"></p>
+        <p class="note" id="notCompared" hidden></p>
+        <div class="scroll"><table class="compare" id="compare"></table></div>
+        <h3>What the measures mean</h3>
+        <dl class="measures">
+          <div><dt>Marker error:</dt> <dd>on average, how far each enemy marker was, when placed, from the nearest enemy really alive.</dd></div>
+          <div><dt>Position error:</dt> <dd>on average over the battle, how far each living squad was from the last position it reported.</dd></div>
+          <div><dt>First contact:</dt> <dd>when a squad first reported the enemy.</dd></div>
+          <div><dt>Turns:</dt> <dd>how many times the commander woke to read messages and act.</dd></div>
+          <div><dt>Questions:</dt> <dd>radio questions put to squads.</dd></div>
+          <div><dt>Enemy markers:</dt> <dd>different enemy positions it marked on its map.</dd></div>
+          <div><dt>Tokens written:</dt> <dd>how much text the AI model produced. A script has none.</dd></div>
+        </dl>
+      </section>
+    </aside>
+  </main>
 </div>
 
 <script id="battle" type="application/json">/*BATTLE_DATA*/</script>
 <script>
 "use strict";
-const D = JSON.parse(document.getElementById("battle").textContent);
-const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-const C = { blue: css("--blue"), red: css("--red"), green: css("--green"), amber: css("--amber"), violet: css("--violet"), text: css("--text"), dim: css("--dim"), land: css("--land"), grid: css("--grid"), building: css("--building"), checked: css("--checked"), line: css("--line") };
-const MARKER = { enemy: C.red, danger: "#e8843a", hypothesis: C.violet, objective: C.green, friendly: C.blue, note: C.dim, phase_line: C.amber, area: C.amber };
 const $ = id => document.getElementById(id);
+// Either one battle, from `commander review`, or {battles: [...], compare: {...}}, from `commander site`.
+const PAGE = JSON.parse($("battle").textContent);
+const BATTLES = PAGE.battles || [PAGE];
+const MANY = BATTLES.length > 1;
+
+const C = {};
+let MARKER = {};
+function readColours() {
+  const style = getComputedStyle(document.documentElement);
+  for (const name of ["blue", "red", "green", "amber", "violet", "orange", "text", "dim", "land", "grid", "building", "checked", "outline", "line", "body", "mono"]) C[name] = style.getPropertyValue(`--${name}`).trim();
+  MARKER = { enemy: C.red, danger: C.orange, hypothesis: C.violet, objective: C.green, friendly: C.blue, note: C.dim, phase_line: C.amber, area: C.amber };
+}
+readColours();
+
 const fmt = t => { t = Math.max(0, Math.round(t)); return `T+${String(Math.floor(t / 60)).padStart(2, "0")}:${String(t % 60).padStart(2, "0")}`; };
 const ago = s => { s = Math.max(0, Math.round(s)); return s < 90 ? `${s} s` : `${Math.round(s / 60)} min`; };
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const isEnemy = name => D.enemies.includes(name);
+const verdict = ended => /achieved/i.test(ended || "") ? "Won" : /time limit/i.test(ended || "") ? "Not won: time limit" : /lost/i.test(ended || "") ? "Lost" : ended || "Didn't finish";
+const title = battle => battle.label || battle.name || "Battle";
 
-const duration = Math.max(1, D.duration);
-let now = 0, playing = false, speed = 5, follow = true, hideRoutine = false, last = 0;
+let D = null, duration = 1, alive = [], peak = 1, killTimes = [];
+let now = 0, playing = false, speed = 5, follow = true, hideRoutine = false, last = 0, tab = "reality";
 
 // One view for both maps, fitted to everything that happened, so the two can be compared by eye.
-const view = (() => {
-  let xs = [], ys = [];
+const view = { cx: 0, cy: 0, half: 500 }, whole = { ...view };
+
+function fitWhole() {
+  const xs = [], ys = [];
   for (const b of D.buildings) { xs.push(b.pos[0]); ys.push(b.pos[1]); }
   for (const f of D.frames) for (const g of f.groups) for (const u of g.units) if (u[0] > 1 || u[1] > 1) { xs.push(u[0]); ys.push(u[1]); }
   for (const m of D.markers) for (const q of m.points || (m.pos ? [m.pos] : [])) { xs.push(q[0]); ys.push(q[1]); }
   for (const r of D.radio) if (r.pos) { xs.push(r.pos[0]); ys.push(r.pos[1]); }
-  if (!xs.length) return { cx: (D.world_size || 8192) / 2, cy: (D.world_size || 8192) / 2, half: 500 };
-  const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
-  return { cx: (minX + maxX) / 2, cy: (minY + maxY) / 2, half: Math.max(maxX - minX, maxY - minY) / 2 + 70 };
-})();
-
-const whole = { ...view };
+  if (!xs.length) Object.assign(whole, { cx: (D.world_size || 8192) / 2, cy: (D.world_size || 8192) / 2, half: 500 });
+  else {
+    const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
+    Object.assign(whole, { cx: (minX + maxX) / 2, cy: (minY + maxY) / 2, half: Math.max(maxX - minX, maxY - minY) / 2 + 70 });
+  }
+  Object.assign(view, whole);
+}
 
 function fit(canvas) {
   const ratio = window.devicePixelRatio || 1, box = canvas.getBoundingClientRect();
@@ -213,7 +361,8 @@ function projector(w) {
 function ground(ctx, w, p) {
   ctx.fillStyle = C.land; ctx.fillRect(0, 0, w, w);
   const step = view.half > 900 ? 500 : 100;
-  ctx.strokeStyle = C.grid; ctx.lineWidth = 1; ctx.fillStyle = C.dim; ctx.font = "10px Consolas, monospace";
+  $("gridStep").textContent = `Squares are ${step} m`;
+  ctx.strokeStyle = C.grid; ctx.lineWidth = 1; ctx.fillStyle = C.dim; ctx.font = `10px ${C.mono}`;
   const low = view.cx - view.half, high = view.cx + view.half, lowY = view.cy - view.half, highY = view.cy + view.half;
   for (let x = Math.ceil(low / step) * step; x <= high; x += step) {
     const [px] = p.xy(x, lowY); ctx.beginPath(); ctx.moveTo(px, 0); ctx.lineTo(px, w); ctx.stroke();
@@ -231,9 +380,9 @@ function buildings(ctx, p, checkedBy) {
     const corners = [[-hw, -hl], [hw, -hl], [hw, hl], [-hw, hl]].map(([dx, dy]) => p.xy(b.pos[0] + dx * c + dy * s, b.pos[1] - dx * s + dy * c));
     ctx.beginPath(); corners.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.closePath();
     ctx.fillStyle = checkedBy && checkedBy(b.id) ? C.checked : C.building; ctx.fill();
-    ctx.strokeStyle = "#0008"; ctx.stroke();
+    ctx.strokeStyle = C.outline; ctx.lineWidth = 1; ctx.stroke();
     const [x, y] = p.xy(b.pos[0], b.pos[1]);
-    ctx.fillStyle = C.text; ctx.font = "600 10px Segoe UI, sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillStyle = C.text; ctx.font = `600 10px ${C.body}`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
     ctx.fillText(b.id, x, y); ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
   }
 }
@@ -248,13 +397,49 @@ function frameAt(t) {
 
 let placed = [];
 
-function label(ctx, text, x, y, colour) {
-  ctx.font = "600 12px Segoe UI, sans-serif";
-  const width = ctx.measureText(text).width;
-  for (let tries = 0; tries < 8 && placed.some(b => x < b.x + b.width && x + width > b.x && Math.abs(y - b.y) < 13); tries++) y += 14;
-  placed.push({ x, y, width });
-  ctx.lineWidth = 3; ctx.strokeStyle = C.land; ctx.strokeText(text, x, y);
-  ctx.fillStyle = colour; ctx.fillText(text, x, y);
+function wrapLabel(ctx, text, room, most) {
+  const words = String(text).split(/\s+/), lines = [];
+  let line = "";
+  for (let i = 0; i < words.length; i++) {
+    const longer = line ? `${line} ${words[i]}` : words[i];
+    if (!line || ctx.measureText(longer).width <= room) { line = longer; continue; }
+    lines.push(line);
+    if (lines.length === most - 1) { line = words.slice(i).join(" "); break; }
+    line = words[i];
+  }
+  if (ctx.measureText(line).width > room) {
+    while (line.length > 1 && ctx.measureText(`${line}…`).width > room) line = line.slice(0, -1);
+    line = `${line.trimEnd()}…`;
+  }
+  lines.push(line);
+  return lines;
+}
+
+// A label beside a point on the map. It stays on the map: long text wraps to two lines and then shortens, and the Commander
+// tab has every marker's full text. It takes the nearest free place, and a thin line ties it back if that's far off.
+function label(ctx, size, text, x, y, colour, clear) {
+  if (x < 0 || x > size || y < 0 || y > size) return;
+  ctx.font = `600 12px ${C.body}`;
+  const lines = wrapLabel(ctx, text, Math.max(120, size * .42), 2), width = Math.max(...lines.map(l => ctx.measureText(l).width));
+  const height = lines.length * 14, wanted = y - 9;
+  const right = x + clear, leftSide = x - clear - width, fits = at => at >= 3 && at + width <= size - 3;
+  const sides = [right, leftSide].filter(fits);
+  if (!sides.length) sides.push(Math.max(3, Math.min(size - 3 - width, right)));
+  if (right + width > size - 3) sides.reverse();
+  const free = (left, top) => top >= 1 && top + height <= size - 1 && !placed.some(b => left < b.left + b.width && left + width > b.left && top < b.top + b.height && top + height > b.top);
+  let spot = null;
+  for (let step = 0; step < 40 && !spot; step++) {
+    const top = wanted + (step % 2 ? 1 : -1) * Math.ceil(step / 2) * 14, left = sides.find(at => free(at, top));
+    if (left != null) spot = { left, top };
+  }
+  spot = spot || { left: sides[0], top: Math.max(1, Math.min(size - height - 1, wanted)) };
+  placed.push({ left: spot.left, top: spot.top, width, height });
+  if (Math.abs(spot.top - wanted) > 15) {
+    const edge = spot.left > x ? spot.left - 2 : spot.left + width + 2, side = spot.top > y ? spot.top : spot.top + height;
+    ctx.strokeStyle = colour; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(edge, side); ctx.stroke();
+  }
+  ctx.lineWidth = 3; ctx.lineJoin = "round"; ctx.strokeStyle = C.land; ctx.fillStyle = colour;
+  lines.forEach((line, i) => { const base = spot.top + 11 + i * 14; ctx.strokeText(line, spot.left, base); ctx.fillText(line, spot.left, base); });
 }
 
 function drawTruth() {
@@ -283,7 +468,7 @@ function drawTruth() {
       ctx.beginPath(); ctx.arc(x, y, 3.2, 0, 7); ctx.fillStyle = colour; ctx.fill();
       sx += x; sy += y;
     });
-    if (units.length) label(ctx, `${g.group} ${g.alive}`, sx / units.length + 8, sy / units.length - 7, colour);
+    if (units.length) label(ctx, w, `${g.group} ${g.alive}`, sx / units.length, sy / units.length - 8, colour, 8);
   }
 }
 
@@ -299,28 +484,12 @@ function drawBelief() {
   ground(ctx, w, p);
   const checked = new Map(); for (const r of D.radio) { if (r.t > now) break; if (r.checked) checked.set(r.checked, r.t); }
   buildings(ctx, p, id => checked.has(id));
-  for (const m of markersAt(now).values()) {
-    const colour = MARKER[m.kind] || C.text, age = m.t == null ? 0 : now - m.t;
-    ctx.globalAlpha = ["enemy", "danger", "hypothesis"].includes(m.kind) ? Math.max(.55, 1 - age / 600) : 1;
-    const text = [m.id, m.building && `in ${m.building}`, m.label, m.confidence].filter(Boolean).join(" ");
-    if (m.points) {
-      const pts = m.points.map(q => p.xy(q[0], q[1]));
-      ctx.strokeStyle = colour; ctx.lineWidth = 2; ctx.beginPath(); pts.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y));
-      if (m.kind === "area") ctx.closePath();
-      ctx.stroke(); label(ctx, text, pts[0][0] + 4, pts[0][1] - 4, colour);
-    } else {
-      if (!m.pos) { ctx.globalAlpha = 1; continue; }
-      const [x, y] = p.xy(m.pos[0], m.pos[1]);
-      ctx.strokeStyle = colour; ctx.lineWidth = 2.2; ctx.beginPath();
-      if (m.kind === "enemy" || m.kind === "danger") { ctx.moveTo(x, y - 8); ctx.lineTo(x + 8, y); ctx.lineTo(x, y + 8); ctx.lineTo(x - 8, y); ctx.closePath(); }
-      else if (m.kind === "objective") ctx.arc(x, y, 10, 0, 7);
-      else ctx.arc(x, y, 5, 0, 7);
-      ctx.stroke(); label(ctx, text, x + 11, y + 4, colour);
-    }
-    ctx.globalAlpha = 1;
-  }
   const seen = {};
   for (const r of D.radio) { if (r.t > now) break; if (r.pos) seen[r.from] = r; }
+  const marks = [...markersAt(now).values()];
+  // Labels keep clear of every symbol, and the squads' short labels are placed first so they stay beside their squads.
+  for (const r of Object.values(seen)) { const [x, y] = p.xy(r.pos[0], r.pos[1]); placed.push({ left: x - 11, top: y - 7, width: 22, height: 14 }); }
+  for (const m of marks) if (m.pos) { const [x, y] = p.xy(m.pos[0], m.pos[1]); placed.push({ left: x - 8, top: y - 8, width: 16, height: 16 }); }
   // The order each station was last given, as a dashed line from where it was last reported.
   const ordered = {};
   for (const o of D.orders) { if (o.t > now) break; if (o.to) ordered[o.to] = o; }
@@ -328,13 +497,33 @@ function drawBelief() {
     const [x, y] = p.xy(r.pos[0], r.pos[1]), o = ordered[station], age = now - r.t;
     if (o && o.target) {
       const [tx, ty] = p.xy(o.target[0], o.target[1]);
-      ctx.setLineDash([5, 5]); ctx.strokeStyle = C.amber; ctx.lineWidth = 1; ctx.globalAlpha = .6;
+      ctx.setLineDash([5, 5]); ctx.strokeStyle = C.amber; ctx.lineWidth = 1.2; ctx.globalAlpha = .7;
       ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(tx, ty); ctx.stroke(); ctx.setLineDash([]); ctx.globalAlpha = 1;
     }
     ctx.globalAlpha = Math.max(.6, 1 - age / 400);
     ctx.strokeStyle = C.blue; ctx.lineWidth = 2; ctx.strokeRect(x - 11, y - 7, 22, 14);
     ctx.beginPath(); ctx.moveTo(x - 11, y - 7); ctx.lineTo(x + 11, y + 7); ctx.moveTo(x - 11, y + 7); ctx.lineTo(x + 11, y - 7); ctx.stroke();
-    label(ctx, `${station} · ${ago(age)} ago`, x + 14, y + 4, C.blue);
+    label(ctx, w, `${station} · ${ago(age)} ago`, x, y, C.blue, 14);
+    ctx.globalAlpha = 1;
+  }
+  for (const m of marks) {
+    const colour = MARKER[m.kind] || C.text, age = m.t == null ? 0 : now - m.t;
+    ctx.globalAlpha = ["enemy", "danger", "hypothesis"].includes(m.kind) ? Math.max(.55, 1 - age / 600) : 1;
+    const text = [m.id, m.building && `in ${m.building}`, m.label].filter(Boolean).join(" ");
+    if (m.points) {
+      const pts = m.points.map(q => p.xy(q[0], q[1]));
+      ctx.strokeStyle = colour; ctx.lineWidth = 2; ctx.beginPath(); pts.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y));
+      if (m.kind === "area") ctx.closePath();
+      ctx.stroke(); if (pts.length) label(ctx, w, text, pts[0][0], pts[0][1] - 4, colour, 4);
+    } else {
+      if (!m.pos) { ctx.globalAlpha = 1; continue; }
+      const [x, y] = p.xy(m.pos[0], m.pos[1]);
+      ctx.strokeStyle = colour; ctx.lineWidth = 2.2; ctx.beginPath();
+      if (m.kind === "enemy" || m.kind === "danger") { ctx.moveTo(x, y - 8); ctx.lineTo(x + 8, y); ctx.lineTo(x, y + 8); ctx.lineTo(x - 8, y); ctx.closePath(); }
+      else if (m.kind === "objective") ctx.arc(x, y, 10, 0, 7);
+      else ctx.arc(x, y, 5, 0, 7);
+      ctx.stroke(); label(ctx, w, text, x, y, colour, 11);
+    }
     ctx.globalAlpha = 1;
   }
 }
@@ -346,24 +535,22 @@ function alivePoints() {
     return { t: f.t, west, east };
   });
 }
-const alive = alivePoints();
-const peak = Math.max(1, ...alive.map(a => Math.max(a.west, a.east)));
 
 function drawTimeline() {
-  const { ctx, w, h } = fit($("timeline")), x = t => t / duration * w, top = 14, bottom = h - 16;
+  const { ctx, w, h } = fit($("timeline")), x = t => t / duration * w, top = 12, bottom = h - 14;
   ctx.clearRect(0, 0, w, h);
   const every = [30, 60, 120, 300, 600, 1200].find(step => duration / step <= Math.max(2, w / 70)) || 1800;
-  ctx.font = "10px Consolas, monospace"; ctx.fillStyle = C.dim;
+  ctx.font = `10px ${C.mono}`; ctx.fillStyle = C.dim;
   for (let t = every; t < duration; t += every) {
     ctx.fillRect(x(t), bottom, 1, 4);
     ctx.fillText(`${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}`, x(t) + 3, h - 2);
   }
   for (const turn of D.turns) {
-    ctx.fillStyle = C.violet; ctx.globalAlpha = .35;
+    ctx.fillStyle = C.violet; ctx.globalAlpha = .2;
     ctx.fillRect(x(turn.start), 0, Math.max(2, x(turn.end ?? turn.start) - x(turn.start)), bottom);
     ctx.globalAlpha = 1;
   }
-  ctx.fillStyle = C.amber; for (const o of D.orders) ctx.fillRect(x(o.t) - .5, 0, 1.5, 9);
+  ctx.fillStyle = C.amber; for (const o of D.orders) ctx.fillRect(x(o.t) - .5, 0, 1.5, 8);
   const line = (key, colour) => {
     ctx.strokeStyle = colour; ctx.lineWidth = 2; ctx.beginPath();
     alive.forEach((a, i) => { const px = x(a.t), py = bottom - (a[key] / peak) * (bottom - top); i ? ctx.lineTo(px, py) : ctx.moveTo(px, py); });
@@ -378,7 +565,7 @@ function describe(action) {
   const i = action.input || {};
   switch (action.tool) {
     case "order": return `Order ${i.to}: ${(i.legs || []).map(l => `${l.type} ${[].concat(l.at ?? "").join(", ")}`.trim()).join(", then ")}`;
-    case "ask": return `Asked ${[].concat(i.to || "everyone").join(", ")}: ${(i.topics || ["SITREP"]).join(", ")}`;
+    case "ask": return `Asked ${[].concat(i.to || "everyone").join(", ")}: ${(i.topics || ["a status report"]).join(", ")}`;
     case "schedule": return `Timer ${i.at || `in ${i.after || i.every}`}: ${i.do && i.do.wake ? i.do.wake : "a question"}`;
     case "unschedule": return `Cancelled timer ${i.id}`;
     case "mark": return `Marked ${i.id || "a new point"}${i.at ? ` at ${[].concat(i.at).join(", ")}` : ""}${i.label ? `: ${i.label}` : ""}`;
@@ -397,26 +584,29 @@ function renderRows() {
     const did = (t.actions || []).filter(a => a.tool !== "notes").map(describe);
     return `<button type="button" class="row" data-t="${t.start}"><span class="t">${fmt(t.start).slice(2)}</span><span class="text"><span class="who">Turn ${t.turn}</span> <span class="meta">woke on ${esc(t.woke_on)}${t.duration != null ? `, ${t.duration} s` : ""}</span>${did.map(d => `<br><span class="did">${esc(d)}</span>`).join("")}${t.note ? `<br><span class="meta">${esc(t.note)}</span>` : ""}</span></button>`;
   }).join("");
+  const lost = D.score.friendly_lost + D.score.enemy_killed;
   $("deaths").innerHTML = D.kills.length ? D.kills.map(k => {
     const by = k.killer && k.killer !== k.victim ? `killed by ${esc(k.killer)}${k.distance != null ? ` at ${Math.round(k.distance)} m` : ""}` : "died";
     return `<button type="button" class="row" data-t="${k.t}"><span class="t">${fmt(k.t).slice(2)}</span><span class="text" style="color:${k.friendly ? "var(--blue)" : "var(--red)"}"><span class="who">${esc(k.victim || "Someone")}</span> <span class="meta">${by}</span></span></button>`;
-  }).join("") : `<p class="note">Nobody died.</p>`;
-  for (const box of [$("radio"), $("turns"), $("deaths")]) box.addEventListener("click", e => { const row = e.target.closest(".row"); if (row) seek(+row.dataset.t); });
+  }).join("") : `<p class="note">${lost ? `${lost} soldiers died, but this record has no list of who died or when. The right map still shows them going.` : "Nobody died."}</p>`;
+  const logged = D.kills.filter(k => k.friendly).length, counted = D.score.friendly_lost;
+  $("deathNote").hidden = !D.kills.length || logged === counted;
+  $("deathNote").textContent = `The death log lists ${logged} friendly deaths, but the soldier count shows ${counted} lost. The two records disagree for this battle, and the scores use the soldier count.`;
+  for (const box of [$("radio"), $("turns"), $("deaths")]) box.scrollTop = 0;
 }
 
-function updateRows() {
+function updateRows(box) {
   let current = null;
-  for (const row of $("radio").children) {
-    const t = +row.dataset.t, future = t > now;
+  for (const row of box.children) {
+    if (!row.dataset.t) continue;
+    const future = +row.dataset.t > now;
     row.classList.toggle("future", future); row.classList.remove("now");
-    row.hidden = hideRoutine && row.dataset.quiet === "true";
+    row.hidden = box.id === "radio" && hideRoutine && row.dataset.quiet === "true";
     if (!future && !row.hidden) current = row;
   }
-  if (current) { current.classList.add("now"); if (follow) { const box = $("radio"); box.scrollTop = current.offsetTop - box.offsetTop - box.clientHeight / 2; } }
-  let currentTurn = null;
-  for (const row of $("deaths").children) if (row.dataset.t) row.classList.toggle("future", +row.dataset.t > now);
-  for (const row of $("turns").children) { const future = +row.dataset.t > now; row.classList.toggle("future", future); row.classList.remove("now"); if (!future) currentTurn = row; }
-  if (currentTurn) { currentTurn.classList.add("now"); if (follow) { const box = $("turns"); box.scrollTop = currentTurn.offsetTop - box.offsetTop - box.clientHeight / 2; } }
+  if (box.id === "deaths" || !current) return;
+  current.classList.add("now");
+  if (follow) box.scrollTop = current.offsetTop - box.clientHeight / 2;
 }
 
 function updateStations() {
@@ -429,47 +619,74 @@ function updateStations() {
     const trueAlive = group ? group.alive : info.units;
     const lastText = heard ? heard.text : "Nothing heard yet";
     let located = null; for (const r of reports) if (r.pos) located = r;
-    const dead = trueAlive === 0, killedAt = dead ? D.kills.filter(k => k.t <= now && k.side === "WEST").map(k => k.t).pop() : null;
     let trueWords;
-    if (dead) { trueWords = `<span class="dead">Wiped out</span>${killedAt != null ? ` ${ago(now - killedAt)} ago` : ""}`; gaps += 1; }
-    else {
+    if (trueAlive === 0) {
+      const gone = D.frames.find(x => x.groups.some(g => g.group === station && g.alive === 0));
+      trueWords = `<span class="dead">Wiped out</span>${gone ? ` ${ago(now - gone.t)} ago` : ""}`; gaps += 1;
+    } else {
       const off = located && group && group.pos.length ? Math.round(Math.hypot(located.pos[0] - group.pos[0], located.pos[1] - group.pos[1])) : null;
       trueWords = `<span class="${trueAlive < info.units ? "gap" : "ok"}">${trueAlive} of ${info.units}</span>${off != null ? `<br><span class="${off > 150 ? "gap" : "meta"}">${off} m from last reported</span>` : ""}`;
     }
     rows.push(`<tr><td class="who">${esc(station)}</td><td>${esc(lastText)}<br><span class="meta">${heard ? `${ago(now - heard.t)} ago` : ""}</span></td><td class="num">${trueWords}</td></tr>`);
   }
-  $("stations").innerHTML = `<thead><tr><th>Station</th><th>Last heard by the commander</th><th>Really</th></tr></thead><tbody>${rows.join("")}</tbody>`;
-  const counts = alive.length ? alive[Math.max(0, alive.findLastIndex(a => a.t <= now))] : { west: 0, east: 0 };
-  $("westNow").textContent = counts.west; $("eastNow").textContent = counts.east;
-  $("gapNote").textContent = gaps ? `${gaps} station${gaps > 1 ? "s" : ""} gone` : "";
+  $("stations").innerHTML = `<thead><tr><th>Squad</th><th>Last heard by the commander</th><th>Really</th></tr></thead><tbody>${rows.join("")}</tbody>`;
+  $("gapNote").textContent = gaps ? `${gaps} squad${gaps > 1 ? "s" : ""} gone` : "";
   const enemies = f ? f.a.groups.filter(g => D.enemies.includes(g.group)) : [];
   const enemyAlive = enemies.reduce((sum, g) => sum + g.alive, 0);
   const marked = [...markersAt(now).values()].filter(m => m.kind === "enemy").length;
-  $("enemyGap").innerHTML = D.enemies.length ? `Enemy really alive: <b class="${enemyAlive ? "gap" : "ok"}">${enemyAlive} of ${D.enemy_total}</b>. Enemy markers on the commander's map: <b>${marked}</b>.` : "No enemy in this battle.";
-  let turn = null, notes = "";
+  $("enemyGap").innerHTML = D.enemies.length ? `Enemy really alive: <b class="${enemyAlive ? "gap" : "ok"}">${enemyAlive} of ${D.enemy_total}</b>. Enemy markers on the commander's map: <b>${marked}</b>.` : "No enemy in this battle: the mission was only to move.";
+}
+
+const KIND = { enemy: "Enemy", danger: "Danger", hypothesis: "Possible enemy", objective: "Objective", friendly: "Friendly", note: "Note", phase_line: "Line", area: "Area" };
+
+function updateCommander() {
+  let said = "", notes = "";
   for (const t of D.turns) {
     if (t.start > now) break;
-    turn = t;
+    if (t.said && t.said.length) said = t.said[t.said.length - 1].replace(/\*\*/g, "");
     for (const a of t.actions || []) if (a.tool === "notes") notes = a.input.text || notes;
   }
-  const said = turn && turn.said && turn.said.length ? turn.said[turn.said.length - 1] : "";
+  const model = D.commander.model;
   $("turnSaid").textContent = said;
   $("turnSaid").hidden = !said;
-  $("turnNote").textContent = notes || (now >= duration && D.notes) || (D.commander.model ? "No notes written yet." : "Scripted test, so nobody was thinking.");
-  const n = D.radio.filter(r => r.t <= now).length, k = D.kills.filter(x => x.t <= now).length;
-  $("tick").textContent = `${n} radio messages, ${k} deaths so far`;
+  $("noWords").hidden = !!said;
+  $("noWords").textContent = model ? "Nothing said yet at this moment." : "A script ran this battle, so there are no words to show.";
+  $("turnNote").textContent = notes || (now >= duration && D.notes) || (model ? "No notes written yet." : "A script keeps no notes.");
+  const marks = [...markersAt(now).values()];
+  $("marks").innerHTML = marks.length ? marks.map(m => {
+    const place = m.building ? `in ${m.building}` : Array.isArray(m.at) ? `from grid ${m.at.join(" to ")}` : m.at ? `at grid ${m.at}` : "";
+    const details = [place, m.confidence && `${m.confidence} confidence`, m.t ? `placed ${fmt(m.t)}` : "given at the start"].filter(Boolean).join(", ");
+    return `<li><span class="who" style="color:var(--${{ enemy: "red", danger: "orange", hypothesis: "violet", objective: "green", friendly: "blue", phase_line: "amber", area: "amber" }[m.kind] || "text"})">${esc(m.id)} ${esc(KIND[m.kind] || m.kind || "")}</span>${m.label ? `: ${esc(m.label)}` : ""} <span class="meta">(${esc(details)})</span></li>`;
+  }).join("") : `<li class="meta">None.</li>`;
+}
+
+// Only the tab in view is kept up to date while the replay runs.
+function updatePane() {
+  if (tab === "reality") updateStations();
+  else if (tab === "commander") updateCommander();
+  else if (tab === "radio") { updateRows($("radio")); $("radioCount").textContent = `${D.radio.filter(r => r.t <= now).length} of ${D.radio.length} messages so far`; }
+  else if (tab === "deaths") { updateRows($("deaths")); $("deathCount").textContent = D.kills.length ? `${D.kills.filter(k => k.t <= now).length} of ${D.kills.length} so far` : ""; }
+  else if (tab === "turns") updateRows($("turns"));
 }
 
 function draw() {
   $("clock").textContent = fmt(now);
-  drawTruth(); drawBelief(); drawTimeline(); updateStations(); updateRows();
+  drawTruth(); drawBelief(); drawTimeline(); updatePane();
+  const counts = alive.length ? alive[Math.max(0, alive.findLastIndex(a => a.t <= now))] : { west: 0, east: 0 };
+  $("westNow").textContent = counts.west; $("eastNow").textContent = counts.east;
   const box = $("timeline"); box.setAttribute("aria-valuenow", Math.round(now)); box.setAttribute("aria-valuetext", fmt(now));
+}
+
+function writeHash(moment = true) {
+  const at = moment ? `t${Math.round(now)}` : "", name = MANY ? [D.id, at].filter(Boolean).join("-") : at;
+  try { history.replaceState(null, "", `#${name}`); } catch (_) { /* some viewers refuse */ }
 }
 
 function seek(t) {
   now = Math.max(0, Math.min(duration, t));
+  $("play").textContent = playing ? "Pause" : now >= duration ? "Replay" : "Play";
   draw();
-  try { history.replaceState(null, "", `#t${Math.round(now)}`); } catch (_) { /* some viewers refuse */ }
+  writeHash();
 }
 
 function loop(stamp) {
@@ -522,33 +739,146 @@ function scrubAt(event) {
   seek((event.clientX - box.left) / box.width * duration);
 }
 
-function init() {
-  document.title = D.name ? `Battle Review: ${D.name}` : "Battle Review";
-  $("name").textContent = D.name || "Battle Review";
-  $("mission").textContent = D.text || "";
-  const result = $("result");
-  result.textContent = D.ended || "Didn't finish";
-  result.className = "result " + (/achieved/i.test(D.ended || "") ? "win" : /lost|time limit/i.test(D.ended || "") ? "loss" : "");
-  const c = D.commander;
-  $("who").textContent = c.model ? `Commanded by ${c.model}: ${c.requests} requests, ${Math.round(c.output_tokens / 100) / 10}k tokens written` : "Scripted test: no model session found";
-  $("who").className = "result " + (c.model ? "llm" : "scripted");
-  const outside = c.tools_outside_lockdown || [];
-  $("lockdown").hidden = !outside.length;
-  $("lockdown").textContent = `Tools outside the lockdown: ${outside.join(", ")}`;
-  $("meta").textContent = `${fmt(duration)}, ${D.turns.length} turns, ${D.mode || ""} mode, run ${D.run || ""}${D.attempt > 1 ? ` attempt ${D.attempt}` : ""}`;
-  $("turnStats").textContent = D.turns.length ? `average ${(D.turns.reduce((s, t) => s + (t.duration || 0), 0) / D.turns.length).toFixed(1)} s` : "";
+function setTab(name) {
+  tab = name;
+  for (const b of $("tabs").children) {
+    const on = b.dataset.pane === name;
+    b.setAttribute("aria-selected", String(on)); b.tabIndex = on ? 0 : -1;
+    $(`pane-${b.dataset.pane}`).hidden = !on;
+  }
+  updatePane();
+}
+
+// -- the page's words, and one battle or many -------------------------------------------------------------------------
+
+function introText() {
+  const models = BATTLES.filter(b => b.commander.model).length, scripts = BATTLES.length - models;
+  const maps = "The left map shows what it believed, and the right map shows what was really happening.";
+  if (!models) return `A script with no AI commanded these squads in the military game Arma 3 without ever seeing the battle. It knew only what radio reports told it. ${maps}`;
+  const base = `An AI commanded these squads in the military game Arma 3 without ever seeing the battle. It knew only what radio reports told it. ${maps}`;
+  return scripts ? `${base} Scripts with no AI were run the same way, for comparison.` : base;
+}
+
+function whoShort(battle) {
+  return battle.commander.model ? `<span class="chip llm">AI model</span>` : `<span class="chip script">Script, no AI</span>`;
+}
+
+function whoLong(battle) {
+  const model = battle.commander.model;
+  return model ? `${whoShort(battle)} Commanded by ${esc(model)}, an AI model.`
+    : `${whoShort(battle)} A script commanded this battle, with no AI model. The records hold no model session for it.`;
+}
+
+const TOOL_WORDS = { SendFeedback: "to draft a bug report, and that tool couldn't see the battle" };
+
+function extraTools(commander) {
+  const tools = commander.tools_outside_lockdown || [], used = commander.outside_lockdown_used || {};
+  if (!tools.length) return "";
+  const times = n => n === 1 ? "once" : n === 2 ? "twice" : `${n} times`;
+  const list = Object.entries(used).map(([tool, n]) => `It used ${tool} ${times(n)}${TOOL_WORDS[tool] ? `, ${TOOL_WORDS[tool]}` : ""}.`);
+  const had = tools.length === 1 ? "one extra tool" : `${tools.length} extra tools`;
+  const names = tools.length === 1 && list.length ? "" : ` (${tools.join(", ")})`;
+  return `<b>Extra access:</b> this commander had ${had} beyond its battle tools${esc(names)}. ${list.length ? esc(list.join(" ")) : `It never used ${tools.length === 1 ? "it" : "them"}.`}`;
+}
+
+function renderPicker() {
+  $("picker").hidden = !MANY;
+  $("compareTab").hidden = !PAGE.compare;
+  if (!MANY) return;
+  $("picker").innerHTML = BATTLES.map(b => {
+    const s = b.score;
+    return `<button type="button" class="pick" data-id="${esc(b.id)}" aria-pressed="${b === D}"><b>${esc(title(b))}</b><span class="how">${whoShort(b)} ${esc(verdict(s.ended))}, ${s.friendly_lost} of ${s.friendly_total} lost</span></button>`;
+  }).join("");
+}
+
+function renderCompare() {
+  const table = PAGE.compare;
+  if (!table) return;
+  const selected = table.ids.indexOf(D.id), names = { Scenario: "Mission", "Friendly lost": "Friendly soldiers lost", "Enemy killed": "Enemy soldiers killed" };
+  const [head, ...rows] = table.rows;
+  const mark = i => i - 1 === selected ? "sel" : "";
+  $("compare").innerHTML = `<thead><tr><th>Measure</th>${head.slice(1).map((name, i) => `<th class="${mark(i + 1)}"><button type="button" data-id="${esc(table.ids[i])}">${esc(name)}</button></th>`).join("")}</tr></thead><tbody>${rows.map(row => {
+    const lead = row[0] === "Result" || row[0] === "Commander";
+    return `<tr><td>${esc(names[row[0]] || row[0])}</td>${row.slice(1).map((cell, i) => `<td class="num ${mark(i + 1)} ${lead ? "lead" : ""}">${esc(row[0] === "Result" ? verdict(cell) : cell)}</td>`).join("")}</tr>`;
+  }).join("")}</tbody>`;
+  $("notCompared").hidden = selected >= 0;
+  $("notCompared").textContent = "The battle you've selected had a different mission, so it isn't in this table.";
+  const scripts = BATTLES.filter(b => !b.commander.model && table.ids.includes(b.id)).map(b => b.score.friendly_lost);
+  const spread = scripts.length > 1 ? ` The scripts alone varied from ${Math.min(...scripts)} to ${Math.max(...scripts)} friendlies lost on the same mission.` : "";
+  $("caveat").textContent = `Each column is a single run.${spread} So this doesn't prove that one commander is better than another.`;
+}
+
+function renderBattle() {
+  const c = D.commander, s = D.score;
+  $("name").textContent = title(D);
+  if (!MANY && D.name) document.title = `${D.name}: Commander Battle Review`;
+  $("intro").textContent = introText();
+  $("mission").innerHTML = D.text ? `<b>The mission:</b> ${esc(D.text)}` : "";
+  const result = $("result"), word = verdict(D.ended);
+  result.textContent = word;
+  result.className = `result ${word === "Won" ? "win" : word === "Didn't finish" ? "" : "loss"}`;
+  $("who").innerHTML = whoLong(D);
+  $("beliefTitle").textContent = c.model ? "What the commander believed" : "What the script knew";
+  const extra = extraTools(c);
+  $("extra").hidden = !extra; $("extra").innerHTML = extra;
+  $("commanderStats").textContent = c.model ? `${c.requests} requests to the model, ${Math.round(c.output_tokens / 100) / 10}k tokens written. The model's private reasoning isn't recorded, so only what it wrote out is shown.` : "A script commanded this battle, with no AI model.";
+  $("record").textContent = `Record ${D.run || ""}${D.attempt ? `, attempt ${D.attempt}` : ""}.`;
+  $("turnStats").textContent = D.turns.length ? `Each lasted ${(D.turns.reduce((sum, t) => sum + (t.duration || 0), 0) / D.turns.length).toFixed(1)} s on average.` : "";
+  $("turnMode").textContent = D.mode === "hold" ? "Messages arriving during a turn waited until it ended." : D.mode === "deliver" ? "Messages also reached it during a turn." : "";
   $("timeline").setAttribute("aria-valuemin", 0); $("timeline").setAttribute("aria-valuemax", Math.round(duration));
-  const s = D.score, clock = t => t == null ? "None" : fmt(t).slice(2);
-  const metres = m => m == null ? "None" : `${m} m`;
+  const clock = t => t == null ? "None" : fmt(t).slice(2), metres = m => m == null ? "None" : `${m} m`;
   const facts = [
-    ["Friendly lost", `${s.friendly_lost} of ${s.friendly_total}`], ["Enemy killed", `${s.enemy_killed} of ${s.enemy_total}`],
-    ["First contact", clock(s.first_contact_s)], ["Turns", s.turns], ["Orders", s.orders], ["Questions", s.questions],
-    ["Enemy markers", s.enemy_markers], ["Marker error", metres(s.marker_error_m), "Average distance from each enemy marker, when placed, to the nearest enemy really alive"],
-    ["Position error", metres(s.position_error_m), "Average distance from each living station to the last position it reported"],
+    ["Friendlies lost", `${s.friendly_lost} of ${s.friendly_total}`], ["Enemy killed", `${s.enemy_killed} of ${s.enemy_total}`], ["Duration", clock(s.duration_s)],
+    ["First contact", clock(s.first_contact_s)], ["Turns", s.turns], ["Orders", s.orders], ["Questions", s.questions], ["Enemy markers", s.enemy_markers],
+    ["Marker error", metres(s.marker_error_m)], ["Position error", metres(s.position_error_m)],
   ];
-  $("score").innerHTML = facts.map(([name, value, why]) => `<div${why ? ` title="${esc(why)}"` : ""}><dt>${esc(name)}</dt><dd>${esc(value)}</dd></div>`).join("");
+  $("score").innerHTML = facts.map(([name, value]) => `<div><dt>${esc(name)}</dt><dd>${esc(value)}</dd></div>`).join("");
+  $("measures").innerHTML = [
+    ["Marker error", metres(s.marker_error_m), "on average, how far each enemy marker was, when placed, from the nearest enemy really alive."],
+    ["Position error", metres(s.position_error_m), "on average over the battle, how far each living squad was from the last position it reported."],
+  ].map(([name, value, why]) => `<div><dt>${name}, ${esc(value)}:</dt> <dd>${why}</dd></div>`).join("");
   renderRows();
+  renderPicker();
+  renderCompare();
+}
+
+function show(battle, t) {
+  playing = false;
+  D = battle;
+  duration = Math.max(1, D.duration);
+  alive = alivePoints();
+  peak = Math.max(1, ...alive.map(a => Math.max(a.west, a.east)));
+  killTimes = D.kills.map(k => k.t);
+  fitWhole();
+  renderBattle();
+  now = t == null ? duration : Math.max(0, Math.min(duration, t));
+  $("play").textContent = now >= duration ? "Replay" : "Play";
+  draw();
+}
+
+// A link can name a battle, a moment or both: #20261105-133935-1-t123. Plain #t123 still works. Only that form survives a
+// published page's link, but #run=ID&t=123 is read too.
+function readHash() {
+  const hash = decodeURIComponent(location.hash);
+  const moment = /^#t(\d+)$/.exec(hash);
+  if (moment) return { battle: D || BATTLES[0], t: +moment[1] };
+  const named = /^#(?:run=)?([^&]+?)(?:(?:-t|&t=)(\d+))?$/.exec(hash);
+  const battle = named && BATTLES.find(b => b.id === named[1].replace(":", "-"));
+  return battle ? { battle, t: named[2] == null ? null : +named[2] } : { battle: D || BATTLES[0], t: null };
+}
+
+function pickBattle(id) {
+  const battle = BATTLES.find(b => b.id === id);
+  if (!battle || battle === D) return;
+  // Keep the moment when the viewer has moved to one, so that battles can be compared at the same time.
+  const kept = now < duration ? now : null;
+  show(battle, kept);
+  writeHash(kept != null);
+}
+
+function init() {
   mapControls($("beliefMap")); mapControls($("truthMap"));
+  for (const box of [$("radio"), $("turns"), $("deaths")]) box.addEventListener("click", e => { const row = e.target.closest(".row"); if (row) seek(+row.dataset.t); });
   $("zoomIn").addEventListener("click", () => zoom(.6));
   $("zoomOut").addEventListener("click", () => zoom(1 / .6));
   $("zoomAll").addEventListener("click", () => { Object.assign(view, whole); draw(); });
@@ -559,6 +889,17 @@ function init() {
   });
   $("followRadio").addEventListener("click", e => { follow = !follow; e.target.setAttribute("aria-pressed", String(follow)); });
   $("showAll").addEventListener("click", e => { hideRoutine = !hideRoutine; e.target.setAttribute("aria-pressed", String(hideRoutine)); draw(); });
+  $("tabs").addEventListener("click", e => { const b = e.target.closest("[data-pane]"); if (b) setTab(b.dataset.pane); });
+  $("tabs").addEventListener("keydown", e => {
+    const shown = [...$("tabs").children].filter(b => !b.hidden), at = shown.findIndex(b => b.dataset.pane === tab);
+    const step = { ArrowRight: 1, ArrowLeft: -1 }[e.key];
+    if (!step) return;
+    e.preventDefault();
+    const next = shown[(at + step + shown.length) % shown.length];
+    setTab(next.dataset.pane); next.focus();
+  });
+  $("picker").addEventListener("click", e => { const b = e.target.closest("[data-id]"); if (b) pickBattle(b.dataset.id); });
+  $("compare").addEventListener("click", e => { const b = e.target.closest("[data-id]"); if (b) pickBattle(b.dataset.id); });
   const timeline = $("timeline");
   let dragging = false;
   timeline.addEventListener("pointerdown", e => { dragging = true; timeline.setPointerCapture(e.pointerId); scrubAt(e); });
@@ -568,15 +909,18 @@ function init() {
     if (e.key === "ArrowLeft") seek(now - 5); else if (e.key === "ArrowRight") seek(now + 5); else return;
     e.preventDefault();
   });
-  const killTimes = D.kills.map(k => k.t);
   $("nextEvent").addEventListener("click", () => { const t = killTimes.find(k => k > now + .5); if (t != null) seek(t); });
   $("prevEvent").addEventListener("click", () => { const before = killTimes.filter(k => k < now - .5); if (before.length) seek(before[before.length - 1]); });
   document.addEventListener("keydown", e => { if (e.code === "Space" && !["BUTTON", "INPUT"].includes(document.activeElement.tagName)) { e.preventDefault(); togglePlay(); } });
   window.addEventListener("resize", draw);
-  const hash = /^#t(\d+)$/.exec(location.hash);
-  now = hash ? Math.min(duration, +hash[1]) : duration;
-  $("play").textContent = hash ? "Play" : "Replay";
-  draw();
+  window.addEventListener("hashchange", () => { const { battle, t } = readHash(); show(battle, t); });
+  // Canvas colours are read from the tokens, so they need reading again when the theme changes.
+  const recolour = () => { readColours(); draw(); };
+  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", recolour);
+  new MutationObserver(recolour).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+  const { battle, t } = readHash();
+  show(battle, t);
+  setTab(tab);
 }
 init();
 </script>

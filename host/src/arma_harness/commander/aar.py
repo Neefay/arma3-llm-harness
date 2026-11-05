@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import math
 import re
+from collections import Counter
 from datetime import datetime
 from importlib import resources
 from pathlib import Path
@@ -56,7 +57,9 @@ def battle_data(folder: Path, commander: dict | None = None) -> dict:
               for row in _until_clock_restarts(records.read_truth()) if in_battle(row)]
     radio = [_radio(row, world_size) for row in records.read("radio") if in_battle(row)]
     markers = _markers(records, scenario, world_size)
-    kills = [_kill(row, folder.name) for row in _until_clock_restarts(records.read_kills()) if in_battle(row)]
+    truth = records.read_truth()
+    kills = [_kill(row, folder.name) for row in _until_clock_restarts(records.read_kills())
+             if in_battle(row) and not _outside_battle(row, truth, wanted)]
     turns = _turns(records, state, commander)
     orders = [_order(row, info.get("buildings") or [], markers, world_size) for row in records.read("orders")]
     latest = [row["t"] for rows in (frames, radio, kills) for row in rows[-1:]] + [t["start"] for t in turns[-1:]]
@@ -140,14 +143,21 @@ def compare(home: Home, battles: list[str] | None = None) -> str:
             cards.append((f"{run}:{attempt}", data["commander"].get("model") or "Scripted", data))
     if not cards:
         raise ValueError("no finished battle to compare")
+    rows = _comparison(cards)
+    widths = [max(len(str(row[index])) for row in rows) for index in range(len(rows[0]))]
+    return "\n".join("  ".join(str(cell).ljust(width) for cell, width in zip(row, widths, strict=True)).rstrip()
+                     for row in rows)
+
+
+def _comparison(cards: list[tuple[str, str, dict]]) -> list[tuple]:
+    """The table of battles, for the terminal and the page alike. Each card is (name, who commanded, data). The first
+    row is the names, and every other row is a measure and one cell per battle."""
     rows = [("", *[name for name, _, _ in cards]), ("Scenario", *[d["name"] for _, _, d in cards]),
             ("Commander", *[who for _, who, _ in cards])]
     for label, show in COMPARED:
         rows.append((label, *[show(d["score"]) for _, _, d in cards]))
     rows.append(("Tokens written", *[str(d["commander"].get("output_tokens", "-")) for _, _, d in cards]))
-    widths = [max(len(str(row[index])) for row in rows) for index in range(len(rows[0]))]
-    return "\n".join("  ".join(str(cell).ljust(width) for cell, width in zip(row, widths, strict=True)).rstrip()
-                     for row in rows)
+    return rows
 
 
 COMPARED = [
@@ -195,6 +205,17 @@ def _until_clock_restarts(rows: list[dict]) -> list[dict]:
             break
         kept.append(row)
     return kept
+
+
+def _outside_battle(kill: dict, truth: list[dict], wanted: set[str]) -> bool:
+    """A death that wasn't one of the battle's own. In older records, it's the soldier in the observer slot when nobody
+    was playing it, who shows up standing where a group outside the battle was."""
+    place = kill.get("victimPos")
+    before = [row for row in truth if 0 <= row.get("t", 0) <= kill.get("t", 0)]
+    if not place or not before:
+        return False
+    return any(group.get("pos") and group.get("group") not in wanted and math.dist(group["pos"][:2], place[:2]) < 3
+               for group in before[-1].get("groups") or [])
 
 
 def _group(group: dict) -> dict:
@@ -302,6 +323,7 @@ def _battle_window(folder: Path) -> tuple[float, float] | None:
 def _read_session(file: Path, window: tuple[float, float]) -> dict | None:
     turns: dict[int, dict] = {}
     model, requests, output_tokens, peak_context, tool_calls = None, set(), 0, 0, 0
+    other_calls: Counter[str] = Counter()
     turn, typed_before, answering_person = 1, False, False
     rows = [row for row in map(_json, file.read_text(encoding="utf-8").splitlines()) if row]
     for row in rows:
@@ -338,12 +360,15 @@ def _read_session(file: Path, window: tuple[float, float]) -> dict | None:
                     tool = block["name"][len(_TOOL):]
                     if tool in _ACTIONS:
                         entry["actions"].append({"tool": tool, "input": block.get("input") or {}})
+                elif block.get("type") == "tool_use":
+                    other_calls[block.get("name", "")] += 1
     if not tool_calls:
         return None
+    # What this session was really offered. A one-shot lockdown check can see fewer tools than this one did.
+    outside = judge_lockdown(tools_received(rows)).get("unexpected", [])
     return {"model": model, "requests": len(requests), "output_tokens": output_tokens, "peak_context": peak_context,
-            "tool_calls": tool_calls, "turns": turns,
-            # What this session was really offered. A one-shot lockdown check can see fewer tools than this one did.
-            "tools_outside_lockdown": judge_lockdown(tools_received(rows)).get("unexpected", [])}
+            "tool_calls": tool_calls, "turns": turns, "tools_outside_lockdown": outside,
+            "outside_lockdown_used": {name: other_calls[name] for name in outside if other_calls[name]}}
 
 
 def _json(line: str) -> dict | None:
@@ -391,3 +416,26 @@ def write(folder: Path, out: Path | None = None, projects: Path | None = None) -
     return {"review": str(out), "battle": data["name"], "run": data["run"], "attempt": data["attempt"],
             "ended": data["ended"], "commander": data["commander"].get("model") or "no model session found",
             "tools_outside_lockdown": data["commander"].get("tools_outside_lockdown", [])}
+
+
+def site(home: Home, battles: list[str], out: Path, projects: Path | None = None) -> dict:
+    """Several battles in one page, with a picker and a comparison, to publish or send. Each is RUN[:ATTEMPT][=Label],
+    or a records folder in place of the run. The page opens on the first, and compares those that share its mission."""
+    if not battles:
+        raise ValueError("commander site needs at least one --battle RUN[:ATTEMPT][=Label]")
+    picked = []
+    for spec in battles:
+        source, _, label = spec.partition("=")
+        folder = Path(source) if Path(source).is_dir() else find_battle(home, *_battle_name(source))
+        data = battle_data(folder, commander_session(folder, projects))
+        model = data["commander"].get("model")
+        run_id = re.sub(r"[^A-Za-z0-9-]", "-", f"{data['run']}-{data['attempt'] or _battle_order(folder)[1]}")
+        picked.append({**data, "id": run_id, "label": label or model or "Script"})
+    alike = [data for data in picked if data["name"] == picked[0]["name"]]
+    cards = [(data["label"], data["commander"].get("model") or "Script, no AI", data) for data in alike]
+    page = {"battles": picked, "compare": {"ids": [data["id"] for data in alike], "rows": _comparison(cards)}}
+    out.write_text(render(page), encoding="utf-8")
+    return {"site": str(out), "bytes": out.stat().st_size, "opens_on": picked[0]["label"],
+            "battles": [{"id": data["id"], "label": data["label"], "ended": data["ended"],
+                         "commander": data["commander"].get("model") or "no model session found",
+                         "compared": data in alike} for data in picked]}

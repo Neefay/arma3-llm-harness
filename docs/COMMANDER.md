@@ -830,6 +830,8 @@ The enemy stays as it is for now, so that an LLM's run compares directly with th
 
 The earlier script's first run, before the trap houses were fixed, lost 5 of 27.
 
+These two baselines ran with no game window, so the empty observer slot held an armed AI soldier at grid 041 038, who wasn't part of any station. The patrol shot him at T+00:22 in the rigid run. He's left out of their losses and the review, and the mission now disables AI in that slot. Haiku's run isn't affected, because a person was in the slot.
+
 **First LLM result, on Claude Haiku 5.5 (`20261105-133935:1`):** it won in T+08:44, killing all 14 enemies for 3 of 27 lost, using 26 orders, 41 turns and 92 questions. That took 113 model requests, 51,404 output tokens and a peak context of about 116k tokens. Its marker error was 62 m and its position error 63 m. It's one run, so it can't yet say how much of this was skill, given the spread above.
 
 - **It found before committing.** It moved everyone to a line 300 m short of the village, holding fire, with Recon forward. The patrol stayed about 300 m off that line and was shot down from it by T+02:44. Its marker for that group was placed about 25 m from where they really fell.
@@ -874,6 +876,7 @@ arma-harness commander start <scenario> [--mode hold|deliver]    set up a battle
 arma-harness commander status                                    state, pending wakes, "no wake scheduled", turn counts
 arma-harness commander aar                                       radio, turns, timers and true positions on one timeline
 arma-harness commander review [--run R] [--attempt N] [--out F]  write a replayable page of a battle (15.3)
+arma-harness commander site --out F --battle RUN:ATTEMPT=Label   write one page holding several battles, to share (15.3)
 arma-harness commander stop                                      end it and shut the game down
 arma-harness commander check-lockdown                            prove which tools a commander session really gets
 ```
@@ -910,6 +913,10 @@ The commander's words, actions, model and token use come from the client's sessi
 - **Position error:** on average over the battle, how far each living station was from the last position it reported.
 
 Still to add: staleness, confidence calibration and timer use.
+
+`arma-harness commander site --out FILE --battle RUN[:ATTEMPT][=Label] ...` puts several battles into one self-contained page, using the same template as `review`. A picker switches between them, a Compare tab shows the `commander compare` measures for the battles that share the first one's mission, and the page opens on the first battle. The file can be opened from disk or published. A link names a battle and a moment as `#20261105-133935-1-t123`, because a published page's link only carries a plain name in its hash, and `#t123` still works. `--battle` also takes a records folder in place of the run, for records that were fixed up by hand.
+
+On a desktop window of at least 1100 by 560 the page fits one screen with no page scroll: the maps stay square and take the height they can, and the other parts move to a tabbed side rail whose lists scroll inside it. Smaller windows stack and scroll. It follows the viewer's light or dark theme. A session's calls to tools outside the lockdown are counted, and the page says how many, but what those calls said stays out of it.
 
 ### 15.4 Failure handling
 

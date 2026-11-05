@@ -131,6 +131,15 @@ def test_kills_know_which_side_they_hurt(battle):
     assert [kill["friendly"] for kill in aar.battle_data(battle)["kills"]] == [True, False]
 
 
+def test_the_observer_slots_soldier_isnt_one_of_the_battles_deaths(battle):
+    with (battle.parent / "kills.jsonl").open("a", encoding="utf-8") as file:
+        file.write(json.dumps({"t": 80, "victim": "Observer", "side": "WEST", "victimPos": [4100, 3800, 0]}) + "\n")
+    rows(battle.parent / "truth.jsonl",
+         {"t": 5, "groups": [{"group": "Alpha 1-1", "side": "WEST", "alive": 1, "pos": [4100.2, 3800.1]},
+                             {"group": "Alpha", "side": "WEST", "alive": 8, "pos": [4100, 3700]}]})
+    assert [kill["victim"] for kill in aar.battle_data(battle)["kills"]] == ["Owen King", "Habib Noori"]
+
+
 def test_a_turn_still_open_at_the_end_is_kept(battle):
     assert [turn["turn"] for turn in aar.battle_data(battle)["turns"]] == [1, 2, 3]
 
@@ -287,6 +296,104 @@ def test_compare_skips_battles_that_never_finished(battle, tmp_path):
     (battle / "state.json").write_text("{}")
     with pytest.raises(ValueError, match="no finished battle"):
         aar.compare(Home(tmp_path))
+
+
+def another_attempt(battle: Path, attempt: int, scenario: dict | None = None) -> Path:
+    folder = battle.parent.parent / f"commander-{attempt}" / "west"
+    folder.parent.mkdir()
+    for name in ("battle.json", "truth.jsonl", "kills.jsonl"):
+        (folder.parent / name).write_bytes((battle.parent / name).read_bytes())
+    folder.mkdir()
+    for name in ("radio.jsonl", "radio_events.jsonl", "turns.jsonl", "orders.jsonl", "markers.jsonl", "state.json"):
+        (folder / name).write_bytes((battle / name).read_bytes())
+    info = json.loads((folder.parent / "battle.json").read_text())
+    info["attempt"] = attempt
+    if scenario:
+        info["scenario"] = scenario
+    (folder.parent / "battle.json").write_text(json.dumps(info))
+    return folder
+
+
+def embedded(page: Path) -> dict:
+    text = page.read_text(encoding="utf-8")
+    start = text.index('type="application/json">') + len('type="application/json">')
+    return json.loads(text[start:text.index("</script>", start)])
+
+
+def test_a_site_holds_each_battle_under_its_label_and_opens_on_the_first(battle, tmp_path):
+    another_attempt(battle, 3)
+    out = tmp_path / "site.html"
+    battles = ["20261105-043541:3=Rigid script", "20261105-043541:2"]
+    result = aar.site(Home(tmp_path), battles, out, tmp_path / "nothing")
+    assert result["opens_on"] == "Rigid script" and [row["id"] for row in result["battles"]] == [
+        "20261105-043541-3", "20261105-043541-2"]
+    page = embedded(out)
+    assert [b["id"] for b in page["battles"]] == ["20261105-043541-3", "20261105-043541-2"]
+    assert [b["label"] for b in page["battles"]] == ["Rigid script", "Script"]  # nobody's named, so nobody's implied
+    assert all(b["commander"] == {} for b in page["battles"])
+    assert aar.DATA_SLOT not in out.read_text(encoding="utf-8")
+
+
+def test_a_site_compares_with_the_same_measures_as_the_terminal(battle, tmp_path):
+    another_attempt(battle, 3)
+    out = tmp_path / "site.html"
+    aar.site(Home(tmp_path), ["20261105-043541:2=One", "20261105-043541:3=Two"], out, tmp_path / "nothing")
+    table = embedded(out)["compare"]
+    assert table["ids"] == ["20261105-043541-2", "20261105-043541-3"]
+    assert table["rows"][0] == ["", "One", "Two"]
+    measures = [row[0] for row in table["rows"]]
+    assert measures == ["", "Scenario", "Commander", *[label for label, _ in aar.COMPARED], "Tokens written"]
+    terminal = aar.compare(Home(tmp_path), ["20261105-043541:2", "20261105-043541:3"])
+    assert all(measure in terminal for measure in measures)
+    assert next(row for row in table["rows"] if row[0] == "Commander")[1:] == ["Script, no AI", "Script, no AI"]
+
+
+def test_a_site_leaves_a_different_mission_out_of_the_comparison(battle, tmp_path):
+    another_attempt(battle, 3, {**SCENARIO, "name": "something_else"})
+    out = tmp_path / "site.html"
+    result = aar.site(Home(tmp_path), ["20261105-043541:2", "20261105-043541:3=Other"], out, tmp_path / "nothing")
+    page = embedded(out)
+    assert len(page["battles"]) == 2 and page["compare"]["ids"] == ["20261105-043541-2"]
+    assert [row["compared"] for row in result["battles"]] == [True, False]
+
+
+def test_a_site_can_read_a_records_folder_directly(battle, tmp_path):
+    out = tmp_path / "site.html"
+    aar.site(Home(tmp_path / "empty"), [f"{battle}=From a folder"], out, tmp_path / "nothing")
+    assert embedded(out)["battles"][0]["id"] == "20261105-043541-2"
+
+
+def test_a_site_needs_a_battle(tmp_path):
+    with pytest.raises(ValueError, match="at least one"):
+        aar.site(Home(tmp_path), [], tmp_path / "site.html")
+
+
+def test_a_site_keeps_private_text_out_and_cant_be_broken_out_of(battle, tmp_path):
+    projects = tmp_path / "projects"
+    transcript(projects)
+    in_window(battle)
+    rows(battle / "radio.jsonl", {"t": 1, "from": "Alpha", "to": "HQ", "text": "</script><script>alert(1)</script>",
+                                  "kind": "report"})
+    out = tmp_path / "site.html"
+    aar.site(Home(tmp_path), ["20261105-043541:2"], out, projects)
+    text = out.read_text(encoding="utf-8")
+    assert "someone@example.com" not in text and "</script><script>alert" not in text
+    assert embedded(out)["battles"][0]["label"] == "Haiku 5.5"
+
+
+def test_how_often_a_tool_outside_the_lockdown_was_used_is_counted(battle, tmp_path):
+    projects = tmp_path / "projects"
+    transcript(projects)
+    with (projects / "session.jsonl").open("a", encoding="utf-8") as file:
+        for row in ({"type": "assistant", "timestamp": stamp(11), "message": {"id": "m8", "content": [
+                         {"type": "tool_use", "name": "SendFeedback", "input": {"title": "A private bug report"}}]}},
+                    {"type": "api-request-shape", "tools": [{"name": "SendFeedback"}, {"name": "Artifact"}]}):
+            file.write(json.dumps(row) + "\n")
+    in_window(battle)
+    session = aar.commander_session(battle, projects)
+    assert session["tools_outside_lockdown"] == ["Artifact", "SendFeedback"]
+    assert session["outside_lockdown_used"] == {"SendFeedback": 1}
+    assert "A private bug report" not in aar.render(aar.battle_data(battle, session))  # that it was used, not its words
 
 
 def test_finding_a_battle(battle, tmp_path):
