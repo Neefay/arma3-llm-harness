@@ -12,13 +12,13 @@ import threading
 import time
 import traceback
 
+from importlib import resources
+
 from .operator import load_current
 from .orders import Invalid
 
-INSTRUCTIONS = """\
-You are the commander. See CLAUDE.md for your doctrine. Wakes arrive as <channel source="commander" turn="..."
-woke_on="..."> blocks holding a briefing. Each one is your turn: read it, act with the commander_* tools, and
-finish with commander_end_turn. Nothing else happens until the next wake. Don't wait, poll or use any other tool."""
+# Delivered by the server, not as a CLAUDE.md: the tool lockdown denies Read, which also stops the client loading one.
+DOCTRINE = resources.files("arma_harness.commander").joinpath("doctrine.md").read_text(encoding="utf-8")
 
 _STRING = {"type": "string"}
 _LEG = {
@@ -118,7 +118,7 @@ class Server:
         runtime = self.get_runtime()
         match name:
             case "commander_mission":
-                return runtime.mission()
+                return {**runtime.mission(), "doctrine": DOCTRINE}
             case "commander_roster":
                 return runtime.roster()
             case "commander_order":
@@ -172,7 +172,7 @@ class Server:
                 self.send({"jsonrpc": "2.0", "id": rid, "result": {
                     "protocolVersion": (request.get("params") or {}).get("protocolVersion", "2025-06-18"),
                     "capabilities": {"experimental": {"claude/channel": {}}, "tools": {}},
-                    "serverInfo": {"name": "commander", "version": "0.1.0"}, "instructions": INSTRUCTIONS}})
+                    "serverInfo": {"name": "commander", "version": "0.1.0"}, "instructions": DOCTRINE}})
             elif method == "tools/list":
                 self.send({"jsonrpc": "2.0", "id": rid, "result": {"tools": TOOLS}})
             elif method == "ping":

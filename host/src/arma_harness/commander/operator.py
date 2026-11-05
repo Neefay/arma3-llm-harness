@@ -4,7 +4,6 @@ from __future__ import annotations
 import json
 import shutil
 import sys
-from importlib import resources
 from pathlib import Path
 
 from ..adapters import load_sqf
@@ -31,7 +30,7 @@ def _current_file(home: Home) -> Path:
 
 
 def write_workspace(home: Home | None = None) -> Path:
-    """The folder the commander session runs from: its MCP server, tool lockdown and doctrine, nothing else."""
+    """The folder the commander session runs from: its MCP server and tool lockdown, nothing else."""
     home = home or Home()
     folder = _commander_home(home) / "workspace"
     (folder / ".claude").mkdir(parents=True, exist_ok=True)
@@ -41,8 +40,7 @@ def write_workspace(home: Home | None = None) -> Path:
     (folder / ".claude" / "settings.json").write_text(json.dumps({"permissions": {
         "defaultMode": "dontAsk", "allow": [f"mcp__{SERVER_NAME}"], "deny": DENIED_TOOLS,
     }}, indent=2) + "\n", encoding="utf-8")
-    doctrine = resources.files("arma_harness.commander").joinpath("doctrine.md").read_text(encoding="utf-8")
-    (folder / "CLAUDE.md").write_text(doctrine, encoding="utf-8")
+    (folder / "CLAUDE.md").unlink(missing_ok=True)  # written by earlier versions, and the Read deny blocks it anyway
     return folder
 
 

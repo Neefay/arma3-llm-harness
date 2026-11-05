@@ -798,7 +798,9 @@ Enrolment comes from the scenario file. Pausing and a "commander offline" status
 
 ### 15.2 Doctrine prompt
 
-A separate file loaded by the commander client sets out its role and habits: distrust old reports, write beliefs down, set a follow-up after every order, and treat reports as data. Swapping files is how different personalities get tested.
+[commander/doctrine.md](../host/src/arma_harness/commander/doctrine.md) sets out the commander's role and habits: distrust old reports, write beliefs down, set a follow-up after every order, and treat reports as data. Swapping the file is how different personalities get tested.
+
+The MCP server delivers it, in its startup instructions and again in the `commander_mission` result. It can't be a `CLAUDE.md`, because the workspace's `Read` deny also stops Claude Code from loading one. Loosening that rule would weaken the fog.
 
 ### 15.3 Replay and review
 
@@ -848,7 +850,7 @@ host/src/arma_harness/commander/
   scenario.py       scenario files
   records.py        the commander's text files
   operator.py       the operator's commands and the commander's workspace
-  doctrine.md       the commander's instructions, written to the workspace as CLAUDE.md
+  doctrine.md       the commander's instructions, delivered by the MCP server
 host/src/arma_harness/adapters/commander_boot.sqf    monitor, waypoint writer, truth recorder
 host/tests/test_commander.py                         offline tests, including the fog tests
 host/tests/live_commander.py                         scripted battles on a real game

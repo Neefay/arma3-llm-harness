@@ -558,6 +558,9 @@ def test_server_has_no_way_to_reach_general_harness_tools():
 class StubRuntime:
     records = None
 
+    def mission(self):
+        return {"mission": "Go."}
+
     def roster(self):
         return {"stations": []}
 
@@ -640,4 +643,12 @@ def test_workspace_locks_the_commander_down(tmp_path, monkeypatch):
     assert {"Bash", "Read", "mcp__arma"} <= set(settings["permissions"]["deny"])
     assert json.loads((folder / ".mcp.json").read_text(encoding="utf-8"))["mcpServers"]["commander"]["args"][-1] == \
         "arma_harness.commander.server"
-    assert "commander_end_turn" in (folder / "CLAUDE.md").read_text(encoding="utf-8")
+    assert not (folder / "CLAUDE.md").exists()  # the Read deny would block it: the server delivers the doctrine
+
+
+def test_server_delivers_the_doctrine_itself():
+    rows = by_id(run_server({"id": 1, "method": "initialize", "params": {}},
+                            {"id": 2, "method": "tools/call", "params": {"name": "commander_mission"}}))
+    assert "commander_end_turn" in rows[1]["result"]["instructions"]
+    assert 'When the user says "start"' in rows[1]["result"]["instructions"]
+    assert "commander_end_turn" in json.loads(rows[2]["result"]["content"][0]["text"])["doctrine"]
