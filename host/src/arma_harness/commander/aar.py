@@ -7,6 +7,7 @@ commander received, by reading the same radio text it read.
 from __future__ import annotations
 
 import json
+import math
 import re
 from datetime import datetime
 from importlib import resources
@@ -58,7 +59,7 @@ def battle_data(folder: Path, commander: dict | None = None) -> dict:
     turns = _turns(records, state, commander)
     orders = [_order(row, info.get("buildings") or [], markers, world_size) for row in records.read("orders")]
     latest = [row["t"] for rows in (frames, radio, kills) for row in rows[-1:]] + [t["start"] for t in turns[-1:]]
-    return {
+    data = {
         "name": str(scenario.get("name", folder.parent.name)).replace("_", " ").capitalize(),
         "text": str(scenario.get("text", "")).strip(),
         "run": info.get("run", folder.parent.parent.name), "attempt": info.get("attempt"),
@@ -69,6 +70,120 @@ def battle_data(folder: Path, commander: dict | None = None) -> dict:
         "enemy_total": sum(enemy.get("units", 4) for enemy in enemies), "frames": frames, "kills": kills,
         "radio": radio, "turns": turns, "markers": markers, "orders": orders, "notes": records.notes(),
     }
+    return {**data, "score": scorecard(data)}
+
+
+def scorecard(data: dict) -> dict:
+    """The measures for comparing battles. The last two say how wrong the commander's picture of the battle was."""
+    frames = data["frames"]
+    left = {group["group"]: group["alive"] for group in frames[-1]["groups"]} if frames else {}
+    friendly_total = sum(station["units"] for station in data["stations"].values())
+    return {
+        "ended": data["ended"] or "Didn't finish", "duration_s": round(data["duration"]),
+        "friendly_lost": friendly_total - sum(left.get(name, 0) for name in data["stations"]),
+        "friendly_total": friendly_total,
+        "enemy_killed": data["enemy_total"] - sum(left.get(name, 0) for name in data["enemies"]),
+        "enemy_total": data["enemy_total"],
+        "first_contact_s": next((round(row["t"]) for row in data["radio"]
+                                 if row.get("from") != "HQ" and str(row.get("text")).startswith("Contact")), None),
+        "turns": len(data["turns"]), "orders": len(data["orders"]),
+        "questions": sum(row.get("kind") == "question" for row in data["radio"]),
+        "enemy_markers": len({row["id"] for row in data["markers"] if row.get("kind") == "enemy"}),
+        "marker_error_m": _marker_error(data), "position_error_m": _position_error(data),
+    }
+
+
+def _position_error(data: dict) -> int | None:
+    """On average over the battle, how far a living station was from the last position it reported."""
+    reports = [row for row in data["radio"] if row.get("pos")]
+    errors = []
+    for frame in data["frames"]:
+        heard: dict[str, list[float]] = {}
+        for row in reports:
+            if row["t"] > frame["t"]:
+                break
+            heard[row["from"]] = row["pos"]
+        errors += [math.dist(heard[group["group"]], group["pos"][:2]) for group in frame["groups"]
+                   if group["group"] in heard and group["alive"] and group["pos"]]
+    return round(sum(errors) / len(errors)) if errors else None
+
+
+def _marker_error(data: dict) -> int | None:
+    """On average, how far each enemy marker was, when placed, from the nearest enemy really alive."""
+    errors = []
+    for marker in data["markers"]:
+        if marker.get("kind") != "enemy" or not marker.get("pos"):
+            continue
+        frame = next((row for row in data["frames"] if row["t"] >= marker["t"]), None)
+        soldiers = [unit for group in (frame or {}).get("groups", []) if group["group"] in data["enemies"]
+                    for unit in group["units"]]
+        if soldiers:
+            errors.append(min(math.dist(marker["pos"], unit) for unit in soldiers))
+    return round(sum(errors) / len(errors)) if errors else None
+
+
+def compare(home: Home, battles: list[str] | None = None) -> str:
+    """Battles side by side, as a table. Each is RUN or RUN:ATTEMPT. By default, every battle of the newest one's
+    scenario that ran long enough to mean something."""
+    if battles:
+        folders = [find_battle(home, *_battle_name(name)) for name in battles]
+    else:
+        newest = _scenario_name(find_battle(home))
+        folders = sorted((path.parent for path in home.runs.glob("*/commander-*/*/radio.jsonl")
+                          if _scenario_name(path.parent) == newest), key=_battle_order)
+    cards = []
+    for folder in folders:
+        data = battle_data(folder, commander_session(folder))
+        if battles or data["ended"]:
+            run, attempt = _battle_order(folder)
+            cards.append((f"{run}:{attempt}", data["commander"].get("model") or "Scripted", data))
+    if not cards:
+        raise ValueError("no finished battle to compare")
+    rows = [("", *[name for name, _, _ in cards]), ("Scenario", *[d["name"] for _, _, d in cards]),
+            ("Commander", *[who for _, who, _ in cards])]
+    for label, show in COMPARED:
+        rows.append((label, *[show(d["score"]) for _, _, d in cards]))
+    rows.append(("Tokens written", *[str(d["commander"].get("output_tokens", "-")) for _, _, d in cards]))
+    widths = [max(len(str(row[index])) for row in rows) for index in range(len(rows[0]))]
+    return "\n".join("  ".join(str(cell).ljust(width) for cell, width in zip(row, widths, strict=True)).rstrip()
+                     for row in rows)
+
+
+COMPARED = [
+    ("Result", lambda s: s["ended"]),
+    ("Duration", lambda s: _clock(s["duration_s"])),
+    ("Friendly lost", lambda s: f"{s['friendly_lost']} of {s['friendly_total']}"),
+    ("Enemy killed", lambda s: f"{s['enemy_killed']} of {s['enemy_total']}"),
+    ("First contact", lambda s: _clock(s["first_contact_s"])),
+    ("Turns", lambda s: s["turns"]),
+    ("Orders", lambda s: s["orders"]),
+    ("Questions", lambda s: s["questions"]),
+    ("Enemy markers", lambda s: s["enemy_markers"]),
+    ("Marker error", lambda s: _metres(s["marker_error_m"])),
+    ("Position error", lambda s: _metres(s["position_error_m"])),
+]
+
+
+def _clock(seconds: int | None) -> str:
+    return "-" if seconds is None else f"{seconds // 60}:{seconds % 60:02d}"
+
+
+def _metres(value: int | None) -> str:
+    return "-" if value is None else f"{value} m"
+
+
+def _battle_name(name: str) -> tuple[str, int | None]:
+    run, _, attempt = name.partition(":")
+    return run, int(attempt) if attempt else None
+
+
+def _battle_order(folder: Path) -> tuple[str, int]:
+    return folder.parent.parent.name, int(folder.parent.name.split("-")[1])
+
+
+def _scenario_name(folder: Path) -> str | None:
+    info = folder.parent / "battle.json"
+    return json.loads(info.read_text(encoding="utf-8")).get("scenario", {}).get("name") if info.exists() else None
 
 
 def _until_clock_restarts(rows: list[dict]) -> list[dict]:
@@ -263,7 +378,7 @@ def find_battle(home: Home, run: str | None = None, attempt: int | None = None) 
         f"{'' if run else '*/'}commander-{attempt or '*'}/*/radio.jsonl")]
     if not folders:
         raise ValueError("no commander battle found" + (f" in run {run}" if run else ""))
-    return max(folders, key=lambda path: (path.parent.parent.name, int(path.parent.name.split("-")[1])))
+    return max(folders, key=_battle_order)
 
 
 def write(folder: Path, out: Path | None = None, projects: Path | None = None) -> dict:

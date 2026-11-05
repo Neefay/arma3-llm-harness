@@ -225,6 +225,47 @@ def test_write_puts_the_page_beside_the_records(battle, tmp_path):
     assert result["commander"] == "no model session found" and Path(result["review"]).stat().st_size > 1000
 
 
+def test_scorecard(battle):
+    score = aar.battle_data(battle)["score"]
+    assert score["ended"] == "Objective achieved." and score["duration_s"] == 100
+    assert score["friendly_total"] == 8 and score["enemy_total"] == 14
+    assert score["orders"] == 3 and score["turns"] == 3 and score["enemy_markers"] == 1
+    assert score["first_contact_s"] is None
+    assert score["marker_error_m"] == 0  # marker E1 is on the patrol the first truth frame after it shows
+
+
+def test_position_error_compares_the_last_report_with_where_the_station_was(tmp_path):
+    data = {"radio": [{"t": 10, "from": "Alpha", "pos": [100.0, 100.0]}], "markers": [], "stations": {}, "enemies": [],
+            "frames": [
+                {"t": 5, "groups": [{"group": "Alpha", "alive": 4, "pos": [0, 0], "units": []}]},  # nothing heard yet
+                {"t": 20, "groups": [{"group": "Alpha", "alive": 4, "pos": [100, 130], "units": []}]},
+                {"t": 30, "groups": [{"group": "Alpha", "alive": 4, "pos": [100, 150], "units": []}]},
+                {"t": 40, "groups": [{"group": "Alpha", "alive": 0, "pos": [], "units": []}]}]}  # dead: no position
+    assert aar._position_error(data) == 40
+
+
+def test_compare_lines_up_battles_of_one_scenario(battle, tmp_path):
+    home = Home(tmp_path)
+    second = battle.parent.parent / "commander-3" / "west"
+    second.parent.mkdir()
+    for name in ("battle.json", "truth.jsonl", "kills.jsonl"):
+        (second.parent / name).write_bytes((battle.parent / name).read_bytes())
+    second.mkdir()
+    for name in ("radio.jsonl", "radio_events.jsonl", "turns.jsonl", "orders.jsonl", "markers.jsonl", "state.json"):
+        (second / name).write_bytes((battle / name).read_bytes())
+    table = aar.compare(home)
+    assert "20261105-043541:2" in table and "20261105-043541:3" in table
+    assert "Friendly lost" in table and "Scripted" in table
+    named = aar.compare(home, ["20261105-043541:2"])
+    assert "20261105-043541:3" not in named
+
+
+def test_compare_skips_battles_that_never_finished(battle, tmp_path):
+    (battle / "state.json").write_text("{}")
+    with pytest.raises(ValueError, match="no finished battle"):
+        aar.compare(Home(tmp_path))
+
+
 def test_finding_a_battle(battle, tmp_path):
     home = Home(tmp_path)
     assert aar.find_battle(home) == battle

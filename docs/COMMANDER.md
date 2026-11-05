@@ -866,7 +866,12 @@ The left map is built only from words the commander received: positions are read
 
 The commander's words, actions, model and token use come from the client's session transcript, matched to the battle by time. Only its own text and `commander_*` calls are read, so the transcript's system prompt, account details and any chat with a person stay out of the page. The header says who commanded. A battle with no matching session is labelled as a scripted test, because it's either that or its transcript is gone. Only Claude Code transcripts are read so far. Other agent clients would show the same label until someone adds their format. The model's thinking isn't in the transcript, so the page can't show it.
 
-Measures for comparing runs, still to be computed from the logs: marker accuracy, staleness, confidence calibration, turn counts, timer use and outcome.
+`arma-harness commander compare` puts battles side by side as a table, and the same measures head each review page. By default it takes every finished battle of the newest battle's scenario, and `--battle RUN[:ATTEMPT]` picks others. It reports the result, duration, friendly losses, enemies killed, first contact, turns, orders and questions, plus two measures of how wrong the commander's picture was:
+
+- **Marker error:** on average, how far each enemy marker was, when placed, from the nearest enemy really alive.
+- **Position error:** on average over the battle, how far each living station was from the last position it reported.
+
+Still to add: staleness, confidence calibration and timer use.
 
 ### 15.4 Failure handling
 

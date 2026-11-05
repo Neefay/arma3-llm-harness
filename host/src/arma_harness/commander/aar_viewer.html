@@ -30,6 +30,10 @@ h1 { font: 700 26px/1.1 var(--display); margin: 0; letter-spacing: .01em; }
 .result.llm { color: var(--violet); border-color: var(--violet); }
 .result.scripted { color: var(--amber); border-color: var(--amber); }
 .mission { color: var(--dim); max-width: 90ch; margin: 0; }
+.score { display: flex; flex-wrap: wrap; gap: 6px 26px; margin: 0; background: var(--panel); padding: 10px 12px; }
+.score div { display: grid; gap: 1px; }
+.score dt { color: var(--dim); font-size: 12px; }
+.score dd { margin: 0; font: 600 18px var(--display); font-variant-numeric: tabular-nums; }
 .controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; background: var(--panel); padding: 8px 12px; }
 button { font: 600 13px var(--body); color: var(--text); background: var(--panel2); border: 1px solid var(--line); padding: 5px 12px; cursor: pointer; }
 button:hover { border-color: var(--dim); }
@@ -89,6 +93,8 @@ td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
     <span class="meta" id="meta"></span>
     <p class="mission" id="mission" style="flex-basis: 100%"></p>
   </header>
+
+  <dl class="score" id="score"></dl>
 
   <div class="controls">
     <button id="play" type="button">Play</button>
@@ -528,6 +534,15 @@ function init() {
   $("meta").textContent = `${fmt(duration)}, ${D.turns.length} turns, ${D.mode || ""} mode, run ${D.run || ""}${D.attempt > 1 ? ` attempt ${D.attempt}` : ""}`;
   $("turnStats").textContent = D.turns.length ? `average ${(D.turns.reduce((s, t) => s + (t.duration || 0), 0) / D.turns.length).toFixed(1)} s` : "";
   $("timeline").setAttribute("aria-valuemin", 0); $("timeline").setAttribute("aria-valuemax", Math.round(duration));
+  const s = D.score, clock = t => t == null ? "None" : fmt(t).slice(2);
+  const metres = m => m == null ? "None" : `${m} m`;
+  const facts = [
+    ["Friendly lost", `${s.friendly_lost} of ${s.friendly_total}`], ["Enemy killed", `${s.enemy_killed} of ${s.enemy_total}`],
+    ["First contact", clock(s.first_contact_s)], ["Turns", s.turns], ["Orders", s.orders], ["Questions", s.questions],
+    ["Enemy markers", s.enemy_markers], ["Marker error", metres(s.marker_error_m), "Average distance from each enemy marker, when placed, to the nearest enemy really alive"],
+    ["Position error", metres(s.position_error_m), "Average distance from each living station to the last position it reported"],
+  ];
+  $("score").innerHTML = facts.map(([name, value, why]) => `<div${why ? ` title="${esc(why)}"` : ""}><dt>${esc(name)}</dt><dd>${esc(value)}</dd></div>`).join("");
   renderRows();
   mapControls($("beliefMap")); mapControls($("truthMap"));
   $("zoomIn").addEventListener("click", () => zoom(.6));
