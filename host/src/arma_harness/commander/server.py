@@ -11,7 +11,6 @@ import sys
 import threading
 import time
 import traceback
-
 from importlib import resources
 
 from .operator import load_current
