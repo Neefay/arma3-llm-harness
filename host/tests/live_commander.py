@@ -111,7 +111,7 @@ def play_a_to_b(client: Client, mode: str) -> list[str]:
             print("    asked:", client.tool("commander_ask", to="Alpha"), flush=True)
         finish_turn(client, "Read the traffic")
     text = "\n".join(seen)
-    for expected in ("Copy, moving to grid 034 030", "MISSION END. Objective achieved"):
+    for expected in ("Copy, moving to grid 034 030", "Arrived, grid 034 030", "MISSION END. Objective achieved"):
         assert expected in text, expected
     return seen
 
@@ -192,11 +192,15 @@ def run(name: str, scenario: str, mode: str | None, play) -> None:
 
 def main() -> None:
     harness = Harness()
+    battles = [("hold mode, A to B", "poc_a_to_b", "hold", lambda c: play_a_to_b(c, "hold")),
+               ("deliver mode, A to B", "poc_a_to_b", "deliver", lambda c: play_a_to_b(c, "deliver")),
+               ("failure variant: Alpha lost", "poc_a_to_b_lost", "hold", play_lost),
+               ("halt, posture and resume", "poc_a_to_b", "hold", play_halt_and_resume)]
+    wanted = sys.argv[1:]  # words to match in battle names; none means all of them
     try:
-        run("hold mode, A to B", "poc_a_to_b", "hold", lambda c: play_a_to_b(c, "hold"))
-        run("deliver mode, A to B", "poc_a_to_b", "deliver", lambda c: play_a_to_b(c, "deliver"))
-        run("failure variant: Alpha lost", "poc_a_to_b_lost", "hold", play_lost)
-        run("halt, posture and resume", "poc_a_to_b", "hold", play_halt_and_resume)
+        for battle in battles:
+            if not wanted or any(word in battle[0] for word in wanted):
+                run(*battle)
         print("\nALL PASSED", flush=True)
     finally:
         print(harness.stop(), flush=True)

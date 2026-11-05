@@ -22,6 +22,7 @@ from .wake import Wake, WakeLogic
 PACKET_FRESH_S = 6
 CLOCK_COAST_S = 3
 GAME_LOST_S = 15
+SUCCESS_GRACE_S = 10
 TRAFFIC_CAP = 25
 MAX_WAKES = 20
 NOTES_LIMIT = 1500
@@ -55,6 +56,7 @@ class Runtime:
         self.cursor: int | None = saved.get("cursor")
         self.delivered: int = saved.get("delivered", 0)
         self.ended: str = saved.get("ended", "")
+        self.success_at: float | None = saved.get("success_at")
         self.next_id: dict[str, int] = saved.get("next_id", {"R": 1, "O": 1, "W": 1})
         self.routes: dict[str, dict] = saved.get("routes", {})
         self.last_heard: dict[str, float] = saved.get("last_heard", {})
@@ -164,9 +166,10 @@ class Runtime:
             return
         target, _ = parse_grid(success["of"], self.world_size)
         for group in groups:
-            if group.get("group") == success["station"] and group.get("alive") and group.get("pos") \
-                    and math.dist(group["pos"], target) <= success["within_m"]:
-                self._end(f"Objective achieved: {success['station']} reached grid {success['of']}.")
+            if self.success_at is None and group.get("group") == success["station"] and group.get("alive") \
+                    and group.get("pos") and math.dist(group["pos"], target) <= success["within_m"]:
+                # True position can get there seconds before the group reports arriving. Let its last words through.
+                self.success_at = self.rel() + SUCCESS_GRACE_S
 
     def _end(self, reason: str) -> None:
         self.ended = reason
@@ -185,6 +188,9 @@ class Runtime:
                 if index not in self.events_done and rel >= event["at_s"]:
                     self.events_done.append(index)
                     self._scenario_event(event)
+            if not self.ended and self.success_at is not None and rel >= self.success_at:
+                success = self.scenario.success
+                self._end(f"Objective achieved: {success['station']} reached grid {success['of']}.")
             if not self.ended and rel >= self.scenario.time_limit_s:
                 self._end("Time limit reached.")
             wake = self.wake.poll(self.now())
@@ -234,6 +240,8 @@ class Runtime:
     def _deliver(self, wake: Wake) -> None:
         if wake.fallback:
             self._close_turn("assumed over: no end-turn call")
+        else:
+            self._close_turn("interrupted: a wake was delivered during this turn")
         self.turn += 1
         text = self.briefing(wake)
         self.delivered = len(self.radio)
@@ -286,7 +294,7 @@ class Runtime:
             urgent = [r for r in rows if r["precedence"] != reports.ROUTINE]
             room = max(0, TRAFFIC_CAP - len(urgent))
             routine = [r for r in rows if r["precedence"] == reports.ROUTINE]
-            kept = {r["id"] for r in urgent} | {r["id"] for r in routine[-room:]} if room else {r["id"] for r in urgent}
+            kept = {r["id"] for r in urgent + (routine[-room:] if room else [])}
             hidden = len(rows) - len(kept)
             rows = [r for r in rows if r["id"] in kept]
         lines = [_radio_line(r) for r in rows]
@@ -307,7 +315,8 @@ class Runtime:
     def save(self) -> None:
         self.records.save_state({
             "t0": self.t0, "turn": self.turn, "cursor": self.cursor, "delivered": self.delivered,
-            "ended": self.ended, "next_id": self.next_id, "routes": self.routes, "last_heard": self.last_heard,
+            "ended": self.ended, "success_at": self.success_at, "next_id": self.next_id, "routes": self.routes,
+            "last_heard": self.last_heard,
             "positions": self.positions, "events_done": self.events_done, "turn_row": self.turn_row,
             "trackers": {k: asdict(v) for k, v in self.trackers.items()}, "wake": asdict(self.wake),
         })

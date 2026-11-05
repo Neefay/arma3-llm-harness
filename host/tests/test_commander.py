@@ -226,6 +226,18 @@ def test_deliver_pushes_during_a_turn_using_the_same_debounce():
     assert wake.in_turn
 
 
+def test_deliver_mode_keeps_a_record_of_the_interrupted_turn(tmp_path):
+    b = Battle(tmp_path, mode=DELIVER)
+    b.start()
+    b.runtime.order({"to": "Alpha", "legs": [{"type": "MOVE", "at": "B"}]})
+    b.advance(101, order="O-0001")
+    b.silent(105)
+    assert len(b.wakes) == 1
+    b.runtime.end_turn("done", messages_only=True)
+    turns = b.records.read("turns")
+    assert [t["turn"] for t in turns] == [1, 2] and turns[0]["note"].startswith("interrupted")
+
+
 def test_ending_a_turn_with_no_follow_up_needs_an_explicit_choice():
     wake = asleep()
     assert not wake.can_end_turn(False) and wake.can_end_turn(True)
@@ -381,12 +393,28 @@ def test_proof_of_concept_flow(tmp_path):
     b.runtime.end_turn("Nothing to do", messages_only=True)
     b.game.emit(type="cmd_truth", t=165, groups=[{"group": "Alpha", "side": "WEST", "alive": 4, "pos": [3450, 3050]}])
     b.silent(165)
+    assert len(b.wakes) == 3  # a report on its way still gets through
+    b.silent(176)
     assert "MISSION END. Objective achieved" in b.wakes[3][0]
     assert b.runtime.end_turn("Done") == {"ended": True, "mission_over": True}
     turns = b.records.read("turns")
     assert [t["woke_on"] for t in turns] == ["mission start", "1 message", "1 message", "1 timer", "notice"]
     assert [r["kind"] for r in b.records.read("radio")] == ["order", "report", "report"]
     assert len(b.records.read_truth()) == 1
+
+
+def test_arrival_report_isnt_lost_when_true_position_gets_there_first(tmp_path):
+    b = Battle(tmp_path)
+    b.start()
+    b.runtime.order({"to": "Alpha", "legs": [{"type": "MOVE", "at": "B"}]})
+    b.runtime.end_turn("Sent", messages_only=True)
+    b.advance(102, order="O-0001")
+    b.game.emit(type="cmd_truth", t=104, groups=[{"group": "Alpha", "side": "WEST", "alive": 4, "pos": [3447, 3050]}])
+    b.silent(104)
+    b.advance(108, order="O-0001", pos=[3450, 3050], grid="034030", leg=1)
+    b.silent(120)
+    delivered = "\n".join(text for text, _ in b.wakes)
+    assert "Arrived, grid 034 030." in delivered and "MISSION END. Objective achieved" in delivered
 
 
 def test_lost_group_is_only_caught_by_the_commanders_own_timer(tmp_path):

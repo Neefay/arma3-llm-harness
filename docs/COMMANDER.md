@@ -1,6 +1,6 @@
 # Commander Mode: design
 
-**Status:** design proposal. No commander code exists yet. Claude Code channels passed testing as the wake route, and an engine spike checked the core commands. [Section 17](#17-engine-spike-results) lists the results and what's still unverified. Updated 2026-11-05.
+**Status:** the [A to B proof of concept](#141-proof-of-concept-one-subordinate-a-to-b) is built and has run on a real game with a scripted stand-in for the LLM. Section 12 marks which tools exist so far. The rest of this document is still the design. Updated 2026-11-05.
 
 **Audience:** developers and agents building or reviewing this feature. Read [ARCHITECTURE.md](ARCHITECTURE.md) first for how the harness itself works.
 
@@ -230,7 +230,7 @@ W4  due 14:03, delivered 2 s late: "Has Alpha reached the objective?"
 
 TRAFFIC
 [14:00] Alpha: Reached objective, grid 041 187, holding.
-[14:02] FLASH Bravo: Contact, about 4 infantry, north-east, roughly 300 metres. Engaging.
+[14:02] FLASH Bravo: Contact, a few infantry, north-east, roughly 300 metres. Engaging.
 
 OVERDUE
 Charlie: last heard 6 min ago. Scheduled check-in missed at 13:30.
@@ -449,7 +449,7 @@ commander_ask(to="all", topics=["position"])                  # one reply per st
 | `strength` | 6 of 8 effective, 1 wounded. Sergeant Novak has command. | `units`, `alive`, `lifeState`, `damage`, `leader` | First |
 | `ammo` | Ammo amber, about half. | `magazinesAmmoFull` against the enrolment baseline, counting magazines from `compatibleMagazines` of the primary weapon. `magazinesAmmo` omits the loaded magazine | First |
 | `vehicle` | Fuel about a quarter, vehicle damaged, still mobile. | `fuel`, `damage`, `canMove`, `someAmmo` | First |
-| `contacts` | About 4 infantry, north-east, roughly 300 metres, last seen a minute ago. | `targets [true, range]` with `targetKnowledge`, plus `nearTargets` for type and accuracy | First |
+| `contacts` | A few infantry, north-east, roughly 300 metres, last seen a minute ago. | `targets [true, range]` with `targetKnowledge`, plus `nearTargets` for type and accuracy | First |
 | `eta` | About 6 minutes to grid 058 196, if unopposed. | Remaining distance over recent speed | First |
 | `surroundings` | On a ridge. Church 200 metres north, road below us to the east. | `nearestLocations`, `nearestTerrainObjects`, height | Later |
 | `can_see` | Clear view of that grid. Nothing seen there at the moment. | `terrainIntersectASL` from the leader's eye height, plus contacts | Later |
@@ -513,7 +513,7 @@ Engine state becomes language in four stages, each testable separately:
 
 ```text
 Read group's knowledge -> Compare with last packet -> Round and bucket -> Render text
-       (SQF)                     (SQF or host)            (host)          (host)
+       (SQF)                     (host)                   (host)          (host)
 ```
 
 SQF reads the engine and sends a structured **perception packet**. Python does the rest, so report wording can be tested offline with no game running.
@@ -565,7 +565,7 @@ The commander hears:
 | Own position | Grid 052 191 | 100 m grid, 6 digits |
 | Direction | north-east | 8-point compass |
 | Enemy range | roughly 300 metres | Nearest 50 m up to 500 m, nearest 100 m beyond, "distant" past a limit |
-| Enemy count | one, a couple, a few, about 8, a dozen, many | Nearby contacts are grouped into one report, using wider buckets as the count grows. No deliberate errors |
+| Enemy count | one (1), a couple (2), a few (3-5), about 8 (6-9), a dozen (10-14), many (15+) | Contacts in the same compass direction are grouped into one report. No deliberate errors |
 | Enemy type | infantry, vehicle, armour, aircraft, unknown | Broad categories from perceived type, never class names |
 | Information age | seen now, a minute ago, lost contact | From knowledge age, with accuracy widening the wording |
 | Strength | 6 of 8 effective, 1 wounded | Exact, because a leader knows their own group |
@@ -595,7 +595,7 @@ These values are starting points to tune in play. Precedence sets the order in t
 
 ### 10.4 Monitor design
 
-Polling every 2 to 5 seconds, rather than engine event handlers, keeps the monitor simple and independent of locality. In the spike, the server and a headless client reported matching knowledge for a group local to the client, so the proof of concept runs the monitor on the server alone. A per-machine monitor stays as the fallback if that comparison fails under more demanding tests. Per-group state lives on the group, so it survives a locality change. A per-frame budget stops the monitor from costing visible performance at larger scales.
+The monitor sends each group's packet every 2 seconds, and the host decides what's worth saying, so that logic can be tested without the game. Polling rather than engine event handlers keeps the monitor simple and independent of locality. A wiped-out group sends nothing. In the spike, the server and a headless client reported matching knowledge for a group local to the client, so the proof of concept runs the monitor on the server alone. A per-machine monitor stays as the fallback if that comparison fails under more demanding tests. Per-group state lives on the group, so it survives a locality change. A per-frame budget stops the monitor from costing visible performance at larger scales.
 
 A dead leader has to be handled: skip the reading, or use an alive unit, until `leader` updates. A deleted group keeps its `groupId` if created with `deleteWhenEmpty` false, but `leader` becomes null, and the monitor must stop reporting for it without error.
 
@@ -672,23 +672,23 @@ The harness's `map_svg` export supplies the base map once per world. Named locat
 
 ## 12. Commander tools
 
-This is the complete list on a new `arma-commander-mcp` server. A test must fail if anything else appears.
+This is the complete planned list on the `arma-commander-mcp` server. A test fails if the server exposes anything else.
 
-| Tool | Purpose |
-|---|---|
-| `commander_mission()` | Mission brief, objective, world and named locations |
-| `commander_roster()` | Callsigns, roles, capabilities and last heard |
-| `commander_end_turn(note, messages_only)` | Ends the turn and logs the note. A turn with no other actions is the noop. Refused when no wake is active, unless `messages_only` is true |
-| `commander_brief()` | The current briefing without waiting, for resuming a session |
-| `commander_order(to, legs, mode, ...)` | Sends an order, returns only an order id |
-| `commander_ask(to, topics, at)` | General or specific question |
-| `commander_schedule(after\|at\|every, do, ...)` | Creates a timed order, question or wake |
-| `commander_unschedule(id)` | Cancels a schedule or wake |
-| `commander_mark(id, kind, at, ...)` | Creates or updates a marker |
-| `commander_unmark(id)` | Retires a marker, keeping its history |
-| `commander_map(center, radius, layers)` | Renders the commander's map as an image |
-| `commander_notes(text)` | Replaces the estimate included in every briefing |
-| `commander_log(since, from, limit)` | Searches earlier radio traffic |
+| Tool | Purpose | Status |
+|---|---|---|
+| `commander_mission()` | Mission brief, roster and markers. The first call starts the mission clock | Built |
+| `commander_roster()` | Callsigns, roles, capabilities and last heard | Built |
+| `commander_end_turn(note, messages_only)` | Ends the turn and logs the note. A turn with no other actions is the noop. Refused when no wake is active, unless `messages_only` is true | Built |
+| `commander_brief()` | The current briefing without waiting, for resuming a session | Built |
+| `commander_order(to, legs, mode, ...)` | Sends an order, returns only an order id | Built |
+| `commander_ask(to, topics)` | General or specific question, for `position`, `task`, `strength`, `ammo`, `contacts` and `eta` | Built |
+| `commander_schedule(after\|at\|every, do, ...)` | Creates a timed order, question or wake | Wakes with `after` or `at` only |
+| `commander_unschedule(id)` | Cancels a schedule or wake | Built |
+| `commander_notes(text)` | Replaces the estimate included in every briefing | Built |
+| `commander_log(since, from, limit)` | Searches earlier radio traffic | Built |
+| `commander_mark(id, kind, at, ...)` | Creates or updates a marker | Not yet |
+| `commander_unmark(id)` | Retires a marker, keeping its history | Not yet |
+| `commander_map(center, radius, layers)` | Renders the commander's map as an image | Not yet |
 
 Grids are the primary coordinate format, because that's what subordinates speak and what the map shows.
 
@@ -728,27 +728,33 @@ If players can transmit later, radio text becomes a prompt injection route. Each
 
 ### 14.1 Proof of concept: one subordinate, A to B
 
-This is the first target, and it deliberately uses the smallest possible force. One AI group, one order, no enemies.
+This is the first target, and it deliberately uses the smallest possible force. One AI group, one order, no enemies. From [scenarios/commander/poc_a_to_b.yaml](../scenarios/commander/poc_a_to_b.yaml):
 
 ```yaml
 name: poc_a_to_b
-world: VR
-time_limit: "15:00"
-mission: >
-  Alpha is at point A. Get Alpha to point B, grid 048 190.
+mission: demo_vr
+time_limit: "5:00"
+text: >
+  Alpha is at point A, grid 030 030. Get Alpha to point B, grid 034 030.
 stations:
   - callsign: Alpha
     role: infantry section
     capabilities: [MOVE, HOLD, HALT, POSTURE]
+    at: "030 030"
+    units: 4
 markers:
-  - { id: B, kind: objective, at: "048 190", label: Point B }
-end:
-  success: Alpha within 50 m of point B
+  - { id: B, kind: objective, label: Point B, at: "034 030" }
+success:
+  station: Alpha
+  within_m: 10
+  of: "034 030"
 debounce: { quiet_s: 3, ceiling_s: 15 }
 mid_turn_messages: hold
 ```
 
-The field names are illustrative until the scenario format is built.
+The success radius is tight on purpose: with a wider one, the mission ended before Alpha reached its waypoint, so the arrival report never came. The mission also ends 10 seconds after success is met, because true position can get there a few seconds before the group reports arriving.
+
+To run it, `arma-harness commander start poc_a_to_b [--mode hold|deliver]` boots the mission if needed, enrols the stations and prints the command that launches the commander's session. `host/tests/live_commander.py` plays it with a scripted stand-in for the LLM.
 
 **It works when:**
 
@@ -782,15 +788,13 @@ The harness alone judges end conditions, and the commander learns the result onl
 These run on the normal harness, separate from the commander's tools, and may reveal anything:
 
 ```text
-arma-harness commander enroll --side west
-arma-harness commander start <scenario>
-arma-harness commander pause
-arma-harness commander status
-arma-harness commander stop
-arma-harness commander aar
+arma-harness commander start <scenario> [--mode hold|deliver]    set up a battle; repeating it reuses the running game
+arma-harness commander status                                    state, pending wakes, "no wake scheduled", turn counts
+arma-harness commander aar                                       radio, turns, timers and true positions on one timeline
+arma-harness commander stop                                      end it and shut the game down
 ```
 
-`status` shows the session's state, pending wakes, "no wake scheduled", turn counts, and "commander offline" if it stops responding.
+Enrolment comes from the scenario file. Pausing and a "commander offline" status aren't built yet.
 
 ### 15.2 Doctrine prompt
 
@@ -826,27 +830,32 @@ Launch scripts should clear `ANTHROPIC_API_KEY`. If it's set, Claude Code uses i
 | Chat is captured continuously, but the agent reads it only while `arma_listen` runs, and the MCP server has no push code | Wakes need their own route |
 | `mcp_server.py` registers every tool at import on one server | The commander needs a separate server module and a new script entry in `host/pyproject.toml` |
 | `safe()` returns exception text and tracebacks to the agent | The commander server needs its own wrapper |
-| `adapters.boot_items` re-runs SQF at each mission start and rejects unknown adapter names | The monitor can be a `commander` adapter, with a new branch there |
+| `adapters.boot_items` re-runs SQF at each mission start | `commander start` installs the monitor itself, because stations don't survive a mission restart anyway |
 | The event stream already contains `killed` events | The commander server passes through only `cmd_report` events |
 | `RunState.run_dir` is empty in attached mode | Records go under `home.runs / run_id` |
 | `arma_map` exports SVG, and the project has no rasteriser or image library | Map rendering needs a new dependency |
 | `setup-agents` writes client configs that expose the `arma` server | It needs a separate commander profile in its own folder |
 
-Proposed new files:
+The code:
 
 ```text
 host/src/arma_harness/commander/
-  server.py         MCP tools and the fog-safe error wrapper
-  wake.py           timers, debounce, and the deliver() interface
-  reports.py        rounding, buckets and templates
-  world.py          markers, notes, reported positions, storage
-  orders.py         validation and the order and schedule book
-  briefing.py       builds each briefing
-  map.py            renders the map image
+  server.py         MCP tools and channel wakes: plain JSON-RPC, with errors kept generic
+  runtime.py        turns game events into radio traffic and wakes, and carries out tool calls
+  wake.py           timers, debounce and turn interruption modes, as pure logic
+  reports.py        rounding, buckets, templates, and what each station has already said
+  orders.py         validation of orders, grids and times
+  scenario.py       scenario files
+  records.py        the commander's text files
+  operator.py       the operator's commands and the commander's workspace
+  doctrine.md       the commander's instructions, written to the workspace as CLAUDE.md
 host/src/arma_harness/adapters/commander_boot.sqf    monitor, waypoint writer, truth recorder
-commander/                                            client config and doctrine file
-scenarios/commander/                                  scenario files
+host/tests/test_commander.py                         offline tests, including the fog tests
+host/tests/live_commander.py                         scripted battles on a real game
+scenarios/commander/                                 scenario files
 ```
+
+The commander's workspace is generated in `<home>/commander/workspace`, outside the repo, so the session doesn't pick up the repo's `CLAUDE.md`, `AGENTS.md` or `.mcp.json`.
 
 ## 17. Engine spike results
 
@@ -877,7 +886,7 @@ Run on 2026-11-05 on the `demo_vr` mission, on a dedicated server with one headl
 
 ### Still unverified
 
-- Whether a new order releases a group stopped with `doStop`, and whether `POSTURE` settings and `setWaypointCompletionRadius` behave as described.
+- `setWaypointCompletionRadius` and `setWaypointTimeout`. The proof of concept's live runs confirmed that a new order releases a group stopped with `doStop`, and that behaviour changes from `POSTURE` take effect.
 - Ammo bands in real firefights and across mixed loadouts, and fuel and vehicle states.
 - Whether `CBA_missionTime` handles pausing correctly. A dedicated server doesn't pause, so this needs a hosted game. It read correctly during the run on the server and the headless client.
 - The size of an Altis SVG with contours, and whether other worlds' exports reveal mission-placed objects. The map image isn't part of the proof of concept.
@@ -887,8 +896,8 @@ Run on 2026-11-05 on the `demo_vr` mission, on a dedicated server with one headl
 
 1. **Channel test.** Done. See the [results](#510-channel-test-results).
 2. **Engine spike.** Done. See the [results](#17-engine-spike-results).
-3. **Proof of concept.** Stations, orders, questions, reports, wake logic and timers, enough for [one subordinate from A to B](#141-proof-of-concept-one-subordinate-a-to-b), plus the truth log and the failure variant. Run it in both turn interruption modes.
-4. **Lockdown.** Separate client profile, allowlist and leak tests.
+3. **Proof of concept.** Built: stations, orders, questions, reports, wake logic and timers, enough for [one subordinate from A to B](#141-proof-of-concept-one-subordinate-a-to-b), plus the truth log, the failure variant and both turn interruption modes. It still needs a run with a real LLM.
+4. **Lockdown.** The allowlist, leak tests and a locked-down workspace exist. Still to do: confirm the lockdown holds in a real session, and a commander profile in `setup-agents`.
 5. **World model.** Markers, notes, log, map image and resume.
 6. **Timed actions.** Timed orders and questions.
 7. **Larger scenarios.** The village and the held position, then tune from what happens.

@@ -1,4 +1,4 @@
-"""Operator side: setting up, watching and reviewing a battle. It may reveal anything, so the commander never gets it."""
+"""Operator side: setting up, watching and reviewing a battle. Never available to the commander."""
 from __future__ import annotations
 
 import json
@@ -153,7 +153,8 @@ def status(home: Home | None = None) -> dict:
         "records": current["folder"], "started": state.get("t0") is not None, "ended": state.get("ended") or None,
         "mode": wake.get("mode"), "turn": state.get("turn", 0), "in_turn": wake.get("in_turn", False),
         "active_timers": list((wake.get("timers") or {}).values()),
-        "no_wake_scheduled": bool(state.get("t0") is not None and not wake.get("in_turn") and not wake.get("timers")),
+        "no_wake_scheduled": bool(state.get("t0") is not None and not state.get("ended") and not wake.get("in_turn")
+                                  and not wake.get("timers")),
         "messages_only": wake.get("messages_only", False), "turns_logged": len(turns),
         "turns_assumed_over": sum(1 for t in turns if str(t.get("note", "")).startswith("assumed over")),
     }

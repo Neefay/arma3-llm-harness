@@ -14,7 +14,7 @@ markers:
   - { id: B, kind: objective, label: Point B, at: "034 030" }
 success:
   station: Alpha
-  within_m: 50
+  within_m: 10
   of: "034 030"
 events:
   - { at: "0:30", action: delete_station, station: Alpha }

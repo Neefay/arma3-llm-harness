@@ -12,9 +12,9 @@ stations:
     units: 4
 markers:
   - { id: B, kind: objective, label: Point B, at: "034 030" }
-success:
+success:  # tight, so the mission ends after Alpha's arrival report and not before it
   station: Alpha
-  within_m: 50
+  within_m: 10
   of: "034 030"
 debounce: { quiet_s: 3, ceiling_s: 15 }
 mid_turn_messages: hold
