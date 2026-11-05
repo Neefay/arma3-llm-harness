@@ -18,6 +18,12 @@ from arma_harness.commander.wake import DELIVER, HOLD, WakeLogic
 from arma_harness.config import REPO_ROOT
 
 
+@pytest.fixture(autouse=True)
+def exact_bearings(monkeypatch):
+    """Bearings carry a random error, tested on its own below. Everywhere else, the words need to be predictable."""
+    monkeypatch.setattr(reports, "_wobble", lambda spread: 0)
+
+
 def packet(**over) -> dict:
     base = {"callsign": "Alpha", "pos": [3050.0, 3050.0], "grid": "030030", "dir": 90, "speed": 0, "alive": 4,
             "wounded": 0, "baseline": 4, "leader": "Sam Reed", "rounds": 400, "rounds_baseline": 400,
@@ -52,7 +58,7 @@ def test_sitrep_and_specific_answers():
     text = reports.answer(packet(wounded=1, alive=3, rounds=190, contacts=[contact()]), None)
     assert "Grid 030 030, stationary." in text and "3 of 4 effective, 1 wounded" in text
     assert "Sam Reed has command" in text and "Ammo amber, about half." in text and "No current orders." in text
-    assert "One infantry, north-east, roughly 300 metres, seen now." in text
+    assert "One infantry, bearing 045, roughly 300 metres, seen now." in text
     assert reports.answer(packet(), None, ["ammo"]) == "Ammo green, good."
     trip = route(("MOVE", (3450, 3050), "034 030"))
     assert "About 3 minutes to grid 034 030" in reports.answer(packet(), trip, ["eta"])
@@ -134,7 +140,7 @@ def test_clear_with_no_buildings_says_so():
 def test_contacts_near_a_numbered_building_say_which():
     buildings = [{"id": "B3", "pos": [3260.0, 3260.0]}, {"id": "B4", "pos": [3700.0, 3700.0]}]
     said = Tracker().update(packet(contacts=[contact(3250, 3250)]), None, 0, buildings)
-    assert said[0].text == "Contact, one infantry, north-east, roughly 300 metres, near B3. Engaging."
+    assert said[0].text == "Contact, one infantry, bearing 045, roughly 300 metres, near B3. Engaging, at grid 030 030."
     assert "near" not in Tracker().update(packet(contacts=[contact(3500, 3100)]), None, 0, buildings)[0].text
     assert "near B3" in reports.answer(packet(contacts=[contact(3250, 3250)]), None, ["contacts"], buildings)
 
@@ -165,10 +171,49 @@ def test_cba_tasks_report_arriving_and_then_stay_quiet():
 
 
 def test_unknown_contacts_read_properly():
-    assert reports.contact_phrase({"direction": "west", "count": 1, "kinds": {"unknown": 1}, "range": 100}) == \
-        "one contact, west, roughly 100 metres"
-    assert reports.contact_phrase({"direction": "west", "count": 2, "kinds": {"unknown": 2}, "range": 100}) == \
-        "a couple of contacts, west, roughly 100 metres"
+    west = {"direction": "west", "range": 100, "offset": (-100, 0), "accuracy_m": 0}
+    assert reports.contact_phrase({**west, "count": 1, "kinds": {"unknown": 1}}) == \
+        "one contact, bearing 270, roughly 100 metres"
+    assert reports.contact_phrase({**west, "count": 2, "kinds": {"unknown": 2}}) == \
+        "a couple of contacts, bearing 270, roughly 100 metres"
+
+
+def test_bearings_are_estimates_and_vaguer_targets_get_wider_error(monkeypatch):
+    spreads = []
+    monkeypatch.setattr(reports, "_wobble", lambda spread: spreads.append(spread) or 0)
+    assert reports.spoken_bearing(0, 100) == "bearing 000"
+    assert reports.spoken_bearing(100, 0, accuracy_m=10) == "bearing 090"
+    assert reports.spoken_bearing(-1, -100, accuracy_m=500) == "bearing 180"
+    assert spreads[0] == 5 and 5 < spreads[1] < 11 and spreads[2] == 20
+    monkeypatch.setattr(reports, "_wobble", lambda spread: spread)
+    assert reports.spoken_bearing(0, 100) == "bearing 005"
+    monkeypatch.setattr(reports, "_wobble", lambda spread: -spread)
+    assert reports.spoken_bearing(0, 100) == "bearing 355"  # round the top of the compass
+
+
+def test_real_bearings_stay_within_their_error(monkeypatch):
+    monkeypatch.undo()
+    said = {reports.spoken_bearing(100, 0) for _ in range(300)}
+    assert said <= {"bearing 085", "bearing 090", "bearing 095"} and len(said) == 3
+
+
+def test_a_bearing_always_comes_with_where_its_measured_from():
+    seen = packet(contacts=[contact()])
+    assert reports.answer(seen, None, ["contacts"]).startswith("At grid 030 030. One infantry, bearing 045")
+    assert reports.answer(packet(), None, ["contacts"]) == "No contacts."
+    both = reports.answer(seen, None, ["position", "contacts"])
+    assert both.count("030 030") == 1 and both.startswith("Grid 030 030, stationary. One infantry")
+    assert reports.answer(seen, None).count("Grid 030 030") == 1
+
+
+def test_contact_reports_and_answers_put_the_reporter_on_the_map(tmp_path):
+    b = Battle(tmp_path)
+    b.start()
+    b.advance(102, contacts=[contact()], pos=[3250, 3050], grid="032030")
+    assert b.runtime.positions["Alpha"]["grid"] == "032 030"
+    b.advance(150, contacts=[contact()], pos=[3350, 3050], grid="033030")
+    assert b.runtime.ask("Alpha", ["contacts"])["replies"][0]["text"].startswith("At grid 033 030.")
+    assert b.runtime.positions["Alpha"]["grid"] == "033 030"
 
 
 def test_posture_doesnt_restart_the_route():
@@ -189,7 +234,8 @@ def test_contact_flashes_once_then_goes_quiet_then_is_lost():
     tracker = Tracker()
     said = tracker.update(packet(contacts=[contact()]), None, 0)
     assert said[0].precedence == reports.FLASH
-    assert said[0].text == "Contact, one infantry, north-east, roughly 300 metres. Engaging."
+    assert said[0].text == "Contact, one infantry, bearing 045, roughly 300 metres. Engaging, at grid 030 030."
+    assert said[0].grid == "030 030"
     assert tracker.update(packet(contacts=[contact()]), None, 2) == []
     two_more = [contact(), contact(3260, 3260), contact(3270, 3270)]
     assert tracker.update(packet(contacts=two_more), None, 30) == []  # within the repeat limit
@@ -200,7 +246,7 @@ def test_contact_flashes_once_then_goes_quiet_then_is_lost():
 
 def test_holding_fire_is_said_when_the_group_cant_engage():
     said = Tracker().update(packet(contacts=[contact()], combat_mode="BLUE"), None, 0)
-    assert said[0].text.endswith("Holding fire.")
+    assert "Holding fire, at grid 030 030." in said[0].text
 
 
 def test_casualties_group_then_leader_and_ammo_report():

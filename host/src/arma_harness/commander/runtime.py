@@ -520,7 +520,8 @@ class Runtime:
         packet = self.packets.get(callsign)
         if packet is None or self.now() - packet["t"] > PACKET_FRESH_S:
             return None, None
-        grid = format_grid(packet["grid"]) if topics is None or "position" in topics else None
+        contacts_stated = topics is not None and "contacts" in topics and reports.contact_groups(packet)
+        grid = format_grid(packet["grid"]) if topics is None or "position" in topics or contacts_stated else None
         return reports.answer(packet, self.routes.get(callsign), topics, self.buildings), grid
 
     def ask(self, to: str, topics: list[str] | None = None) -> dict:

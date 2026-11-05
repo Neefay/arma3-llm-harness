@@ -62,7 +62,7 @@ This is bigger than a new order type. Vehicles become things the commander knows
 | `doStop` | 12 | Fires |
 | `enableEngineArtillery false` | 13 | Fires |
 
-So a gunner mounting a gun gets `disableAI "TARGET"`, and gets it back on leaving. A scenario can leave it off ([open question 4](#13-open-questions)). LAMBS adds its own self-firing and crew dismounting on top of this, so the design assumes LAMBS isn't loaded, and says so at startup if it is.
+So a gunner mounting a gun gets `disableAI "TARGET"`, and gets it back on leaving. Enemy guns leave it off ([decision 4](#13-decisions)). LAMBS adds its own self-firing and crew dismounting on top of this, so the design assumes LAMBS isn't loaded, and says so at startup if it is.
 
 ### 2.3 Check fire and postures
 
@@ -350,16 +350,19 @@ enemies:
 - **Thresholds:** 100 m, 400 m, 800 m and 1,500 m are starting guesses. Reasonable but untested on real battles.
 - **`checkVisibility` cost** with many soldiers and shells: 8 rounds against 30 soldiers is fine in principle, but unmeasured.
 
-## 13. Open questions
+## 13. Decisions
 
-For the owner:
+Agreed with the owner:
 
-1. **Who can crew a gun?** Recommended: anyone can `MOUNT` anything, as long as a seat's free, and the `FIRE_MISSION` capability decides whose orders to fire are accepted. So grabbing an abandoned mortar works only for a station trained for it. The alternative is that anybody on a gun can fire it.
-2. **Is a reported vehicle's type known exactly?** Recommended: yes, "Mk6 mortar", since soldiers can identify a mortar. Contact reports are vaguer, though ("one contact"). Should a distant one be just "a vehicle" until closer?
-3. **Spotter precision.** Recommended: offsets rounded to 10 m, as in section 6. Rounder makes correction harder, and finer gets too exact.
-4. **Self-firing.** Recommended: commander's guns never fire by themselves, while enemy guns do by default, since that's real engine behaviour and a real threat that needs no script. The alternative is a per-gun scenario flag, which would be easy to add. Should friendly crews ever have initiative, and if so, should they report it?
-5. **Ammunition limits.** 8 HE can wipe a squad in the open, and a gun carries 32. Recommended: 16 HE and 4 smoke to start, set per scenario, with no resupply yet.
-6. **Exact aim on buildings.** A building or pinned marker aims at its exact position, so the first round can be right on. Recommended: keep it, since a map shows that much. The alternative, rounding every aim to a grid, makes spotters matter more.
+1. **Who can crew a gun:** anyone can `MOUNT` anything with a free seat. The `FIRE_MISSION` capability decides whose orders to fire are accepted, so grabbing an abandoned mortar works only for a station trained for it.
+2. **Reported vehicles:** named by exact type, such as "Mk6 mortar", once a squad can see one.
+3. **Spotter precision:** offsets rounded to 10 m, as in section 6.
+4. **Self-firing:** the commander's guns never fire by themselves, and enemy guns do, since that's real engine behaviour and a real threat that needs no script.
+5. **Ammunition:** 16 HE and 4 smoke for the test scenario, set per scenario, with no resupply yet.
+
+Still open:
+
+6. **Exact aim on buildings.** A grid aims at the centre of its 100 m square, up to about 70 m from any point in it. A building or pinned marker aims at its exact centre, so with a gun's 10 m spread, the first rounds can land right on it with no spotter. Recommended: keep that, since a map shows that much. The alternative, rounding every aim to its grid centre, means a building can only be hit after correcting.
 
 ## 14. Build order
 

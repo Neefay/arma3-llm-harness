@@ -6,6 +6,7 @@ Only fields the group could know arrive here (see adapters/commander_boot.sqf), 
 from __future__ import annotations
 
 import math
+import random
 from dataclasses import dataclass, field
 
 FLASH, PRIORITY, ROUTINE = "flash", "priority", "routine"
@@ -24,6 +25,9 @@ STUCK_REPEAT_S = 180
 STUCK_MIN_M = 20
 ON_STATION_M = 30
 NEAR_BUILDING_M = 25
+BEARING_ERROR_DEG = 5  # a soldier's snap estimate, widened by how vaguely the target's position is known
+BEARING_ERROR_MAX_DEG = 20
+BEARING_ROUND_DEG = 5
 DEFAULT_TOPICS = ["position", "task", "strength", "ammo", "contacts"]
 PLACING_ORDERS = {"OCCUPY", "CORDON"}
 TASK_ORDERS = {"ATTACK", "DEFEND", "PATROL_AREA", "SWEEP"}  # CBA tasks: they run until replaced, with no end to report
@@ -42,6 +46,17 @@ def format_grid(grid: str) -> str:
 def compass(dx: float, dy: float) -> str:
     bearing = math.degrees(math.atan2(dx, dy)) % 360
     return _COMPASS[round(bearing / 45) % 8]
+
+
+def _wobble(spread: float) -> float:
+    return random.uniform(-spread, spread)
+
+
+def spoken_bearing(dx: float, dy: float, accuracy_m: float = 0) -> str:
+    """A compass bearing as someone would call it out. It's an estimate, so each call can come out a little differently."""
+    spread = min(BEARING_ERROR_MAX_DEG, BEARING_ERROR_DEG + math.degrees(math.atan2(accuracy_m, math.hypot(dx, dy))))
+    bearing = math.degrees(math.atan2(dx, dy)) + _wobble(spread)
+    return f"bearing {round(bearing / BEARING_ROUND_DEG) * BEARING_ROUND_DEG % 360:03d}"
 
 
 def rough_range(metres: float) -> str:
@@ -79,7 +94,8 @@ def ammo_band(rounds: float, baseline: float) -> str:
 
 
 def contact_groups(packet: dict, max_age: float = CONTACT_FORGOTTEN_S) -> list[dict]:
-    """Group contacts by direction from this group, newest knowledge first."""
+    """Group contacts by compass sector from this group, newest knowledge first. The sector only decides what counts as
+    one report. What gets said is a bearing to the nearest contact in it."""
     x, y = packet["pos"]
     groups: dict[str, dict] = {}
     for contact in packet.get("contacts") or []:
@@ -88,11 +104,13 @@ def contact_groups(packet: dict, max_age: float = CONTACT_FORGOTTEN_S) -> list[d
         dx, dy = contact["pos"][0] - x, contact["pos"][1] - y
         direction = compass(dx, dy)
         entry = groups.setdefault(direction, {"direction": direction, "count": 0, "kinds": {}, "range": math.inf,
-                                              "age_s": math.inf, "nearest": contact["pos"]})
+                                              "age_s": math.inf, "nearest": contact["pos"], "offset": (dx, dy),
+                                              "accuracy_m": contact.get("accuracy_m", 0)})
         entry["count"] += 1
         entry["kinds"][contact["kind"]] = entry["kinds"].get(contact["kind"], 0) + 1
         if math.hypot(dx, dy) < entry["range"]:
-            entry["nearest"] = contact["pos"]
+            entry["nearest"], entry["offset"] = contact["pos"], (dx, dy)
+            entry["accuracy_m"] = contact.get("accuracy_m", 0)
         entry["range"] = min(entry["range"], math.hypot(dx, dy))
         entry["age_s"] = min(entry["age_s"], contact["age_s"])
     return sorted(groups.values(), key=lambda g: g["age_s"])
@@ -101,7 +119,8 @@ def contact_groups(packet: dict, max_age: float = CONTACT_FORGOTTEN_S) -> list[d
 def contact_phrase(group: dict, buildings: list[dict] | None = None) -> str:
     kind = max(group["kinds"], key=group["kinds"].get)
     label = ("contact" if group["count"] == 1 else "contacts") if kind == "unknown" else kind
-    words = f"{count_word(group['count'])} {label}, {group['direction']}, {rough_range(group['range'])}"
+    bearing = spoken_bearing(*group["offset"], group["accuracy_m"])
+    words = f"{count_word(group['count'])} {label}, {bearing}, {rough_range(group['range'])}"
     nearby = _nearest_building(group.get("nearest"), buildings)
     return f"{words}, near {nearby}" if nearby else words
 
@@ -159,8 +178,11 @@ def answer(packet: dict, route: dict | None, topics: list[str] | None = None,
                 parts.append(f"Ammo {band}, {_AMMO_WORDS[band]}.")
             case "contacts":
                 groups = contact_groups(packet)
-                parts.append(" ".join(f"{_sentence(contact_phrase(g, buildings))}, {age_words(g['age_s'])}."
-                                      for g in groups) if groups else "No contacts.")
+                # A bearing means nothing without where it's measured from.
+                origin = "" if "position" in (topics or DEFAULT_TOPICS) or not groups \
+                    else f"At grid {format_grid(packet['grid'])}. "
+                parts.append(origin + (" ".join(f"{_sentence(contact_phrase(g, buildings))}, {age_words(g['age_s'])}."
+                                                for g in groups) if groups else "No contacts."))
             case "eta":
                 parts.append(_eta_words(packet, route))
             case _:
@@ -333,12 +355,13 @@ class Tracker:
                                  sorted(fresh, key=lambda g: g["direction"]))
             summary = "; ".join(contact_phrase(g, buildings) for g in fresh)
             action = "Engaging" if packet.get("combat_mode") in ("YELLOW", "RED") else "Holding fire"
+            grid = format_grid(packet["grid"])
             if not self.contact_active:
                 self.contact_active, self.contact_signature, self.contact_said = True, signature, now
-                return [Report(FLASH, f"Contact, {summary}. {action}.")]
+                return [Report(FLASH, f"Contact, {summary}. {action}, at grid {grid}.", grid)]
             if signature != self.contact_signature and now - self.contact_said >= CONTACT_UPDATE_S:
                 self.contact_signature, self.contact_said = signature, now
-                return [Report(PRIORITY, f"Contact update, {summary}.")]
+                return [Report(PRIORITY, f"Contact update, {summary}, at grid {grid}.", grid)]
             return []
         if self.contact_active and now - self.contact_seen >= CONTACT_LOST_S:
             self.contact_active, self.contact_signature = False, ""
