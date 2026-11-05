@@ -1,6 +1,6 @@
 # Commander Mode: design
 
-**Status:** the [A to B proof of concept](#141-proof-of-concept-one-subordinate-a-to-b) is built. It has run on a real game with a scripted stand-in for the LLM, and with real commanders in `hold` mode: A to B on Claude Opus 5.5, and a killed group on Claude Haiku 5.5. Section 12 marks which tools exist so far. The rest of this document is still the design. Updated 2026-11-05.
+**Status:** the [A to B proof of concept](#141-proof-of-concept-one-subordinate-a-to-b) and a [combat scenario](#142-take-the-village) are built. Real commanders have run A to B on Claude Opus 5.5 and a killed group on Claude Haiku 5.5, both in `hold` mode. So far, only a scripted stand-in has fought the combat scenario, so no LLM has commanded a battle yet. Section 12 marks which tools exist. The rest of this document is still the design. Updated 2026-11-05.
 
 **Audience:** developers and agents building or reviewing this feature. Read [ARCHITECTURE.md](ARCHITECTURE.md) first for how the harness itself works.
 
@@ -389,6 +389,13 @@ The commander knows only what's been reported, so its view of an order can lag o
 | `SENTRY` | `SENTRY` | Waits until it detects enemies, then continues to its next leg | Grid | Contact report | First |
 | `PATROL` | `MOVE` + `CYCLE` | Repeats a route until told otherwise | 2+ grids | Each lap, optional | First |
 | `HALT` | Clears waypoints, then `doStop` | Stops where it is | None | Halted | First |
+| `CLEAR` | Scripted moves | Walks soldiers through every position in the named buildings, one building at a time | Building ids, or a place and radius | Each building checked, then finished | First |
+| `OCCUPY` | Scripted moves, then `doStop` | Moves into a building and holds it | Building id | In position | First |
+| `CORDON` | Scripted moves, then `doStop` and `doWatch` | Spreads out in a ring around a place and watches it | Place, radius | In position | First |
+| `ATTACK` | `CBA_fnc_taskAttack` | Slow combat advance on a place | Place, radius | On the objective | First |
+| `DEFEND` | `CBA_fnc_taskDefend` | Garrisons buildings around a place and holds | Place, radius | On the objective | First |
+| `PATROL_AREA` | `CBA_fnc_taskPatrol` | Patrols randomly around a place | Place, radius | On the objective | First |
+| `SWEEP` | `CBA_fnc_taskSearchArea` | Searches an area randomly, including some buildings, until replaced | Place, radius | On the objective | First |
 | `POSTURE` | Group commands | Changes speed, formation, behaviour or firing rules and keeps its route | Any setting | Acknowledged | First |
 | `BOARD` | `GETIN` | Mounts its assigned vehicle | Assigned vehicle | Mounted | Later |
 | `DISMOUNT` | `GETOUT` | Leaves its vehicle at a point | Grid | Dismounted | Later |
@@ -396,6 +403,8 @@ The commander knows only what's been reported, so its view of an order can lag o
 | `GUARD` | `GUARD` | Protects an area and responds to threats | Grid | On station | Later |
 | `LOITER` | `LOITER` | An aircraft circles a point | Grid, radius | On station | Later |
 | `JOIN` | `JOIN` | Merges into another station | Callsign | Joined | Later |
+
+`CLEAR`, `OCCUPY`, `CORDON` and the CBA tasks each stand alone in an order. `at` can be a grid, a marker id or a building id. CBA tasks run until replaced, so "on the objective" is the only report they give. `CBA_fnc_searchNearby` was left out, because `CLEAR` does the same with a named building and a report.
 
 Left out on purpose: `DESTROY` needs a target object, which would leak engine references. `SCRIPTED` and `TALK` run code or dialogue the commander shouldn't reach. `GUARD` stays out of the first version because a test group left its waypoint and walked off elsewhere.
 
@@ -406,6 +415,8 @@ Engine behaviour the waypoint writer has to handle, from the [spike](#17-engine-
 - **`HOLD` and `SENTRY`** stay current on arrival, so "on station" has to come from distance.
 - **`SEARCH`** completes on its own, about 48 s in with no enemies present, and the group then wanders nearby.
 - **Replacing a route:** delete all waypoints, add the new one, then call `setCurrentWaypoint`. Index numbering restarts at 0.
+- **`SEARCH` doesn't enter buildings.** In the first combat run, garrisoned enemies outlived it, which is why `CLEAR` exists.
+- **Leaving a CBA task:** `taskDefend` disables pathfinding, so soldiers ignored new orders until `enableAI "PATH"`. `taskAttack` leaves a group crawling in `COMBAT`, so behaviour is reset to `AWARE`. Every new order now does both, and a live check moved squads out of every order type.
 - **`HALT`:** clearing waypoints alone doesn't stop a group, and neither does adding `doFollow` or `doMove`. Those groups kept walking for over 110 m. `doStop` stopped one within a metre. Whether a later order releases a stopped group is still untested.
 
 ### 7.3 Parameters
@@ -449,7 +460,7 @@ commander_ask(to="all", topics=["position"])                  # one reply per st
 | `strength` | 6 of 8 effective, 1 wounded. Sergeant Novak has command. | `units`, `alive`, `lifeState`, `damage`, `leader` | First |
 | `ammo` | Ammo amber, about half. | `magazinesAmmoFull` against the enrolment baseline, counting magazines from `compatibleMagazines` of the primary weapon. `magazinesAmmo` omits the loaded magazine | First |
 | `vehicle` | Fuel about a quarter, vehicle damaged, still mobile. | `fuel`, `damage`, `canMove`, `someAmmo` | First |
-| `contacts` | A few infantry, north-east, roughly 300 metres, last seen a minute ago. | `targets [true, range]` with `targetKnowledge`, plus `nearTargets` for type and accuracy | First |
+| `contacts` | A few infantry, north-east, roughly 300 metres, near B3, last seen a minute ago. | `targets [true, range]` with `targetKnowledge`, plus `nearTargets` for type and accuracy | First |
 | `eta` | About 6 minutes to grid 058 196, if unopposed. | Remaining distance over recent speed | First |
 | `surroundings` | On a ridge. Church 200 metres north, road below us to the east. | `nearestLocations`, `nearestTerrainObjects`, height | Later |
 | `can_see` | Clear view of that grid. Nothing seen there at the moment. | `terrainIntersectASL` from the leader's eye height, plus contacts | Later |
@@ -502,6 +513,10 @@ Timed orders stay separate from wakes because a coordinated attack shouldn't dep
 ### Who holds a schedule
 
 In the first version, the harness holds every schedule and transmits when it's due. With reliable radio, that's the same as telling the unit in advance. Once radio can fail, the two differ: "move at 15:45" given to a unit in advance still happens during a blackout, and one held by HQ doesn't. Reserving a `holder` field from the start keeps that option open.
+
+### Check-ins
+
+A repeating question wakes the commander only if the answer has changed since that schedule last asked. An identical answer still counts as being heard. Without this, 19 of 47 turns in one battle were Recon saying nothing new. A missed check-in doesn't wake anyone either: it appears under OVERDUE in the next briefing.
 
 ### Event triggers (later)
 
@@ -601,7 +616,13 @@ A dead leader has to be handled: skip the reading, or use an alive unit, until `
 
 Events are emitted with `["evt", createHashMapFromArray [["type", "cmd_report"], ...]] call BRMH_fnc_emit`, like existing adapter events.
 
-### 10.5 Rule-based first, personas later
+### 10.5 Noticing enemies while clearing
+
+AI soldiers can walk past an enemy without registering him. In the first combat run, one enemy survived three squads sweeping his building. So while clearing, a soldier with a clear line of sight (`checkVisibility` above 0.3) to an enemy within 10 m gets a `reveal`. It only covers what he could plainly see, and it never reaches the commander except through normal contact reports.
+
+Reports stay modest: "B3 checked, nothing seen", and never "all clear", because squads can still miss people.
+
+### 10.6 Rule-based first, personas later
 
 The first version uses templates with a little seeded variation in wording. A later persona layer would rewrite rendered text and answer free-form questions using the packet alone. The rest of the system doesn't change when personas arrive. Any persona must pass a check that its output adds no facts beyond the packet.
 
@@ -664,11 +685,21 @@ commander_mark(
 - **Markers never delete themselves.** Only the commander retires a belief, though expired ones get flagged.
 - **Later:** uncertainty rings that grow with age and likely enemy speed, and competing hypotheses.
 
-### 11.4 Looking at the map
+### 11.4 Buildings
 
-`commander_map(center, radius, layers)` returns a PNG with the terrain, grid labels, requested layers and a timestamp. Marker data is already in each briefing as text, so the image only needs to be requested for geometry, such as route choices. That keeps image costs down.
+A scenario's `ao: {at, radius}` asks the game which enterable buildings exist in that area when the battle is set up. They're numbered west to east (B1, B2, ...) and listed in the mission brief with their type, grid and number of positions.
 
-The harness's `map_svg` export supplies the base map once per world. Named locations come from the existing `_svg_locations`. SVG-to-PNG conversion needs a new dependency, chosen in a spike, because large terrains with contours may produce very large files.
+This is map knowledge: which buildings exist, never who's in them. It's fixed at the start, so a destroyed building stays on the list. The list comes from a game query because the VR export doesn't include script-placed objects.
+
+Building ids can be used as places in any order. Reports name a building when a contact's perceived position is within 25 m of one, and buildings a squad has been through are listed in the briefing with their age. A later option is a deliberately incomplete list, like an out-of-date real map.
+
+### 11.5 Looking at the map
+
+`commander_map(center, radius)` returns a PNG with a grid, the buildings and their ids, the commander's markers, and each station's last reported position. Buildings it has been told were checked are green, and the caption says it shows beliefs and last reports, not the live battle. `center` can be a grid, marker or building id, and the default view is the whole area of operations.
+
+It's a pure function of what the commander has already been told, drawn with Pillow, and a test checks that facts about the real battle don't change a single byte. Marker data is already in each briefing as text, so the image only needs to be requested for geometry, which keeps image costs down.
+
+**Not there yet:** terrain. VR has none worth drawing, but real terrains will need contours and roads from the `map_svg` export, and real size limits to check.
 
 ## 12. Commander tools
 
@@ -682,13 +713,13 @@ This is the complete planned list on the `arma-commander-mcp` server. A test fai
 | `commander_brief()` | The current briefing without waiting, for resuming a session | Built |
 | `commander_order(to, legs, mode, ...)` | Sends an order, returns only an order id | Built |
 | `commander_ask(to, topics)` | General or specific question, for `position`, `task`, `strength`, `ammo`, `contacts` and `eta` | Built |
-| `commander_schedule(after\|at\|every, do, ...)` | Creates a timed order, question or wake | Wakes with `after` or `at` only |
+| `commander_schedule(after\|at\|every, do, ...)` | Creates a timed order, question or wake, once or repeating | Built |
 | `commander_unschedule(id)` | Cancels a schedule or wake | Built |
 | `commander_notes(text)` | Replaces the estimate included in every briefing | Built |
 | `commander_log(since, from, limit)` | Searches earlier radio traffic | Built |
-| `commander_mark(id, kind, at, ...)` | Creates or updates a marker | Not yet |
-| `commander_unmark(id)` | Retires a marker, keeping its history | Not yet |
-| `commander_map(center, radius, layers)` | Renders the commander's map as an image | Not yet |
+| `commander_mark(id, kind, at, ...)` | Creates or updates a marker | Built |
+| `commander_unmark(id)` | Retires a marker, keeping its history | Built |
+| `commander_map(center, radius)` | Renders the commander's map as an image | Built |
 
 Grids are the primary coordinate format, because that's what subordinates speak and what the map shows.
 
@@ -701,9 +732,9 @@ The fog is only worth having if the commander can't get around it, even by accid
 - **Separate MCP server.** `mcp_server.py` registers every tool at import, so a mode flag would leave `arma_exec`, `arma_view` and `arma_snapshot` visible. The commander server has its own module and script entry, and doesn't import that module.
 - **Locked-down client.** The agent could otherwise use the shell (`arma-harness.exe exec`) or read `state.json`, RPTs and `audit.jsonl`. So the commander runs from a generated folder with its own MCP config and a long deny list, and the server delivers its doctrine. `setup-agents` needs a separate commander profile for this.
 
-**How to check it.** Asking the commander to break the rules proves little, because a well-behaved model simply declines. Read the tool list the client really sent instead: the session transcript's `api-request-shape` and `deferred_tools_delta` rows. On Claude Code 2.1.318, a one-shot session from the workspace received only `ToolSearch`, `advisor` and the ten `commander_*` tools. Deny rules remove a tool from the list altogether. `advisor` stayed despite an `Advisor` rule. It can't reach game data, though it does add cost.
+**How to check it.** Asking the commander to break the rules proves little, because a well-behaved model simply declines. `arma-harness commander check-lockdown` starts a real one-shot session in the workspace, using one small model call, then reads the tool list the client really sent from the session transcript's `api-request-shape` and `deferred_tools_delta` rows. It fails on anything unexpected, on a missing commander tool, and if it can't read the transcript. On Claude Code 2.1.318, the session received only `ToolSearch`, `advisor` and the `commander_*` tools. Deny rules remove a tool from the list altogether. `advisor` stayed despite an `Advisor` rule. It can't reach game data, though it does add cost.
 
-The first version of the deny list named only the obvious tools, and that check found `SendMessage`, `ListAgents`, `Workflow`, `RemoteTrigger`, cron tools, `Artifact` and claude.ai connectors still available. `SendMessage` could have asked another local session what was really happening. The list has to name tools one by one, so a new client version, plugin or connector can widen it silently. It should be rechecked with each one, and that check should become a command. The check also ran without the channel flag, so an interactive session's list hasn't been read directly.
+The first version of the deny list named only the obvious tools, and that check found `SendMessage`, `ListAgents`, `Workflow`, `RemoteTrigger`, cron tools, `Artifact` and claude.ai connectors still available. `SendMessage` could have asked another local session what was really happening. The list has to name tools one by one, so a new client version, plugin or connector can widen it silently. So rerun the check after each one. The check also runs without the channel flag, so an interactive session's list hasn't been read directly.
 
 ### 13.2 Known leaks to close
 
@@ -774,16 +805,23 @@ To run it, `arma-harness commander start poc_a_to_b [--mode hold|deliver]` boots
 
 **First real result, on Claude Haiku 5.5 with `poc_a_to_b_killed`:** Alpha acknowledged at T+00:08 and died at T+00:10. The commander's timer woke it at T+02:39, and its question got no answer. It tried twice more, and re-sent the order in case the first had stalled. At T+04:37, with nothing left to try, it waited only for messages, and the time limit woke it. Its final position was that Alpha's status was unknown: it never claimed Alpha was dead or had arrived. This took 6 turns and 22 model requests. It wrote long summaries after each turn, about 8,500 output tokens in all, and loaded its tools piecemeal, so the doctrine now asks it not to.
 
-### 14.2 Following scenarios
+### 14.2 Take the village
+
+[scenarios/commander/take_the_village.yaml](../scenarios/commander/take_the_village.yaml): Alpha, Bravo, Charlie and Recon, 27 soldiers, against 14 enemies. Eight are garrisoned in a village and six patrol near it, and neither their strength nor their layout is in the mission text. It's won by killing every enemy and lost by losing every station, with a 20-minute limit.
+
+Enemies come from the scenario's `enemies` list, each with a `mode` of `hold`, `garrison` or `patrol`. They're never on the net. Run with `--watch` to open a game window in the mission's one observer slot: a free spectator camera with radio traffic in chat. The commander's markers are mirrored onto the game's map. Both feeds are one-way, so nothing reads them back.
+
+The enemy stays as it is for now, so that an LLM's run compares directly with the scripted baseline. BLUFOR lost only 5 of 27 in the first scripted run, so it will need toughening later.
+
+### 14.3 Following scenarios
 
 | Scenario | What it adds |
 |---|---|
-| Take a village | Three squads and recon against scripted defenders: coordination, timed attacks and contact reports |
 | Hold a position | A larger force under attack: busy-net debounce and casualties |
 
-Every scenario needs stations, an enemy setup, end conditions and a time limit. Opposition starts as scripted AI groups placed by the scenario. It could build on the existing YAML scenario runner.
+Every scenario needs stations, an enemy setup, end conditions and a time limit. `orders_check` has no enemies, and only exists so `host/tests/live_commander.py` can try every order on a real game.
 
-### 14.3 Win and loss
+### 14.4 Win and loss
 
 The harness alone judges end conditions, and the commander learns the result only from the mission-end wake.
 
@@ -798,9 +836,10 @@ arma-harness commander start <scenario> [--mode hold|deliver]    set up a battle
 arma-harness commander status                                    state, pending wakes, "no wake scheduled", turn counts
 arma-harness commander aar                                       radio, turns, timers and true positions on one timeline
 arma-harness commander stop                                      end it and shut the game down
+arma-harness commander check-lockdown                            prove which tools a commander session really gets
 ```
 
-Enrolment comes from the scenario file. Pausing and a "commander offline" status aren't built yet.
+Add `--watch` to `start` for a game window in the observer slot. Enrolment comes from the scenario file. Pausing and a "commander offline" status aren't built yet.
 
 ### 15.2 Doctrine prompt
 
@@ -853,11 +892,13 @@ host/src/arma_harness/commander/
   wake.py           timers, debounce and turn interruption modes, as pure logic
   reports.py        rounding, buckets, templates, and what each station has already said
   orders.py         validation of orders, grids and times
+  map.py            draws the commander's map as a PNG
   scenario.py       scenario files
   records.py        the commander's text files
   operator.py       the operator's commands and the commander's workspace
   doctrine.md       the commander's instructions, delivered by the MCP server
-host/src/arma_harness/adapters/commander_boot.sqf    monitor, waypoint writer, truth recorder
+host/src/arma_harness/adapters/commander_boot.sqf    monitor, order writer, enemy spawning, truth recorder, observer feeds
+missions/brmh_commander.VR/                          the village, and the observer slot
 host/tests/test_commander.py                         offline tests, including the fog tests
 host/tests/live_commander.py                         scripted battles on a real game
 scenarios/commander/                                 scenario files
@@ -892,6 +933,20 @@ Run on 2026-11-05 on the `demo_vr` mission, on a dedicated server with one headl
 - **Server reading a headless client's group:** `knowsAbout`, `targetKnowledge`, `targets [false, ...]` and `nearTargets` matched on both machines. The test enemy died early, because the test group was left free to fire, so enemy-filtered reads weren't compared. `setGroupOwner` returned false in the same frame the group was created, and worked later.
 - **Detection range:** an eight-man squad saw a four-man squad at 200 m within 11 s. A separate two-man pair saw nothing after 110 s, including a lone soldier in the open at 300 m. A squad 700 m away was never reacquired. Detection may be shorter-ranged than expected, which affects scenario spacing and recon, and it needs a proper look.
 
+### CBA tasks
+
+Tested on the real game, with five groups each given a task, then a new order:
+
+| Function | Did what the docs say | Getting out of it |
+|---|---|---|
+| `CBA_fnc_taskAttack` | Yes, a slow advance in `COMBAT` | Works, but stays slow until behaviour is reset |
+| `CBA_fnc_taskDefend` | Yes, garrisoned | Trapped until pathfinding is re-enabled |
+| `CBA_fnc_taskPatrol` | Yes | Clean |
+| `CBA_fnc_taskSearchArea` | Yes | Clean |
+| `CBA_fnc_searchNearby` | Yes, for the nearest building only, with no signal when it finishes | Clean |
+
+`CBA_fnc_taskSearchHouse` isn't in the loaded game.
+
 ### Still unverified
 
 - `setWaypointCompletionRadius` and `setWaypointTimeout`. The proof of concept's live runs confirmed that a new order releases a group stopped with `doStop`, and that behaviour changes from `POSTURE` take effect.
@@ -905,10 +960,10 @@ Run on 2026-11-05 on the `demo_vr` mission, on a dedicated server with one headl
 1. **Channel test.** Done. See the [results](#510-channel-test-results).
 2. **Engine spike.** Done. See the [results](#17-engine-spike-results).
 3. **Proof of concept.** Built: stations, orders, questions, reports, wake logic and timers, enough for [one subordinate from A to B](#141-proof-of-concept-one-subordinate-a-to-b), plus the truth log, the failure variant and both turn interruption modes. A real commander completed A to B in `hold` mode on 2026-11-05, in 4 turns and 13 model requests with no refusals. Its own timer didn't get to fire, because the mission ended first. A real commander also caught a killed group through its own timer, on Haiku. `deliver` mode hasn't been run with a real LLM yet.
-4. **Lockdown.** The allowlist, leak tests and a locked-down workspace exist. The tool list a session actually receives has been checked. Still to do: a command that repeats that check, and a commander profile in `setup-agents`.
-5. **World model.** Markers, notes, log, map image and resume.
-6. **Timed actions.** Timed orders and questions.
-7. **Larger scenarios.** The village and the held position, then tune from what happens.
+4. **Lockdown.** Done, apart from a commander profile in `setup-agents`: allowlist, leak tests, a locked-down workspace and `commander check-lockdown`.
+5. **World model.** Done: markers, notes, log, numbered buildings, map image and resume.
+6. **Timed actions.** Done: timed and repeating orders and questions.
+7. **Combat.** The village and its orders are built. Next, an LLM fights it, for a baseline to compare with. Then a tougher enemy and more scenarios.
 
 ## 19. Decisions
 
@@ -928,6 +983,8 @@ Run on 2026-11-05 on the `demo_vr` mission, on a dedicated server with one headl
 | Questions have no designed cost | Not a concern for the design |
 | Start with one subordinate moving from A to B | The smallest proof of concept, then larger scenarios |
 | Model choice is left until later | Doesn't affect the design |
+| The LLM's first battle uses the same enemy as the scripted runs | Gives a baseline for comparison, before toughening the enemy |
+| Provide CBA's pre-built tasks as orders, without a LAMBS-style override of AI behaviour | Fine control comes from a detailed picture and detailed orders, without cheating |
 
 ### Open
 
