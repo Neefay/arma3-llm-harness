@@ -832,7 +832,7 @@ The earlier script's first run, before the trap houses were fixed, lost 5 of 27.
 
 **First LLM result, on Claude Haiku 5.5 (`20261105-133935:1`):** it won in T+08:44, killing all 14 enemies for 3 of 27 lost, using 26 orders, 41 turns and 92 questions. That took 113 model requests, 51,404 output tokens and a peak context of about 116k tokens. Its marker error was 62 m and its position error 63 m. It's one run, so it can't yet say how much of this was skill, given the spread above.
 
-- **It found before committing.** It moved everyone to a line 300 m short of the village, holding fire, with Recon forward. The patrol came to that line and died there by T+02:44. Its marker for that group was placed within about 25 m of where they really fell.
+- **It found before committing.** It moved everyone to a line 300 m short of the village, holding fire, with Recon forward. The patrol stayed about 300 m off that line and was shot down from it by T+02:44. Its marker for that group was placed about 25 m from where they really fell.
 - **It never learned that.** It counted the group as about 8 when it was 6, wrote that they "may have pulled back", and never retired the marker. That's the fog working.
 - **It aimed `CLEAR` using reports.** Scripts cleared by radius. Haiku named buildings, starting with B6 because of a contact "near B6", and switched Bravo to B5 alone after repeated contacts "near B5". The last enemy died in B5 at T+08:30, shot from 3 m by a clearing squad. B1 and B2 were never checked, and weren't needed.
 - **It managed casualties.** It pulled Charlie out at T+02:08 after two leader losses, and kept it in reserve to the end.
