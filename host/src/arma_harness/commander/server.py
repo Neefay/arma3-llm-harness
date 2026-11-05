@@ -34,7 +34,9 @@ _LEG = {
     "properties": {
         "type": {"type": "string", "description": ORDER_TYPES_HELP},
         "at": {"description": "Grid such as '034 030', a marker id, or a building id such as 'B3'. For PATROL, a "
-                              "list of them. For CLEAR, a list of building ids, or a place plus radius."},
+                              "list of them. For CLEAR, a list of building ids, or a place plus radius. Needed by "
+                              "every type except HALT and POSTURE, though HOLD or SENTRY after another leg can omit "
+                              "it to stay where that leg ended."},
         "radius": {"type": "number", "description": "Metres around the point"},
         "completion": {"type": "number", "description": "How close counts as arrived, in metres"},
         "hold_for": {"type": "string", "description": "Time to wait at the point, such as 1:30"},
