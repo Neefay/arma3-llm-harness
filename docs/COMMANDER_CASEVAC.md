@@ -46,10 +46,10 @@ Three firefights of 12 against 12 in the open, at ACE's defaults, with no medics
 | About 6.3 minutes | 29 | 8 | 35 |
 
 - Of the 44 men hit, **16 died outright (36%)** and **28 went down (64%)**.
-- **19 of those 28 were dead by 6.3 minutes.** The source says enemies don't target a downed man, so most of that is probably bleeding out, though this test can't tell them apart.
+- **19 of those 28 were dead by 6.3 minutes.** The number standing didn't change between those two counts, and the source says enemies don't target a downed man, so most of that is probably bleeding out, though this test can't tell them apart.
 - So ACE's defaults already give what's wanted, and **no extra chance of death is needed**. If more is ever wanted, a handler on `ace_unconscious` works: at 50% it killed 5 of 12. `ace_medical_deathChance` does nothing for AI.
 
-Twelve men given one body wound each, untreated, lasted longer: the first death came at 6:16, and at 8:15 three were dead, four in cardiac arrest and two still alive and awake or close to it. Real gunfights do more damage than one wound, so the clock to plan around is **about 3 to 6 minutes**.
+Twelve men given one body wound each, untreated, lasted longer: the first death came at 6:16, and at 8:15 three were dead and seven of the other nine were still down, four of them in cardiac arrest. Real gunfights do more damage than one wound, so the clock to plan around is **about 3 to 6 minutes**.
 
 ### 2.4 Under fire
 
