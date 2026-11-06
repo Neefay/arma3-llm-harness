@@ -82,7 +82,8 @@ def build(raw: dict) -> Scenario:
         raise ValueError(f"mid_turn_messages must be {HOLD} or {DELIVER}, not {mode!r}")
     events = [{**event, "at_s": parse_time(event["at"])} for event in raw.get("events") or []]
     for event in events:
-        if event.get("action") not in ("delete_station", "kill_station") or event.get("station") not in stations:
+        if event.get("action") not in ("delete_station", "kill_station", "knock_down") \
+                or event.get("station") not in stations:
             raise ValueError(f"bad scenario event: {event}")
     enemies = []
     for enemy in raw.get("enemies") or []:

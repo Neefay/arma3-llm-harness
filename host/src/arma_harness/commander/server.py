@@ -32,8 +32,8 @@ ORDER_TYPES_HELP = (
     "in. CHECK_FIRE: stop firing, though rounds in the air still land. Fire orders leave the squad's other orders as "
     "they are. CARRY: free men pick up casualties and take them to a vehicle or a place. UNLOAD: get casualties off a "
     "stopped vehicle. TREAT: medics treat casualties where they lie, faster at an aid post or medical vehicle. "
-    "AID_POST: a medic sets up an aid post. These four leave the rest of the squad's orders as they are. The last six of the "
-    "single-place orders run until replaced. Each stands alone in an order, except MOVE, "
+    "AID_POST: a medic sets up an aid post. These four leave the rest of the squad's orders as they are. The last six "
+    "of the single-place orders run until replaced. Each stands alone in an order, except MOVE, "
     "HOLD, SEARCH and SENTRY, which can be chained.")
 _STRING = {"type": "string"}
 _LEG = {

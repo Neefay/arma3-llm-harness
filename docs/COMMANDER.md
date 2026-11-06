@@ -393,6 +393,10 @@ The commander knows only what's been reported, so its view of an order can lag o
 | `DISMOUNT` | Gets out | Leaves one vehicle, or all of them | None | Off V1 | Fire support |
 | `FIRE_MISSION` | `doArtilleryFire` from a real gun | Fires its crewed guns. The squad's other orders carry on | Grid of 6 or 8 figures, only | Shot, then rounds complete | Fire support |
 | `CHECK_FIRE` | `doStop` on the gun | Stops firing. What's in the air still lands | None | Rounds still in the air | Fire support |
+| `CARRY` | A hidden dummy walks, with the bearer attached | Free men carry casualties to a vehicle or a place | Casualties, and where to | Loaded, or set down | CASEVAC |
+| `UNLOAD` | `ace_common_fnc_unloadPerson` | Takes casualties off a stopped vehicle | Vehicle | Off | CASEVAC |
+| `TREAT` | Scripted, then `ace_medical_fnc_fullHeal` | Medics treat casualties where they lie | Casualties, optional | Back up | CASEVAC |
+| `AID_POST` | A real tent | A medic sets up an aid post | Place | Listed as A1 | CASEVAC |
 | `CLEAR` | Scripted moves | Walks soldiers through every position in the named buildings, one building at a time | Building ids, or a place and radius | Each building checked, then finished | First |
 | `OCCUPY` | Scripted moves, then `doStop` | Moves into a building and holds it | Building id | In position | First |
 | `CORDON` | Scripted moves, then `doStop` and `doWatch` | Spreads out in a ring around a place and watches it | Place, radius | In position | First |
@@ -887,7 +891,11 @@ House models matter here too: `Land_i_House_Small_01_V3_F` trapped soldiers insi
 
 Scripted through the commander's tools on the real game, it boarded in about 30 s, drove in 110 s and finished at T+02:38, with no damage to either Hunter. Their AI drivers parked 9 m from the grid's centre, and both teams got out where they stopped.
 
-### 14.5 Following scenarios
+### 14.5 Casualties
+
+`casevac_rv` and `casevac_cases` run with ACE, on the `commander_ace` profile, and have no enemy: a scenario event puts men down. The commands, reports and measurements are in [COMMANDER_CASEVAC.md](COMMANDER_CASEVAC.md).
+
+### 14.6 Following scenarios
 
 | Scenario | What it adds |
 |---|---|
@@ -895,7 +903,7 @@ Scripted through the commander's tools on the real game, it boarded in about 30 
 
 Every scenario needs stations, an enemy setup, end conditions and a time limit. `orders_check` has no enemies, and only exists so `host/tests/live_commander.py` can try every order on a real game.
 
-### 14.6 Win and loss
+### 14.7 Win and loss
 
 A scenario has one or more objectives, each with its own success condition. A simple scenario gives `objective` and `success`. One with several tasks gives a list instead:
 

@@ -609,17 +609,8 @@ def play_casevac(client: Client) -> list[str]:
          round ((leader _group) distance2D [4050, 6050]), round ((brmh_cmd_vehicles get "V1") distance2D [4050, 6050])]
         """)
 
-    # Two of six go down.
-    in_game(harness, """
-    missionNamespace setVariable ["ace_medical_spontaneousWakeUpChance", 0, true];
-    private _men = (units (brmh_cmd_stations get "Alpha")) - [leader (brmh_cmd_stations get "Alpha")];
-    {
-        [_x, 0.4, "body", "bullet"] call ace_medical_fnc_addDamageToUnit;
-        [_x, true, 0, false] call ace_medical_fnc_setUnconscious;
-    } forEach (_men select [0, 2]);
-    true
-    """)
-    text = hear("Listed as C", 40, 2)
+    # Two of six go down, by the scenario's own event.
+    text = hear("Listed as C", 60, 2)
     assert "C1" in text and "C2" in text, text
     print("STATE two down", alpha_state(), flush=True)
 
@@ -665,11 +656,21 @@ def play_casevac(client: Client) -> list[str]:
     order("Alpha", {"type": "SENTRY", "at": "040 060"})
 
     # The medics treat them, at the post's speed.
+    placed = in_game(harness, """
+    ((units (brmh_cmd_stations get "Alpha")) select { lifeState _x isEqualTo "INCAPACITATED" }) apply {
+        [name _x, round (_x distance2D (brmh_cmd_posts # 0)), [_x] call brmh_cmd_fnc_atFacility]
+    }
+    """)
+    print("AT THE POST", placed, flush=True)
+    assert all(row[2] for row in placed), placed
     started = time.time()
     order("Angel", {"type": "TREAT", "casualties": ["C1", "C2"]})
     text = hear("'s back up.", 180, 2)
     assert "Treating " in text, text[-500:]
-    print(f"TREATED both in {time.time() - started:.0f} s", flush=True)
+    took = time.time() - started
+    print(f"TREATED both in {took:.0f} s", flush=True)
+    assert took < 60, took
+    assert text.count("Can't get to") == 0, text[-500:]
     state = alpha_state()
     print("STATE treated", state, flush=True)
     assert state[0] == 6 and state[1] == 6 and state[3] == 0, state
@@ -681,11 +682,15 @@ def play_casevac(client: Client) -> list[str]:
     state = alpha_state()
     print("STATE back on", state, flush=True)
     assert state[2] == 6, (state, text[-400:])
-    tent = "brmh_cmd_posts apply { [alive _x, round (damage _x * 100) / 100, round (_x distance2D (brmh_cmd_vehicles get 'V1'))] }"
+    tent = """brmh_cmd_posts apply {
+        [alive _x, round (damage _x * 100) / 100, round (_x distance2D (brmh_cmd_vehicles get 'V1'))]
+    }"""
     print("POST before driving", in_game(harness, tent), flush=True)
     order("Alpha", {"type": "MOVE", "at": "070 060"})
     time.sleep(10)
-    print("POST after driving off", in_game(harness, tent), flush=True)
+    after = in_game(harness, tent)
+    print("POST after driving off", after, flush=True)
+    assert after[0][0], after  # it was flattened by the truck, before
     hear("Arrived, grid 070 060", 300)
     order("Alpha", {"type": "DISMOUNT"})
     text = ""
@@ -751,7 +756,7 @@ def play_casevac_cases(client: Client) -> list[str]:
     time.sleep(3)
     started = time.time()
     order("Medics", {"type": "TREAT", "casualties": [listed(who)]})
-    text = hear("'s back up.", 120)
+    hear("'s back up.", 120)
     took = time.time() - started
     print(f"FIELD treated in {took:.0f} s", flush=True)
     assert took >= 20, took  # field_s is 25, and the post was 10
@@ -777,7 +782,7 @@ def play_casevac_cases(client: Client) -> list[str]:
     hear("'s back up.", 120)
     took = time.time() - started
     print(f"MEDICAL VEHICLE treated in {took:.0f} s", flush=True)
-    assert took < 25, took
+    assert took < 32, took  # facility_s is 10, and he has up to 15 m to walk first. Field treatment took 33 to 37 s
     in_game(harness, f"""
     private _man = (units (brmh_cmd_stations get "Bravo")) select {{ name _x isEqualTo "{who}" }} select 0;
     if (vehicle _man isNotEqualTo _man) then {{ [_man] call brmh_cmd_fnc_getOff; }};
@@ -798,12 +803,12 @@ def play_casevac_cases(client: Client) -> list[str]:
     time.sleep(6)  # only the medics can see him: his squad's gone, and there's nobody to say
     hear(f"Found {lone} down", 30)
     order("Medics", {"type": "TREAT"})
-    hear("with us now", 120)
+    hear("with us now", 240)  # a teleport above doesn't always take, and then he runs it, 600 m at 4 m/s
     state = in_game(harness, """
     [count units (brmh_cmd_stations get "Medics"), count units (brmh_cmd_stations get "Lone")]
     """)
     print("JOINED [medics, lone]", state, flush=True)
-    assert state[0] == 5, state
+    assert state[0] == 4, state  # three medics, and him
 
     # A leader down: command passes, the squad obeys, and it stays with the new man when he wakes.
     leader = knock("Bravo", leader=True)[0]
@@ -896,7 +901,9 @@ def run(name: str, scenario: str, mode: str | None, play, watch: bool = False) -
     print(f"\n========== {name} ==========", flush=True)
     harness = Harness()
     # LIVE_NO_WATCH=1: nobody's watching, so don't open a game window.
-    started = operator.start(scenario, mode, harness, watch=watch and not os.environ.get("LIVE_NO_WATCH"))
+    # LIVE_WATCH=1 opens one to watch a battle that wouldn't usually have one.
+    wanted = (watch or os.environ.get("LIVE_WATCH")) and not os.environ.get("LIVE_NO_WATCH")
+    started = operator.start(scenario, mode, harness, watch=bool(wanted))
     print(json.dumps({k: v for k, v in started.items() if k != "launch"}), flush=True)
     client = Client()
     try:

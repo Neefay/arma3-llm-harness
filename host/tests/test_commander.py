@@ -2269,6 +2269,13 @@ def test_the_downed_dont_count_as_enemy_or_block_the_end(tmp_path):
     assert met(b) == ["the enemy has been cleared"]
 
 
+def test_a_scenario_can_put_men_down_at_a_set_time(tmp_path):
+    b = Battle(tmp_path, events=[{"at": "0:20", "action": "knock_down", "station": "Alpha", "count": 2}])
+    b.start()
+    b.silent(100 + 21)
+    assert b.game.calls[-1][1] == ["Alpha", 2] and "knockDown" in b.game.calls[-1][0]
+
+
 def test_a_medical_scenario_loads():
     raw = yaml.safe_load((Path(__file__).parents[2] / "scenarios/commander/casevac_rv.yaml").read_text())
     built = scenario.build(raw)

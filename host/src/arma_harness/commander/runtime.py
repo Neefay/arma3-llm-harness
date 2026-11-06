@@ -36,6 +36,7 @@ NOTES_LIMIT = 1500
 QUESTION_TOPICS = {"position", "task", "strength", "casualties", "ammo", "contacts", "eta", "vehicles"}
 ORDER_CODE = "_this call brmh_cmd_fnc_order"
 DELETE_CODE = "_this call brmh_cmd_fnc_deleteStation"
+KNOCK_DOWN_CODE = "_this call brmh_cmd_fnc_knockDown"
 KILL_CODE = "_this call brmh_cmd_fnc_killStation"
 SHOW_CODE = "_this call brmh_cmd_fnc_show"
 MIRROR_CODE = "_this call brmh_cmd_fnc_mirror"
@@ -483,8 +484,11 @@ class Runtime:
                 self.save()
 
     def _scenario_event(self, event: dict) -> None:
-        code = {"delete_station": DELETE_CODE, "kill_station": KILL_CODE}[event["action"]]
-        self._game_exec(code, [event["station"]])
+        if event["action"] == "knock_down":
+            self._game_exec(KNOCK_DOWN_CODE, [event["station"], event.get("count", 1)])
+        else:
+            code = {"delete_station": DELETE_CODE, "kill_station": KILL_CODE}[event["action"]]
+            self._game_exec(code, [event["station"]])
         self.records.operator_log(f"{format_time(self.rel())} scenario event: {event['action']} {event['station']}")
         self.records.append("radio_events", {"t": round(self.rel(), 1),
                                              "scenario_event": f"{event['action']} {event['station']}"})

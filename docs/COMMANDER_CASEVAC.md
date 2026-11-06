@@ -1,12 +1,12 @@
 # Commander Mode: CASEVAC design
 
-**Status:** design only. Nothing here is in the main system. The measurements come from throwaway tests on a headless dedicated server with ACE, on Arma 3 2.22, on the flat open ground of the VR map, in [host/tests/spikes/casevac](../host/tests/spikes/casevac). Written 2026-11-06. It extends [COMMANDER.md](COMMANDER.md).
+**Status:** built, and passing live on a headless dedicated server with ACE, through the commander's tools with a script in place of the LLM. No LLM has played it yet, and nobody has watched all of it in a window. The review page doesn't show it yet. Written 2026-11-06. It extends [COMMANDER.md](COMMANDER.md). The tests behind the measurements are in [host/tests/spikes/casevac](../host/tests/spikes/casevac).
 
 ## 1. Summary
 
-A soldier hit under ACE either dies or goes down unconscious. The ones who go down lie where they fell, ignored by the enemy, on a clock of a few minutes. The commander can leave them, or send a medical team to carry them to a vehicle or an aid post, and get them back in the fight. Every step is exposed to real fire.
+A soldier hit under ACE either dies or goes down unconscious. The ones who go down lie where they fell, on a clock of a few minutes. The commander can leave them, have their squad carry them to a vehicle or a place, send medics to treat them where they lie, or set up an aid post and bring them to it. A treated man gets up and goes back to his squad.
 
-The risky question has an answer: **an AI can move a casualty**. ACE's own carry can't do it, but a hidden dummy unit doing the walking can, in the proper animations.
+**An AI can move a casualty.** ACE's own carry can't do it, but a hidden dummy unit doing the walking can, in the proper animations.
 
 ## 2. What was measured
 
@@ -65,90 +65,115 @@ A rescue in the open at 130 m, in plain view of 4 enemies, with a medic set to C
 - **A leader going down:** command passes by itself, and the squad obeyed a new order at full speed, leaving him behind.
 - **A leader waking up takes command back,** and the squad **ran back to him**, 40 m in 10 s. That would pull a squad off its objective unasked, so it needs handling.
 
-### 2.6 The carry as built
+### 2.6 Reaching a man
 
-`brmh_cmd_fnc_startCarry` in [commander_boot.sqf](../host/src/arma_harness/adapters/commander_boot.sqf) is the controller, and [demo_carry.py](../host/tests/demo_carry.py) shows it, with `--check` to run headless as a test. All six scenes pass on a dedicated server with no script errors:
+The first person to watch the carry found a medic who never moved, and it took some finding. With a body at some spots in a house, nowhere in or right beside that house can be planned to, though it's fine with the body elsewhere, and open ground is fine either way. A man told to go there stands still with `MOVE` as his command for about 12 s, then reports himself ready. It isn't the group, ACE's AI medic, or the body being below the floor, all of which were tried.
+
+So a rescuer tries the house's nearest position at the man's level, the man himself, then a ring 25 m out (14 m wasn't enough), nearest him first. A man stalled within 8 m has arrived. If he's as close as he can get, or he's out of places to try within 60 m, he works for 8 s, and the man is then with him. That's the owner's hack, and it's only used when walking there has failed.
+
+The headless check passed while the demo failed for its first viewer, for two reasons worth keeping in mind: it read the server's state, so it couldn't see that `switchMove` hadn't reached the client, and it didn't pause, so it didn't catch what a pause changes.
+
+### 2.7 The carry as built
+
+`brmh_cmd_fnc_startCarry` in [commander_boot.sqf](../host/src/arma_harness/adapters/commander_boot.sqf) is the controller, and [demo_carry.py](../host/tests/demo_carry.py) shows it, with `--check` to run headless as a test.
 
 | Scene | Result |
 |---|---|
-| In the open, 100 m | Reached him in 8 s, lifted in about 9 s, carried in 59 s, at about 1.7 m/s |
-| Around a house, then into a Hunter | Went around it with no help, and he's in the cargo seat |
-| Out of a house, from a ground floor position | Reached him in 20 s, and got out with no help |
-| The dummy stuck on the way | Gave up after 8 s, the medic worked on him for 8 s, and he was put at the place, 39 m off |
-| The medic killed on the way | Let go at once, and the casualty lies where they were, still alive |
-| The casualty killed on the way | Let go at once, and the medic carries on with his squad |
+| In the open, 100 m | About 8 s to reach him, 9 s to lift, and about 1.7 m/s |
+| Around a house, then into a truck or Hunter | Goes round with no help, and he's in the cargo seat, still in his group |
+| Out of a house | By whichever way above works. About 75 s for 65 m |
+| The dummy stuck on the way | Gives up after 8 s, the man works on him for 8 s, then he's put at the place, if it's within 60 m |
+| The carrier killed or downed | Lets go at once, and the casualty lies there, still alive |
+| The casualty killed | Lets go at once, and the carrier goes back to his squad |
 
-## 3. What changes for the harness
+## 3. What changed for the harness
 
-These are needed whatever the orders look like:
-
-| Today | With ACE |
+| Before | With ACE |
 |---|---|
-| `alive` means effective | Downed men are alive. The packet, "N of M effective" and truth all have to count them apart |
-| `enemy_cleared` means none alive | Downed enemies are alive, so a battle might never end. Downed has to count as out |
-| Everyone in a group moves with it | Downed men stay where they fell, and the squad moves on. It has to say so |
-| ACE's AI medic | It overrides orders with `doMove` and `forceSpeed 0`, so a man being carried or carrying has to be opted out, with `ace_medical_ai_lastFired` |
-| Leader wakes | Keep command with whoever has it, or the squad runs back to him. Not yet tested |
-| ACE required | It's a separate profile, `commander_ace`, and scenarios without it aren't affected |
+| `alive` meant effective | A downed man is alive and no use. Strength, truth, boarding, clearing, cordons and sight checks all count him out |
+| `enemy_cleared` meant none alive | Downed counts as out, so a battle ends. Truth holds where they are |
+| A squad moved together | Downed men stay where they fell, and the squad says so if it's left one |
+| A leader who wakes took command back | His squad would run back to him. Whoever's got it now keeps it |
+| ACE's AI medic | **Off** for this mission, in [cba_settings.sqf](../missions/brmh_commander.VR/cba_settings.sqf). It orders medics about every 10 s, over ours. So nobody's treated unless the commander orders it |
+| ACE required | It's a separate profile, `commander_ace`, chosen by a scenario's `mission`. Scenarios without it are unaffected, and all still pass |
 
-ACE's settings can be set per mission, with `cba_settings.sqf`, so this doesn't change anyone's own server.
-
-## 4. Proposed design
+## 4. The commands
 
 ### 4.1 Reports
 
-Only what a squad could say. No body counts for anyone else's squad, and no vital signs.
+Only what a squad could say. No vital signs, and no grids in a fight.
 
 ```text
-Reed's down.                                      (PRIORITY)
-Reed's dead.                                      (when it's known. A squad that moved on doesn't know)
-Reed's down, about 80 m south-west of us. We've left him.    (when a squad moves away from him)
-6 of 8 effective, 1 down, 1 dead.                 (strength)
-Reed's back on his feet.
+Owen King's down, grid 060 060. Listed as C1.     (PRIORITY. No grid in a fight)
+Found Owen Taylor down, grid 058 060. Listed as C2.   (someone else's, within 30 m, if nobody had listed him)
+We've left Matthew Young, about 150 m north of us.
+Owen King's dead.                                 (only if the squad was near enough to know)
+Owen King's back on their feet.
+4 of 6 effective, 2 down.                         (strength)
+C1 Owen King, down, about 40 m east. C2 Callum Roberts, down, on V1.     (the casualties topic)
 ```
 
-A new question topic, `casualties`, gives each one known to that squad. Casualties get ids on the commander's own list, as vehicles do (`C1`, `C2`), with the place last reported, which may be old. Nobody reports a grid under fire, so the commander has to work it out from a bearing and range, as with contacts.
+The commander's list of casualties, with the place each was last reported, is in `commander_mission` and every briefing. It can be out of date.
 
 ### 4.2 Orders
 
-| Order | What it does |
-|---|---|
-| `RESCUE` | A medical station goes to casualty `C1` or a grid, finds him if he's within a short distance, picks him up, and carries him to a grid, a vehicle `V1` or an aid post `A1` |
-| `TREAT` | A medical station goes to a casualty and treats him where he lies |
-| `AID_POST` | A medical station sets up a tent at a grid, which takes a while |
+All four stand alone, need the capability, and leave the rest of the squad's orders as they are.
 
-- A station gets these through its capabilities, and needs a Medic-trait soldier. Squads with a medic also treat their own without being told, as ACE does.
-- **Failures come over the radio,** as with fire missions: `Can't find him.`, `Unable, no medic.`, `He's gone.`, `V1 is full.`, and the medic team's own casualties.
-- **The carry** is the dummy method. If the dummy stops making progress for a few seconds, it falls back to the owner's method, so an awkward spot can't leave a medic stuck: stop, play the long animation, and load or place him.
+| Order | Takes | What it does | What's said |
+|---|---|---|---|
+| `CARRY` | `casualties`, and `vehicle` or `at` (a place or an aid post) | One free man each picks up a casualty, nearest first and the leader last. With no list, everyone down within 100 m. At a post they're set down about 11 m clear of it, because bodies against the tent couldn't be reached | `Got Owen King, on the way.` `Owen King's loaded.` `Set Owen King down.` |
+| `UNLOAD` | `vehicle`, `casualties` | Takes them off a stopped vehicle, if the squad has someone within 25 m | `Owen King's off V1.` `V1 has to stop first.` `Unable, nobody at V1.` |
+| `TREAT` | `casualties` | Each medic takes one at a time. Early on he stops getting worse, and at the end he gets up | `Treating Owen King.` `Owen King's back up.` `Unable, no medic here.` `Can't find Owen King.` |
+| `AID_POST` | `at` | A medic goes there and sets up a real tent, which goes on the list as `A1`. Shells landing within 20 m can destroy it, in about three close rounds. Vehicles and bullets can't: AI drivers don't avoid it, and a truck leaving the rendezvous flattened it | `Setting up the aid post.` `Aid post up, grid 040 060. Listed as A1.` |
 
-### 4.3 The aid post
+`DISMOUNT` leaves the downed in their seats, and they don't count towards `MOUNT`. A man's whereabouts for an order come from the commander's list, so someone sent to an old report more than 150 m out says `Can't find`.
 
-A real tent, in the world, that can be seen and destroyed. A downed man carried to it, with a medic there, is healed by `fullHeal` after a set time, proposed at 60 s, one at a time per medic. He then runs back to his squad on foot, which is what the engine already does. Field treatment stays at ACE's own pace.
+### 4.3 Where treatment's fast
 
-### 4.4 Getting back
+A scenario sets `medical: { field_s, facility_s, build_s }`, with defaults of 120, 60 and 60. `facility_s` applies within 30 m of an aid post or 15 m of a medical vehicle, which is one whose class says so, such as the HEMTT Medical, or a scenario's `medical: true`. A man aboard a medical vehicle can be treated without coming off. ACE itself makes nothing faster for being in a facility, so this is ours. A station's `medics: 2` gives two of its men ACE's flag.
 
-Stage one is that a healed man runs to his squad by himself, across whatever's in between, and that's a risk the commander can see coming. If his squad is gone, he joins the medical station. Ferrying men back by vehicle needs a way to detach and attach individual men, which orders can't do today, because they're given to a whole group. So that's stage two.
+### 4.4 Men who end up away from their squad
 
-### 4.5 Records and review
+Your fourth question. A man stays in his squad's group the whole time, wherever he is, carried, on a truck, or at a post, so nothing about the roster changes.
 
-The review gets casualties on the maps, a downed marker distinct from a death, and rescues on the timeline. Deaths say whether he died outright or after lying there, and how long for.
+- **On his way:** his squad can see him on its own truck. If he's left behind, it says so once, and it can't tell what happens to him afterwards. Other squads that come within 30 m find him.
+- **Treated:** he runs back to his squad by himself, however far. That's a risk the commander can see coming. `MOUNT` picks him up if he's within 500 m of the vehicle.
+- **His squad's gone:** he joins whoever treated him, and says so: `Owen Taylor's with us now. There's nobody left to go back to.`
+- **Ferrying him back on his own isn't possible yet.** Orders go to a whole group, so a man can't be told to board a truck apart from it. As you said, that's for later.
 
-## 5. Build order
+### 4.5 Your plan, as orders
 
-1. **ACE profile, and counting the downed:** effective strength, `enemy_cleared`, truth, and leader handling, with reports for going down. Existing scenarios run under it.
-2. **The carry, in the game, by script:** with the fallback, tried among the village's buildings, and looked at through a game window.
-3. **`RESCUE` and `TREAT`,** with the casualty list and its reports.
-4. **`AID_POST`.**
-5. **Records and review, then a scenario, doctrine and a real LLM run.**
+[casevac_rv.yaml](../scenarios/commander/casevac_rv.yaml) is the scenario, with short treatment times, and `play_casevac` in [live_commander.py](../host/tests/live_commander.py) plays this through the commander's tools:
+
+```text
+T+00:20  two of Alpha's six go down, by a scenario event
+Alpha    CARRY C1 C2 to V1         two men carry, about 70 s for 100 m, loaded
+Alpha    MOUNT V1, MOVE 040 060    the other four board, and they drive there
+Angel    MOUNT V2, MOVE 040 060, DISMOUNT, AID_POST 040 060
+Alpha    DISMOUNT                  the casualties stay in their seats
+Alpha    UNLOAD V1
+Alpha    CARRY C1 C2 to A1, then SENTRY 040 060
+Angel    TREAT C1 C2               both up in about 30 s
+Alpha    MOUNT V1                  all six, and MOVE 070 060, DISMOUNT
+         OBJECTIVE COMPLETE, at about T+09:40
+```
+
+### 4.6 Other cases that pass live
+
+`play_casevac_cases`, on [casevac_cases.yaml](../scenarios/commander/casevac_cases.yaml): treating in the field, taking 35 s with `field_s` at 25; treating aboard a medical vehicle, 19 s with `facility_s` at 10; a man whose squad's been wiped out joining his medics; a leader going down and his squad obeying the man who took over, who keeps command when he wakes; a carry while the rest of the squad moves off; and a man left behind.
+
+## 5. What isn't done
+
+1. **The review page** doesn't show casualties yet: no markers for the downed, no rescues on the timeline, and deaths don't say whether a man lay there first. The records have what it needs, in `truth` and `radio`.
+2. **A real LLM run,** and a fight with an enemy shooting at the rescuers. All of the above has no enemy in it.
+3. **Ferrying individuals,** by detaching men from their group.
 
 ## 6. Still unknown
 
-- Whether the carry looks right to someone watching.
-- Whether the dummy can get through the village: doors, walls and slopes.
-- Whether a carried body takes hits, and what happens when the carrier is killed mid-carry. It should be easy for our own controller, and it's untested.
-- Keeping command with the new leader when the old one wakes.
-- Whether ACE changes how long battles take, or how the AI fights.
-- The cost of ACE on the server with 40 men.
+- **How it looks.** The owner has seen the carry, and saw the body-on-the-ground bug, which is fixed but hasn't been looked at since. Nobody's watched treating, or a man being loaded.
+- **Whether a carried body takes hits.** A rescue in the open at 130 m got both men killed within about 25 s, as it should, but which rounds hit whom isn't clear.
+- **Getting through a real town.** The village has seven buildings, and the VR map is flat. Doors, walls and slopes elsewhere haven't been tried.
+- **The cost of ACE on the server** with 40 men, and whether it changes how long battles take.
 
 ## 7. Decisions
 
@@ -156,6 +181,6 @@ Made by the owner, 2026-11-06:
 
 1. **Carry only,** by the dummy method, and no drag for now.
 2. **No extra chance of death.** ACE's defaults stand.
-3. **Who treats:** any soldier with ACE's medic flag. Who has one is up to the scenario.
+3. **Who treats:** any soldier with ACE's medic flag. Who has one is up to the scenario. In the event ACE's AI medic had to go off, so they only treat when ordered.
 4. **The aid post:** about a minute to build, 60 s to heal each man, and one per team. A scenario sets these, because testing needs them much faster.
 5. **Getting back:** running back alone is fine for now, with ferrying as a later stage.

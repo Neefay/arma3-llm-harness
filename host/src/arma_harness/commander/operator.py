@@ -96,6 +96,9 @@ def start(path: str, mode: str | None = None, harness: Harness | None = None, wa
     if scenario.medical:
         _result(h.exec("{brmh_cmd_careTimes set [_x # 0, _x # 1]} forEach _this; true", "server", timeout=10,
                        args=[[key, value] for key, value in scenario.medical.items()]))
+        if "wake_chance" in scenario.medical:
+            code = 'missionNamespace setVariable ["ace_medical_spontaneousWakeUpChance", _this # 0, true]; true'
+            _result(h.exec(code, "server", timeout=10, args=[scenario.medical["wake_chance"]]))
     _spawn_enemies(h, scenario, world_size)
     buildings = _list_buildings(h, scenario, world_size)
     _result(h.exec("brmh_cmd_buildings = createHashMapFromArray _this; true", "server", timeout=10,

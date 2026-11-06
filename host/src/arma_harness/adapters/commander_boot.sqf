@@ -1246,6 +1246,22 @@ brmh_cmd_fnc_gunAmmo = {
 	_counts toArray false
 };
 
+// One 82 mm round on a tent did 0.38 by the engine's own reckoning, when it was allowed to.
+brmh_cmd_fnc_shellOnPosts = {
+	params ["_pos", "_ammo"];
+	if ("smoke" in toLowerANSI _ammo) exitWith {};
+	{
+		private _away = _x distance2D [_pos # 0, _pos # 1];
+		if (alive _x and {
+			_away < 20
+		}) then {
+			_x allowDamage true;
+			_x setDamage ((damage _x) + (0.4 * (1 - (_away / 20))));
+			_x allowDamage false;
+		};
+	} forEach brmh_cmd_posts;
+};
+
 brmh_cmd_fnc_trackGun = {
 	params ["_gun"];
 	if (_gun getVariable ["brmh_cmd_tracked", false]) exitWith {};
@@ -1269,6 +1285,7 @@ brmh_cmd_fnc_trackGun = {
 			if (count _mission > 0) then {
 				_mission set ["inAir", ((_mission getOrDefault ["inAir", 1]) - 1) max 0];
 			};
+			[_pos, typeOf _shell] call brmh_cmd_fnc_shellOnPosts;
 			(_shell getVariable ["brmh_cmd_from", ["", "", sideUnknown]]) params ["_key", "_order", "_side"];
 			["evt", createHashMapFromArray [
 				["type", "cmd_impact"],
@@ -1569,8 +1586,11 @@ brmh_cmd_fnc_stepCarries = {
 					(time - (_carry get "ordered")) >= 3
 				};
 				// A house position can stop him a few metres short, through a wall or not. He snaps the man to him when he lifts.
+				private _stalled = _ready or {
+					(time - (_carry get "moved")) >= 8
+				};
 				if (_away <= 2.5 or {
-					_ready and {
+					_stalled and {
 						_away <= 8
 					}
 				}) exitWith {
@@ -1592,7 +1612,13 @@ brmh_cmd_fnc_stepCarries = {
 					(time - (_carry get "moved")) >= 20
 				}) then {
 					if (not ([_carry] call brmh_cmd_fnc_carryApproach)) then {
-						[_carry, "can't reach him"] call brmh_cmd_fnc_carryFinish;
+						if (_away <= 60) then {
+							[_medic, "AinvPknlMstpSlayWrflDnon_medicOther"] call brmh_cmd_fnc_carryPose;
+							_carry set ["state", "fetching"];
+							_carry set ["since", time];
+						} else {
+							[_carry, "can't reach him"] call brmh_cmd_fnc_carryFinish;
+						};
 					};
 				};
 			};
@@ -1749,11 +1775,12 @@ brmh_cmd_fnc_carryOrder = {
 	}) exitWith {
 		[_group, _order, "carry", objNull, "wrecked", _to] call brmh_cmd_fnc_careSay;
 	};
-	// A post isn't something to get into: it's somewhere to put him down.
+	// A post isn't something to get into: it's somewhere to put him down. Clear of it, or nobody can walk up to him.
+	private _post = objNull;
 	if (_target isEqualType objNull and {
 		_target in brmh_cmd_posts
 	}) then {
-		_target = getPosATL _target;
+		_post = _target;
 	};
 	private _men = [_who] call brmh_cmd_fnc_targets;
 	if (_who isEqualTo []) then {
@@ -1802,7 +1829,12 @@ brmh_cmd_fnc_carryOrder = {
 				private _bearer = _nearest # 0;
 				_bearers = _bearers - [_bearer];
 				[_group, _order, "carry", _man, "going"] call brmh_cmd_fnc_careSay;
-				[_bearer, _man, _target, _group, _order] call brmh_cmd_fnc_startCarry;
+				private _place = if (isNull _post) then {
+					_target
+				} else {
+					_post getPos [11, (_post getDir _man) + (_forEachIndex * 35) - 35]
+				};
+				[_bearer, _man, _place, _group, _order] call brmh_cmd_fnc_startCarry;
 			};
 		};
 	} forEach _men;
@@ -2081,8 +2113,11 @@ brmh_cmd_fnc_treatGo = {
 	private _ready = unitReady _medic and {
 		(time - (_job get "ordered")) >= 3
 	};
+	private _stalled = _ready or {
+		(time - (_job get "moved")) >= 8
+	};
 	if (_away <= ([3, 8] select _aboard) or {
-		_ready and {
+		_stalled and {
 			_away <= 8
 		}
 	}) exitWith {
@@ -2110,9 +2145,19 @@ brmh_cmd_fnc_treatGo = {
 		if ([_job] call brmh_cmd_fnc_treatApproach) then {
 			true
 		} else {
-			[_group, _order, "treat", _man, "can't reach"] call brmh_cmd_fnc_careSay;
-			[_job] call brmh_cmd_fnc_treatRelease;
-			false
+			// The owner's way, as a last resort: he was close, and now the man's with him.
+			if (not _aboard and {
+				_away <= 60
+			}) then {
+				_man setPosATL (_medic getPos [1.2, getDir _medic]);
+				[_man, "UnconsciousReviveDefault"] call brmh_cmd_fnc_carryPose;
+				[_job, _group, _order] call brmh_cmd_fnc_treatStart;
+				true
+			} else {
+				[_group, _order, "treat", _man, "can't reach"] call brmh_cmd_fnc_careSay;
+				[_job] call brmh_cmd_fnc_treatRelease;
+				false
+			}
 		}
 	};
 	true
@@ -2267,6 +2312,9 @@ brmh_cmd_fnc_stepBuilds = {
 					private _key = format ["P%1", brmh_cmd_postCount];
 					_tent setVariable ["brmh_cmd_key", _key];
 					_tent setVariable ["ace_medical_isMedicalFacility", true, true];
+					// AI drivers don't avoid a tent, and a truck leaving a rendezvous flattened it, through any damage handler. So
+					// the engine can't hurt it at all, and shells do by brmh_cmd_fnc_shellOnPosts. Bullets don't.
+					_tent allowDamage false;
 					brmh_cmd_vehicles set [_key, _tent];
 					brmh_cmd_posts pushBack _tent;
 					_group setVariable ["brmh_cmd_post", _tent];
@@ -2450,6 +2498,22 @@ brmh_cmd_fnc_checkFire = {
 		}) < 0
 	};
 	_group setVariable ["brmh_cmd_missions", _kept + _rows];
+};
+
+// Puts men down, as if hit, for a scenario that wants casualties without a fight. Not the leader. Operator action.
+brmh_cmd_fnc_knockDown = {
+	params [["_callsign", "", [""]], ["_count", 1, [0]]];
+	private _group = brmh_cmd_stations getOrDefault [_callsign, grpNull];
+	private _men = (units _group) select {
+		[_x] call brmh_cmd_fnc_able and {
+			_x isNotEqualTo leader _group
+		}
+	};
+	{
+		[_x, 0.4, "body", "bullet"] call ace_medical_fnc_addDamageToUnit;
+		[_x, true, 0, false] call ace_medical_fnc_setUnconscious;
+	} forEach (_men select [0, _count]);
+	true
 };
 
 // Which of a squad are medics, from the end of its list. Operator action, from the scenario.

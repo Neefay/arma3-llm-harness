@@ -7,9 +7,11 @@ spectator: true
 objective: All six of Alpha on foot at the objective, grid 070 060.
 text: >
   Alpha is at grid 060 060 with a truck beside it, V1, and Angel, a medical team, is at grid 020 060 with a medical truck, V2.
-  When Alpha takes casualties, get them to a rendezvous at grid 040 060 and have Angel treat them there. Alpha then goes on
-  to the objective at grid 070 060, with its men back on their feet.
-medical: { field_s: 25, facility_s: 10, build_s: 10 }
+  Expect casualties. If Alpha takes any, get them to a rendezvous at grid 040 060 and have Angel treat them there. Alpha
+  then goes on to the objective at grid 070 060, with its men back on their feet.
+medical: { field_s: 25, facility_s: 10, build_s: 10, wake_chance: 0 }
+events:
+  - { at: "0:20", action: knock_down, station: Alpha, count: 2 }
 vehicles:
   - { id: V1, class: B_Truck_01_transport_F, at: "061 060" }
   - { id: V2, class: B_Truck_01_medical_F, at: "021 060" }
