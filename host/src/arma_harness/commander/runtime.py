@@ -263,9 +263,9 @@ class Runtime:
             return
         packet = {key: event.get(key) for key in (
             "callsign", "pos", "grid", "dir", "speed", "alive", "wounded", "baseline", "leader", "rounds",
-            "rounds_baseline", "behaviour", "combat_mode", "order", "unable", "leg", "legs", "clearing", "cleared",
-            "placed", "contacts", "suppression", "ruined", "seen_vehicles", "seen_ruins", "mounted", "mount",
-            "missions", "gun_ammo", "limping", "casualties", "up", "medical")}
+            "rounds_baseline", "behaviour", "speed_mode", "spread", "combat_mode", "order", "unable", "leg", "legs",
+            "clearing", "cleared", "placed", "contacts", "suppression", "ruined", "seen_vehicles", "seen_ruins",
+            "mounted", "mount", "missions", "gun_ammo", "limping", "casualties", "up", "medical")}
         packet["missions"] = [[self._vehicle_id(row[0]), *row[1:]] for row in packet.get("missions") or []]
         packet["gun_ammo"] = [[self._vehicle_id(row[0]), *row[1:]] for row in packet.get("gun_ammo") or []]
         packet["mounted"] = [[self._vehicle_id(row[0]), *row[1:]] for row in packet.get("mounted") or []]
@@ -413,10 +413,12 @@ class Runtime:
             target, spoken = parse_grid(success["of"], self.world_size)
 
             def there(group: dict) -> bool:
-                """Every living man, because a leader getting there isn't a team getting there."""
+                """Every living man, because a leader getting there isn't a team getting there. "units" only has the men
+                on their feet, and one who's down is still alive and still one of them, wherever he's lying."""
+                down = group.get("down") or []
                 return bool(group.get("alive")) and all(
-                    math.dist(unit[:2], target) <= success["within_m"] for unit in group.get("units") or []
-                ) and not (success.get("on_foot") and group.get("mounted"))
+                    math.dist(unit[:2], target) <= success["within_m"] for unit in (group.get("units") or []) + down
+                ) and not (success.get("on_foot") and (group.get("mounted") or down))
 
             wanted = {group.get("group"): group for group in groups if group.get("group") in success["stations"]}
             if len(wanted) == len(success["stations"]) and all(there(group) for group in wanted.values()):

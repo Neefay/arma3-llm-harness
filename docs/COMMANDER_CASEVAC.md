@@ -108,6 +108,7 @@ Behaviour matters far more than speed: only AWARE jogs, and `FULL` is no faster 
 |---|---|
 | `alive` meant effective | A downed man is alive and no use. Strength, truth, boarding, clearing, cordons and sight checks all count him out |
 | `enemy_cleared` meant none alive | Downed counts as out, so a battle ends. Truth holds where they are |
+| A team at a place meant all its men there | A man who's down still counts, wherever he's lying, and an `on_foot` objective isn't met while anyone's down. It wasn't at first, and a run was told all six were at the objective with two unconscious 900 m back |
 | A squad moved together | Downed men stay where they fell, and the squad says so if it's left one |
 | A leader who wakes took command back | His squad would run back to him. Whoever's got it now keeps it |
 | ACE's AI medic | **Off** for this mission, in [cba_settings.sqf](../missions/brmh_commander.VR/cba_settings.sqf). It orders medics about every 10 s, over ours. So nobody's treated unless the commander orders it |
@@ -124,8 +125,11 @@ Owen King's down, grid 060 060. Listed as C1.     (PRIORITY. No grid in a fight)
 Found Owen Taylor down, grid 058 060. Listed as C2.   (someone else's, within 30 m, if nobody had listed him)
 We've left Matthew Young, about 150 m north of us.
 Owen King's dead.                                 (only if the squad was near enough to know)
-Owen King's back on their feet.
+Owen King's back on their feet.                   (or "..., about 300 m west of us", if they're a long way off)
+Owen King's away from the squad, about 300 m west of us.   (over 100 m away for 30 s, and not sent on a job)
+Owen King's back with the squad.                  (within 50 m again, and only if it had said so)
 4 of 6 effective, 2 down.                         (strength)
+6 of 6 effective. Not with us: Owen King, about 300 m west.   (strength, and when it arrives)
 C1 Owen King, down, about 40 m east. C2 Callum Roberts, down, on V1.     (the casualties topic)
 ```
 
@@ -133,7 +137,9 @@ The commander's list of casualties, with the place each was last reported, is in
 
 ### 4.2 Orders
 
-All four stand alone, need the capability, and leave the rest of the squad's orders as they are.
+All four stand alone, need the capability, and leave the rest of the squad's orders as they are. But **the newest order wins**: any later order that moves or stops the squad, or `MOUNT`, calls off its carrying, treating and aid post. Each man stops and goes back to the squad, a casualty stays where he is, and the squad says so: "Put Sam Reed down", "Leaving Sam Reed where they are", "Stopped treating Sam Reed" or "Stopped setting up the aid post". `POSTURE`, fire orders, `DISMOUNT` and appended legs don't call anything off, and neither does an order the game refuses. A man who's being put in a vehicle is a moment from done, so that finishes.
+
+So to have the rest of a squad do something while some of it carries, order that first and `CARRY` second. A new `CARRY` for a man the squad's already carrying takes him to the new place, unless he's already being set down. One carried by another squad gets "already being moved" until that squad's carry is called off.
 
 | Order | Takes | What it does | What's said |
 |---|---|---|---|

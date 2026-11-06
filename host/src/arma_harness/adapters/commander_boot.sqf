@@ -626,6 +626,12 @@ brmh_cmd_fnc_packet = {
 		["rounds_baseline", _group getVariable ["brmh_cmd_roundsBaseline", _rounds]],
 		["behaviour", behaviour _leader],
 		["speed_mode", speedMode _group],
+		["spread", ((_alive - [_leader]) select {
+			vehicle _x isEqualTo _x
+		}) apply {
+			private _at = getPosATL _x;
+			[name _x, round ((_at # 0) - (_position # 0)), round ((_at # 1) - (_position # 1)), _x getVariable ["brmh_cmd_busy", false]]
+		}],
 		["combat_mode", combatMode _group],
 		["suppression", (_alive apply {
 			getSuppression _x
@@ -1007,6 +1013,7 @@ brmh_cmd_fnc_order = {
 		};
 	};
 	if (_mode isEqualTo "mount") exitWith {
+		[_group] call brmh_cmd_fnc_callOffCare;
 		[_group, _legs # 0 # 0, _legs # 0 # 1] call brmh_cmd_fnc_startMount;
 		true
 	};
@@ -1021,6 +1028,9 @@ brmh_cmd_fnc_order = {
 	}) >= 0) exitWith {
 		_group setVariable ["brmh_cmd_unable", "water"];
 		true
+	};
+	if (_mode in ["replace", "halt"]) then {
+		[_group] call brmh_cmd_fnc_callOffCare;
 	};
 	[_group, _posture] call brmh_cmd_fnc_posture;
 	if (_mode isEqualTo "posture") exitWith {
@@ -1691,6 +1701,67 @@ brmh_cmd_fnc_stepCarries = {
 	};
 };
 
+/*
+	NAME: brmh_cmd_fnc_callOffCare
+	DESCRIPTION: The squad's newest order says to do something else, so its men stop carrying, treating and building, and
+		go back to it. A casualty's left where he is. A man being put in a vehicle is a moment from done, so he's let finish.
+	PARAMETERS:
+		0 - Group (GROUP)
+	ENVIRONMENT: Server
+*/
+brmh_cmd_fnc_callOffCare = {
+	params ["_group"];
+	{
+		if ((_x get "group") isEqualTo _group and {
+			not ((_x get "state") in ["loading", "done"])
+		}) then {
+			[_x, ["left", "put down"] select (not isNull attachedTo (_x get "casualty"))] call brmh_cmd_fnc_carryFinish;
+		};
+	} forEach brmh_cmd_carries;
+	{
+		private _treat = _x;
+		if ((_treat get "group") isEqualTo _group) then {
+			{
+				[_group, _treat get "order", "treat", _x get "casualty", "called off"] call brmh_cmd_fnc_careSay;
+				[_x] call brmh_cmd_fnc_treatRelease;
+			} forEach (_treat get "jobs");
+			{
+				[_group, _treat get "order", "treat", _x, "called off"] call brmh_cmd_fnc_careSay;
+			} forEach (_treat get "queue");
+			_treat set ["jobs", []];
+			_treat set ["queue", []];
+		};
+	} forEach brmh_cmd_treats;
+	brmh_cmd_builds = brmh_cmd_builds select {
+		private _build = _x;
+		if ((_build get "group") isEqualTo _group) then {
+			private _medic = _build get "medic";
+			[_group, _build get "order", "post", "post", "called off"] call brmh_cmd_fnc_careSay;
+			_medic setVariable ["brmh_cmd_busy", nil];
+			if ([_medic] call brmh_cmd_fnc_able) then {
+				_medic enableAI "ANIM";
+				[_medic, "AmovPknlMstpSrasWrflDnon"] call brmh_cmd_fnc_carryPose;
+				_medic doFollow leader _group;
+			};
+			false
+		} else {
+			true
+		}
+	};
+};
+
+// A new place for a man already on the way, or on someone's shoulder.
+brmh_cmd_fnc_carryRedirect = {
+	params ["_carry", "_place", "_order"];
+	_carry set ["to", _place];
+	_carry set ["order", _order];
+	_carry set ["moved", time];
+	private _dummy = _carry getOrDefault ["dummy", objNull];
+	if (not isNull _dummy) then {
+		_dummy doMove ([_carry] call brmh_cmd_fnc_carryPlace);
+	};
+};
+
 // A radio line for the host to word. One row for each man, job and order, whatever its latest state is.
 brmh_cmd_fnc_careSay = {
 	params ["_group", "_order", "_kind", "_man", "_state", ["_detail", ""]];
@@ -1754,7 +1825,8 @@ brmh_cmd_fnc_targets = {
 /*
 	NAME: brmh_cmd_fnc_carryOrder
 	DESCRIPTION: A squad's free men each pick up a downed man, and carry him to a place or into a vehicle. The rest of the
-		squad carries on with its orders. With no list, it's everyone down within 100 m.
+		squad carries on with its orders. With no list, it's everyone down within 100 m. A man it's already carrying goes
+		to the new place instead.
 	PARAMETERS:
 		0 - Group (GROUP)
 		1 - Order id (STRING)
@@ -1806,6 +1878,11 @@ brmh_cmd_fnc_carryOrder = {
 	};
 	{
 		private _man = _x;
+		private _place = if (isNull _post) then {
+			_target
+		} else {
+			_post getPos [11, (_post getDir _man) + (_forEachIndex * 35) - 35]
+		};
 		switch (true) do {
 			case (not alive _man): {
 				[_group, _order, "carry", _man, "he died"] call brmh_cmd_fnc_careSay;
@@ -1817,7 +1894,20 @@ brmh_cmd_fnc_carryOrder = {
 				[_group, _order, "carry", _man, "aboard", (vehicle _man) getVariable ["brmh_cmd_key", ""]] call brmh_cmd_fnc_careSay;
 			};
 			case ((_man getVariable ["brmh_cmd_handled", ""]) isNotEqualTo ""): {
-				[_group, _order, "carry", _man, "already"] call brmh_cmd_fnc_careSay;
+				// This squad's own carry takes the new place. Another squad's has to be called off first.
+				private _held = brmh_cmd_carries select {
+					(_x get "casualty") isEqualTo _man and {
+						(_x get "group") isEqualTo _group
+					} and {
+						(_x get "state") in ["going", "fetching", "lifting", "carrying"]
+					}
+				};
+				if (_held isEqualTo []) then {
+					[_group, _order, "carry", _man, "already"] call brmh_cmd_fnc_careSay;
+				} else {
+					[_held # 0, _place, _order] call brmh_cmd_fnc_carryRedirect;
+					[_group, _order, "carry", _man, "going"] call brmh_cmd_fnc_careSay;
+				};
 			};
 			case (_bearers isEqualTo []): {
 				[_group, _order, "carry", _man, "no bearer"] call brmh_cmd_fnc_careSay;
@@ -1830,11 +1920,6 @@ brmh_cmd_fnc_carryOrder = {
 				private _bearer = _nearest # 0;
 				_bearers = _bearers - [_bearer];
 				[_group, _order, "carry", _man, "going"] call brmh_cmd_fnc_careSay;
-				private _place = if (isNull _post) then {
-					_target
-				} else {
-					_post getPos [11, (_post getDir _man) + (_forEachIndex * 35) - 35]
-				};
 				[_bearer, _man, _place, _group, _order] call brmh_cmd_fnc_startCarry;
 			};
 		};

@@ -14,7 +14,7 @@ from arma_harness.commander.orders import Invalid
 from arma_harness.commander.records import Records
 from arma_harness.commander.reports import Tracker
 from arma_harness.commander.runtime import Runtime
-from arma_harness.commander.server import EARLIER_BATTLE, NO_BATTLE, ORDER_TYPES_HELP, TOOL_NAMES, Server
+from arma_harness.commander.server import DOCTRINE, EARLIER_BATTLE, NO_BATTLE, ORDER_TYPES_HELP, TOOL_NAMES, Server
 from arma_harness.commander.wake import DELIVER, HOLD, WakeLogic
 from arma_harness.config import REPO_ROOT, Home
 from arma_harness.harness import HarnessError
@@ -1846,6 +1846,33 @@ def test_one_man_short_of_the_grid_isnt_there(tmp_path):
     assert met(b) == []
 
 
+def test_a_man_down_somewhere_else_means_theyre_not_all_there(tmp_path):
+    """Sonnet was told all six were on foot at the objective, with four there and two unconscious 900 m back."""
+    b = marching(tmp_path)
+    truth(b, 110, team("Alpha"), {**team("Bravo"), "down": [[4100, 4000]]})
+    assert met(b) == []
+    b.advance(125)
+    assert not b.runtime.ended
+
+
+def test_a_man_down_at_the_grid_isnt_on_foot_there(tmp_path):
+    b = marching(tmp_path)
+    truth(b, 110, team("Alpha"), {**team("Bravo"), "down": [[5250, 4450]]})
+    assert met(b) == []
+
+
+def test_a_team_at_the_grid_counts_a_man_down_there_unless_it_has_to_be_on_foot(tmp_path):
+    objective = {"stations": ["Alpha"], "of": "034 030", "within_m": 80}
+    b = Battle(tmp_path, success=objective)
+    b.start()
+    here = {"group": "Alpha", "side": "WEST", "alive": 3, "mounted": 0, "pos": [3450, 3050],
+            "units": [[3450, 3050, 0]] * 3}
+    truth(b, 110, {**here, "down": [[3000, 3050]]})
+    assert met(b) == []
+    truth(b, 112, {**here, "down": [[3460, 3050]]})
+    assert met(b) == ["Alpha is at grid 034 030"]
+
+
 def test_a_march_ends_with_both_teams_on_foot_at_the_grid(tmp_path):
     b = marching(tmp_path)
     truth(b, 110, team("Alpha"), team("Bravo", x=5290, y=4470))
@@ -2321,6 +2348,14 @@ def test_a_squad_in_a_vehicle_gives_a_drive():
     assert "That's 2 km by vehicle, about 2 minutes." in words
 
 
+def test_a_squad_still_climbing_in_gives_a_drive():
+    assert "That's 2 km by vehicle, about 2 minutes." in said_for([leg_to(5050)], mount=["V1", "going", "", []])
+
+
+def test_one_man_sent_to_a_seat_leaves_the_squad_on_foot():
+    assert "on foot" in said_for([leg_to(5050)], mount=["V1", "going", "gunner", []])
+
+
 def test_a_man_on_a_gun_isnt_a_squad_in_a_vehicle():
     words = said_for([leg_to(5050)], mounted=[["V1", "gunner", "Sam Reed", True]], leader="Sam Reed")
     assert "on foot" in words
@@ -2369,6 +2404,110 @@ def test_an_order_that_sets_how_it_moves_is_estimated_by_that(tmp_path):
     b.runtime.order({"to": "Alpha", "behaviour": "STEALTH", "legs": [{"type": "AID_POST", "at": "040 030"}]})
     b.advance(104, order="O-0001")
     assert "That's 1 km on foot, about 17 minutes." in " ".join(said(b))
+
+
+@pytest.mark.parametrize("kind, state, words", [
+    ("carry", "put down", "Put Sam Reed down."),
+    ("carry", "left", "Leaving Sam Reed where they are."),
+    ("treat", "called off", "Stopped treating Sam Reed."),
+    ("post", "called off", "Stopped setting up the aid post."),
+])
+def test_a_squad_says_what_a_new_order_called_off(kind, state, words):
+    rows = [["O-1", kind, "m7", "Sam Reed", state, "", ""]]
+    assert [r.text for r in Tracker()._care(packet(medical=rows))] == [words]
+
+
+def test_the_commander_is_told_the_newest_order_wins():
+    assert "the newest order wins" in ORDER_TYPES_HELP
+    assert "order the squad first and these second" in ORDER_TYPES_HELP
+    assert "The newest order wins" in DOCTRINE
+
+
+def test_the_speed_setting_gets_as_far_as_the_estimate(tmp_path):
+    """It was dropped on the way in, so LIMITED and FULL changed nothing, and STEALTH's 1 m/s at both hid that."""
+    b = Battle(tmp_path)
+    b.start()
+    b.runtime.order({"to": "Alpha", "legs": [{"type": "MOVE", "at": "050 030"}], "speed": "LIMITED"})
+    b.advance(102, order="O-0001", speed_mode="LIMITED")
+    assert any("That's 2 km on foot, about 25 minutes." in line for line in said(b)), said(b)
+
+
+def owen(dx=-300, dy=0, busy=False):
+    return ["Owen King", dx, dy, busy]
+
+
+def test_a_full_count_says_who_isnt_there():
+    words = reports.answer(packet(spread=[owen(), ["Cal Roy", -20, 0, False]]), None, ["strength"])
+    assert "Not with us: Owen King, about 300 m west." in words and "Cal Roy" not in words
+
+
+def test_several_men_apart_are_each_named():
+    words = reports.answer(packet(spread=[owen(), ["Cal Roy", 0, 250, False]]), None, ["strength"])
+    assert "Not with us: Owen King, about 300 m west, and Cal Roy, about 250 m north." in words
+
+
+def test_arriving_says_who_hasnt_yet():
+    tracker, trip = Tracker(), route(("MOVE", (3450, 3050), "034 030"))
+    tracker.update(packet(order="O-1"), trip, 10)
+    arrived = tracker.update(packet(order="O-1", pos=[3450, 3050], grid="034030", leg=1, spread=[owen()]), trip, 14)
+    assert [r.text for r in arrived] == ["Arrived, grid 034 030. Not with us: Owen King, about 300 m west."]
+
+
+def apart_said(tracker, now, **fields):
+    return [r.text for r in tracker.update(packet(**fields), None, now)]
+
+
+def test_someone_who_stays_apart_is_reported_and_so_is_their_return():
+    tracker = Tracker()
+    assert apart_said(tracker, 10, spread=[owen()]) == []  # strung out for a moment isn't news
+    assert apart_said(tracker, 39, spread=[owen()]) == []
+    assert apart_said(tracker, 40, spread=[owen()]) == ["Owen King's away from the squad, about 300 m west of us."]
+    assert apart_said(tracker, 50, spread=[owen()]) == []
+    assert apart_said(tracker, 60, spread=[owen(-70)]) == []  # closing, but not with them yet
+    assert apart_said(tracker, 70, spread=[owen(-40)]) == ["Owen King's back with the squad."]
+    assert apart_said(tracker, 80, spread=[owen(-40)]) == []
+
+
+def test_a_brief_straggler_is_never_mentioned():
+    tracker = Tracker()
+    assert apart_said(tracker, 10, spread=[owen()]) == []
+    assert apart_said(tracker, 20, spread=[owen(-40)]) == []
+    assert tracker.apart == {}
+
+
+def test_a_man_sent_on_a_job_isnt_news_until_its_done():
+    tracker = Tracker()
+    assert apart_said(tracker, 10, spread=[owen(busy=True)]) == []
+    assert apart_said(tracker, 100, spread=[owen(busy=True)]) == []
+    assert apart_said(tracker, 110, spread=[owen()]) == []
+    assert apart_said(tracker, 140, spread=[owen()]) == ["Owen King's away from the squad, about 300 m west of us."]
+
+
+def test_an_order_that_spreads_them_out_isnt_news():
+    tracker = Tracker()
+    garrison = route(("DEFEND", (3050, 3050), "030 030"))
+    tracker.update(packet(order="O-1"), garrison, 0)
+    assert [r.text for r in tracker.update(packet(order="O-1", spread=[owen()]), garrison, 10)] == []
+    assert [r.text for r in tracker.update(packet(order="O-1", spread=[owen()]), garrison, 100)] == []
+
+
+def test_someone_gone_from_the_list_isnt_said_to_be_back():
+    tracker = Tracker()
+    apart_said(tracker, 10, spread=[owen()])
+    apart_said(tracker, 40, spread=[owen()])
+    assert apart_said(tracker, 50, spread=[]) == []  # down, or in a vehicle
+    assert tracker.apart == {}
+
+
+def test_getting_up_a_long_way_off_says_so_once(tmp_path):
+    b = wounded_battle(tmp_path)
+    b.advance(102, casualties=[down_row(x=3050, y=3050)])
+    b.advance(104, up=["m7"], casualties=[], spread=[["Sam Reed", -300, 0, False]])
+    assert "Sam Reed's back on their feet, about 300 m west of us." in said(b)
+    b.advance(160, spread=[["Sam Reed", -300, 0, False]])
+    assert not any("away from the squad" in line for line in said(b))
+    b.advance(170, spread=[["Sam Reed", -30, 0, False]])
+    assert "Sam Reed's back with the squad." in said(b)
 
 
 def test_carrying_says_so_in_the_order_itself():

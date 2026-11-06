@@ -41,6 +41,9 @@ BEARING_ERROR_MAX_DEG = 20
 BEARING_ROUND_DEG = 5
 DEFAULT_TOPICS = ["position", "task", "strength", "casualties", "ammo", "contacts", "vehicles"]
 LEFT_BEHIND_M = 150  # a squad further than this from one of its own who's down has left him
+APART_M = 100  # a man on his feet further than this from his leader isn't with the squad, whatever the count says
+TOGETHER_M = 50  # and he's back when this close, so someone walking along at the edge doesn't keep coming and going
+APART_SAID_AFTER_S = 30  # a squad on the move strings out, and that isn't news
 # How fast things go in m/s, measured on the real game: see host/tests/spikes/move_lag. For saying how long a move will
 # take. A squad of 8 on open ground, by behaviour then speed. Behaviour matters far more than speed.
 PACE_ON_FOOT = {"CARELESS": {"LIMITED": 1.5, "NORMAL": 2.0, "FULL": 1.8},
@@ -204,7 +207,7 @@ def answer(packet: dict, route: dict | None, topics: list[str] | None = None,
                 parts.append(_task_words(packet, route, in_combat))
             case "strength":
                 parts.append(f"{packet['alive']} of {packet['baseline']} effective{_hurt_words(packet)}."
-                             f"{_legs_words(packet)} "
+                             f"{_legs_words(packet)}{_apart_words(packet)} "
                              f"{packet['leader']} has command.")
             case "casualties":
                 words = _casualty_words(packet)
@@ -229,6 +232,13 @@ def answer(packet: dict, route: dict | None, topics: list[str] | None = None,
             case _:
                 parts.append(f"Can't say about {topic}.")
     return " ".join(parts)
+
+
+def _apart_words(packet: dict) -> str:
+    """A full count doesn't mean they're all here: a treated man walks back by himself, however far that is."""
+    far = [f"{name}, about {_offset(math.hypot(dx, dy))} m {compass(dx, dy)}"
+           for name, dx, dy, _busy in packet.get("spread") or [] if math.hypot(dx, dy) >= APART_M]
+    return f" Not with us: {', and '.join(far)}." if far else ""
 
 
 def _hurt_words(packet: dict) -> str:
@@ -262,6 +272,8 @@ _CARE_WORDS = {
     ("carry", "medic down"): "Lost the man carrying {name}.",
     ("carry", "can't reach him"): "Can't get to {name}.",
     ("carry", "stuck"): "Got stuck with {name}, set down short.",
+    ("carry", "put down"): "Put {name} down.",
+    ("carry", "left"): "Leaving {name} where they are.",
     ("carry", "aboard"): "{name}'s on {detail}. Get them off first.",
     ("carry", "already"): "{name}'s already being moved.",
     ("carry", "no bearer"): "Nobody free to carry {name}.",
@@ -280,11 +292,13 @@ _CARE_WORDS = {
     ("treat", "medic down"): "Lost the medic treating {name}.",
     ("treat", "no medic"): "Unable, no medic here.",
     ("treat", "nobody down"): "Nobody down here.",
+    ("treat", "called off"): "Stopped treating {name}.",
     ("treat", "aboard"): "{name}'s on {detail}, which isn't a medical vehicle. Get them off first.",
     ("treat", "can't find"): "Can't find {name}.",
     ("treat", "can't reach"): "Can't get to {name}.",
     ("post", "building"): "Setting up the aid post.",
     ("post", "up"): "Aid post up, grid {grid}. Listed as {detail}.",
+    ("post", "called off"): "Stopped setting up the aid post.",
     ("post", "have one"): "Unable, we've already got a post up.",
     ("post", "no medic"): "Unable, no medic here.",
     ("post", "medic down"): "Lost the medic setting up the post.",
@@ -374,7 +388,9 @@ def pace_of(packet: dict) -> tuple[float, str]:
     who's hit in the legs sets the pace for all of them."""
     leader = packet.get("leader")
     riding = [row for row in packet.get("mounted") or [] if len(row) > 3 and row[2] == leader and not row[3]]
-    if riding:
+    # All aboard for the trip, even if still climbing in. Haiku was told 16 minutes on foot, for a 3 minute drive.
+    boarding = packet.get("mount") or []
+    if riding or (len(boarding) > 2 and boarding[1] == "going" and not boarding[2]):
         return PACE_DRIVING, "by vehicle"
     if leader in (packet.get("limping") or []):
         return min(PACE_LIMPING, foot_pace(packet)), f"on foot, with {leader} hit in the legs"
@@ -449,6 +465,7 @@ class Tracker:
     limping: list[str] = field(default_factory=list)
     downs: dict[str, dict] = field(default_factory=dict)
     care_said: dict[str, str] = field(default_factory=dict)
+    apart: dict[str, dict] = field(default_factory=dict)
     gone: list[str] = field(default_factory=list)  # who the runtime should take off the list after this update
     trail: list[list] = field(default_factory=list)
     trail_leader: str = ""
@@ -494,6 +511,7 @@ class Tracker:
         out += self._heard_impacts(packet, now)
         out += self._new_limps(packet)
         out += self._downed(packet, now)
+        out += self._apart(packet, route, now)
         out += self._care(packet)
         return [_without_own_grid(report) for report in out] if self.in_combat(packet, now) else out
 
@@ -539,9 +557,42 @@ class Tracker:
             known = self.downs.pop(one)
             self.gone.append(one)
             if one in up:
-                out.append(Report(ROUTINE, f"{known['name']}'s back on their feet."))
+                out.append(Report(ROUTINE, self._back_up(known["name"], packet, now)))
             elif known.get("near"):
                 out.append(Report(PRIORITY, f"{known['name']}'s dead."))
+        return out
+
+    def _back_up(self, name: str, packet: dict, now: float) -> str:
+        for one, dx, dy, _busy in packet.get("spread") or []:
+            if one == name and math.hypot(dx, dy) >= APART_M:
+                self.apart[name] = {"since": now, "said": True}
+                return f"{name}'s back on their feet, about {_offset(math.hypot(dx, dy))} m {compass(dx, dy)} of us."
+        return f"{name}'s back on their feet."
+
+    def _apart(self, packet: dict, route: dict | None, now: float) -> list[Report]:
+        """Who's got separated from the squad, and when they're back. Men sent off on a job, or spread out by the order
+        they're on, aren't news. Someone who drops out of the list has gone down or got in a vehicle, which is said
+        elsewhere."""
+        leg = _current_leg(packet, route)
+        if leg and leg["type"] in SINGLE_LEG_ORDERS:
+            self.apart = {}
+            return []
+        out, rows = [], packet.get("spread") or []
+        for name, dx, dy, busy in rows:
+            away = math.hypot(dx, dy)
+            known = self.apart.get(name)
+            if away < TOGETHER_M:
+                if known and known["said"]:
+                    out.append(Report(ROUTINE, f"{name}'s back with the squad."))
+                self.apart.pop(name, None)
+            elif away >= APART_M and not busy:
+                known = known or self.apart.setdefault(name, {"since": now, "said": False})
+                if not known["said"] and now - known["since"] >= APART_SAID_AFTER_S:
+                    out.append(Report(ROUTINE, f"{name}'s away from the squad, about {_offset(away)} m "
+                                               f"{compass(dx, dy)} of us."))
+                    known["said"] = True
+        names = {row[0] for row in rows}
+        self.apart = {name: known for name, known in self.apart.items() if name in names}
         return out
 
     def _care(self, packet: dict) -> list[Report]:
@@ -690,7 +741,7 @@ class Tracker:
         leg_now = packet.get("leg", 0)
         while self.leg < leg_now and self.leg < len(legs):
             if self.leg == len(legs) - 1:
-                out.append(Report(ROUTINE, _finish_words(legs[self.leg], grid), grid))
+                out.append(Report(ROUTINE, _finish_words(legs[self.leg], grid) + _apart_words(packet), grid))
                 self.route_done = True
             elif legs[self.leg]["grid"] != legs[self.leg + 1]["grid"]:  # moving somewhere to hold there is one trip
                 out.append(Report(ROUTINE, f"Passing grid {legs[self.leg]['grid']}, at grid {grid}.", grid))
@@ -700,7 +751,7 @@ class Tracker:
                 and math.dist(packet["pos"], current["pos"]) <= (current.get("completion") or ON_STATION_M):
             self.on_station.append(leg_now)
             words = "On station" if current["type"] == "HOLD" else "In position, watching"
-            out.append(Report(ROUTINE, f"{words}, grid {grid}.", grid))
+            out.append(Report(ROUTINE, f"{words}, grid {grid}.{_apart_words(packet)}", grid))
         return out
 
     def _clearing(self, packet: dict, leg: dict, grid: str) -> list[Report]:

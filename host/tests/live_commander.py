@@ -614,10 +614,10 @@ def play_casevac(client: Client) -> list[str]:
     assert "C1" in text and "C2" in text, text
     print("STATE two down", alpha_state(), flush=True)
 
-    # The estimate goes by how the squad's really moving, which the order has just set: 1 km at 1 m/s.
-    client.tool("commander_order", to="Angel", legs=[{"type": "MOVE", "at": "020 070"}], behaviour="STEALTH",
+    # The estimate goes by how the squad's really moving, which the order has just set: 1 km at 1.4 m/s, not 4.1.
+    client.tool("commander_order", to="Angel", legs=[{"type": "MOVE", "at": "020 070"}], behaviour="AWARE",
                 speed="LIMITED")
-    hear("That's 1 km on foot, about 17 minutes.", 60)
+    hear("That's 1 km on foot, about 12 minutes.", 60)
     client.tool("commander_order", to="Angel", legs=[{"type": "HALT"}], behaviour="AWARE", speed="NORMAL")
 
     # Two healthy men carry them to the truck.
@@ -840,6 +840,62 @@ def play_casevac_cases(client: Client) -> list[str]:
     time.sleep(3)
     order("Bravo", {"type": "CARRY", "casualties": [listed(who)], "at": "056 062"})
     hear("Set ", 200)
+
+    # The newest order wins. Called off partway: he's put down where he is, and his bearer goes back to the squad.
+    order("Bravo", {"type": "CARRY", "casualties": [listed(who)], "at": "054 063"})
+    hear(f"Got {who}, on the way", 120)
+    order("Bravo", {"type": "HOLD", "at": "054 063"})
+    hear(f"Put {who} down.", 30)
+    state = in_game(harness, f"""
+    private _men = units (brmh_cmd_stations get "Bravo");
+    private _him = (_men select {{ name _x isEqualTo "{who}" }}) # 0;
+    [{{ (_x get "state") isNotEqualTo "done" }} count brmh_cmd_carries, str attachedTo _him,
+     {{ _x getVariable ["brmh_cmd_busy", false] }} count _men, _him getVariable ["brmh_cmd_handled", ""],
+     lifeState _him]
+    """)
+    print("CALLED OFF", state, flush=True)
+    assert state == [0, "<NULL-object>", 0, "", "INCAPACITATED"], state
+
+    # Picked up again, then told to take him somewhere else on the way there.
+    order("Bravo", {"type": "CARRY", "casualties": [listed(who)], "at": "054 061"})
+    hear(f"Got {who}, on the way", 120)
+    order("Bravo", {"type": "CARRY", "casualties": [listed(who)], "at": "055 063"})
+    hear(f"Set {who} down.", 200)
+    away = in_game(harness, f"""
+    private _him = (units (brmh_cmd_stations get "Bravo")) select {{ name _x isEqualTo "{who}" }};
+    round ((_him # 0) distance2D [5550, 6350])
+    """)
+    print("REDIRECTED, metres from the new place", away, flush=True)
+    assert away <= 15, away
+
+    # Medics stop treating, and stop building.
+    order("Medics", {"type": "TREAT", "casualties": [listed(who)]})
+    time.sleep(5)
+    order("Medics", {"type": "HOLD", "at": "052 058"})
+    hear(f"Stopped treating {who}.", 30)
+    order("Medics", {"type": "AID_POST", "at": "052 058"})
+    time.sleep(3)
+    order("Medics", {"type": "HOLD", "at": "052 058"})
+    hear("Stopped setting up the aid post.", 30)
+    state = in_game(harness, """
+    [count brmh_cmd_posts, count brmh_cmd_builds, count brmh_cmd_treats,
+     {_x getVariable ["brmh_cmd_busy", false]} count units (brmh_cmd_stations get "Medics")]
+    """)
+    print("MEDICS CALLED OFF", state, flush=True)
+    assert state == [0, 0, 0, 0], state
+
+    # A full count isn't everyone being there. His squad goes off, he's treated, and he's a long walk from it.
+    order("Bravo", {"type": "MOVE", "at": "050 060"})
+    hear(f"We've left {who}", 240)
+    order("Medics", {"type": "TREAT", "casualties": [listed(who)]})
+    hear(f"{who}'s back on their feet, about", 300)
+    answer = client.tool("commander_ask", to="Bravo", topics=["strength"])["replies"][0]["text"]
+    print("STRENGTH", answer, flush=True)
+    assert f"Not with us: {who}, about" in answer, answer
+    hear(f"{who}'s back with the squad.", 300)
+    answer = client.tool("commander_ask", to="Bravo", topics=["strength"])["replies"][0]["text"]
+    print("STRENGTH", answer, flush=True)
+    assert "Not with us" not in answer, answer
 
     # Left behind.
     who = knock("Charlie")[0]

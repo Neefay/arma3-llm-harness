@@ -34,9 +34,11 @@ ORDER_TYPES_HELP = (
     "they are. CARRY: free men pick up casualties and take them to a vehicle or a place. A man carrying walks about "
     "100 m a minute, doesn't take cover and can't shoot back, so he's exposed. UNLOAD: get casualties off a stopped "
     "vehicle. TREAT: medics treat casualties where they lie, faster at an aid post or medical vehicle. "
-    "AID_POST: a medic sets up an aid post. These four leave the rest of the squad's orders as they are. The last six "
-    "of the single-place orders run until replaced. Each stands alone in an order, except MOVE, "
-    "HOLD, SEARCH and SENTRY, which can be chained.")
+    "AID_POST: a medic sets up an aid post. These four leave the rest of the squad's orders as they are, but the "
+    "newest order wins: a later order that moves or stops the squad, or MOUNT, calls off its carrying, treating and "
+    "aid post, and casualties stay where they are. To do both, order the squad first and these second. A new CARRY "
+    "for a man already being carried takes him to the new place. The last six of the single-place orders run until "
+    "replaced. Each stands alone in an order, except MOVE, HOLD, SEARCH and SENTRY, which can be chained.")
 _STRING = {"type": "string"}
 _LEG = {
     "type": "object",
