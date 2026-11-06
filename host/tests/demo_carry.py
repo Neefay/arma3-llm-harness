@@ -66,11 +66,12 @@ class Demo:
         print(f"\n{text}", flush=True)
         self.run(f'{json.dumps(text)} remoteExec ["systemChat", 0]; true')
 
-    def scene(self, title: str, medic_at, hurt_at, to: str, expect: str, during: str = "", limit: float = 180) -> None:
+    def scene(self, title: str, medic_at, hurt_at, to: str, expect: str, during: str = "", limit: float = 180,
+              check_wait: float = 0) -> None:
         names = self.run(f"brmh_scene = [{list(medic_at)}, {list(hurt_at)}] call brmh_demo_fnc_people; "
                          "[name (brmh_scene # 0), name (brmh_scene # 1), mapGridPosition (brmh_scene # 1)]")
         self.say(f"{title}: medic {names[0]} goes to {names[1]} at grid {names[2]}.")
-        self.pause()
+        self.pause(check_wait)
         self.run(f"brmh_carry = [brmh_scene # 0, brmh_scene # 1, {to}] call brmh_cmd_fnc_startCarry; true")
         begun, last, did = time.time(), "", False
         while time.time() - begun < limit:
@@ -94,8 +95,12 @@ class Demo:
         self.failed.append(f"{title}: still {last} after {limit} s")
         self.say("It ran out of time.")
 
-    def pause(self) -> None:
-        if not CHECK:
+    def pause(self, check_wait: float = 0) -> None:
+        """A person always takes a while here, and in that time ACE's AI medic has its hands on the medic. A check with no
+        wait once passed while the demo failed for the first person to watch it."""
+        if CHECK:
+            time.sleep(check_wait)
+        else:
             input("  Press Enter to start this scene. ")
 
 
@@ -111,7 +116,7 @@ def main() -> None:
     private _spots = (_house buildingPos -1) select {(_x # 2) < 1};
     _spots # 0
     """)
-    demo.scene("3. Out of a house", (4200, 4110), (inside[0], inside[1]), "[4200, 4090, 0]", "carried")
+    demo.scene("3. Out of a house", (4200, 4110), (inside[0], inside[1]), "[4200, 4090, 0]", "carried", check_wait=40)
     demo.scene("4. Stuck on the way: it finishes by the fallback", (4500, 3800), (4530, 3800), "[4530, 3750, 0]",
                "placed", during='(brmh_carry get "dummy") disableAI "MOVE"; true')
     demo.scene("5. The medic is killed on the way", (4600, 3800), (4630, 3800), "[4630, 3600, 0]", "medic down",

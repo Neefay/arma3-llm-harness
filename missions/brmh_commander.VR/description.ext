@@ -5,3 +5,4 @@ respawnDelay = 5;
 respawnOnStart = -1;
 // Otherwise an armed AI soldier stands in the observer slot whenever nobody's playing it, and joins the battle.
 disabledAI = 1;
+cba_settings_hasSettingsFile = 1;

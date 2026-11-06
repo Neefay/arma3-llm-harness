@@ -1228,6 +1228,13 @@ brmh_cmd_fnc_fireChunk = {
 	_mission set ["firedAtIssue", _mission getOrDefault ["fired", 0]];
 };
 
+// switchMove only changes the machine it runs on. On the server alone, the body stayed on the ground for anyone watching,
+// and the server's own state said all was well.
+brmh_cmd_fnc_carryPose = {
+	params ["_unit", "_animation"];
+	[_unit, _animation] remoteExec ["switchMove", 0];
+};
+
 /*
 	NAME: brmh_cmd_fnc_startCarry
 	DESCRIPTION: Sends a medic to pick up a downed man and carry him somewhere. An AI can't walk in ACE's carrying state, so
@@ -1243,12 +1250,11 @@ brmh_cmd_fnc_fireChunk = {
 */
 brmh_cmd_fnc_startCarry = {
 	params ["_medic", "_casualty", "_to"];
-	private _carry = createHashMapFromArray [["medic", _medic], ["casualty", _casualty], ["to", _to], ["state", "going"], ["since", time], ["asked", -100], ["result", ""], ["moved", time], ["last", getPosATL _medic]];
-	// ACE's AI medic would give them both its own orders
+	private _carry = createHashMapFromArray [["medic", _medic], ["casualty", _casualty], ["to", _to], ["state", "going"], ["since", time], ["tries", 0], ["result", ""], ["moved", time], ["last", getPosATL _medic]];
 	{
-		_x setVariable ["ace_medical_ai_lastFired", CBA_missionTime + 86400];
+		_x forceSpeed -1;
 	} forEach [_medic, _casualty];
-	_medic forceSpeed -1;
+	[_carry] call brmh_cmd_fnc_carryApproach;
 	brmh_cmd_carries pushBack _carry;
 	if (isNil "brmh_cmd_carryPfh") then {
 		brmh_cmd_carryPfh = [{
@@ -1266,6 +1272,64 @@ brmh_cmd_fnc_carryPlace = {
 	} else {
 		_to
 	}
+};
+
+/*
+	Where to send someone who has to reach a downed man, best first. The pathfinder often can't get to him. With a body at
+	some spots in a house, nowhere in or right beside that house can be planned to, though it's fine with the body elsewhere,
+	and open ground is fine either way. A man told to go there stands still for 12 s, then reports himself ready. So: the
+	nearest position of the house at his level, the man himself, then a ring clear of the house, nearest the rescuer first.
+*/
+brmh_cmd_fnc_nearBody = {
+	params ["_body", "_from"];
+	private _at = getPosATL _body;
+	private _level = ((nearestObject [_body, "House"]) buildingPos -1) select {
+		(_x distance _at) < 6 and {
+			abs ((_x # 2) - (_at # 2)) < 1.5
+		}
+	};
+	_level = _level apply {
+		[_x distance _at, _x]
+	};
+	_level sort true;
+	// 14 m wasn't enough from the middle of the largest house here, and 26 m was.
+	private _clear = [12, 25] select (_level isNotEqualTo []);
+	private _ring = [0, 45, 90, 135, 180, 225, 270, 315] apply {
+		private _spot = _at getPos [_clear, _x];
+		[_spot distance2D _from, [_spot # 0, _spot # 1, 0]]
+	};
+	_ring sort true;
+	((_level select [0, 1]) apply {
+		_x # 1
+	}) + [_at] + (_ring apply {
+		_x # 1
+	})
+};
+
+// Tries the next place. False when they've all been tried.
+brmh_cmd_fnc_carryApproach = {
+	params ["_carry"];
+	private _tries = _carry get "tries";
+	private _spots = [_carry get "casualty", getPosATL (_carry get "medic")] call brmh_cmd_fnc_nearBody;
+	if (_tries >= count _spots) exitWith {
+		false
+	};
+	(_carry get "medic") doMove (_spots # _tries);
+	_carry set ["tries", _tries + 1];
+	_carry set ["ordered", time];
+	_carry set ["moved", time];
+	true
+};
+
+brmh_cmd_fnc_carryStartLift = {
+	params ["_carry"];
+	private _medic = _carry get "medic";
+	doStop _medic;
+	_medic selectWeapon primaryWeapon _medic;
+	_medic playMoveNow "AcinPknlMstpSnonWnonDnon_AcinPercMrunSnonWnonDnon";
+	[_carry get "casualty", "AinjPfalMstpSnonWrflDnon_carried_Up"] call brmh_cmd_fnc_carryPose;
+	_carry set ["state", "lifting"];
+	_carry set ["since", time];
 };
 
 brmh_cmd_fnc_carryLift = {
@@ -1289,7 +1353,7 @@ brmh_cmd_fnc_carryLift = {
 	_medic setDir 0;
 	_casualty attachTo [_medic, [0.4, -0.1, -1.25], "LeftShoulder"];
 	_casualty setDir 195;
-	_casualty switchMove "AinjPfalMstpSnonWnonDf_carried_dead";
+	[_casualty, "AinjPfalMstpSnonWnonDf_carried_dead"] call brmh_cmd_fnc_carryPose;
 	_dummy doMove ([_carry] call brmh_cmd_fnc_carryPlace);
 	_medic playMove "AcinPercMrunSnonWnonDf";
 	_carry set ["dummy", _dummy];
@@ -1310,7 +1374,7 @@ brmh_cmd_fnc_carryRelease = {
 	if (alive _casualty and {
 		lifeState _casualty isEqualTo "INCAPACITATED"
 	}) then {
-		_casualty switchMove "UnconsciousReviveDefault";
+		[_casualty, "UnconsciousReviveDefault"] call brmh_cmd_fnc_carryPose;
 	};
 	if (not isNull _dummy) then {
 		detach _medic;
@@ -1320,7 +1384,7 @@ brmh_cmd_fnc_carryRelease = {
 	if (alive _medic) then {
 		_medic enableAI "ANIM";
 		if (lifeState _medic isNotEqualTo "INCAPACITATED") then {
-			_medic switchMove "AmovPknlMstpSrasWrflDnon";
+			[_medic, "AmovPknlMstpSrasWrflDnon"] call brmh_cmd_fnc_carryPose;
 		};
 	};
 };
@@ -1329,9 +1393,6 @@ brmh_cmd_fnc_carryFinish = {
 	params ["_carry", "_result"];
 	private _medic = _carry get "medic";
 	[_carry] call brmh_cmd_fnc_carryRelease;
-	{
-		_x setVariable ["ace_medical_ai_lastFired", nil];
-	} forEach [_medic, _carry get "casualty"];
 	if (alive _medic) then {
 		_medic doFollow leader group _medic;
 	};
@@ -1379,20 +1440,44 @@ brmh_cmd_fnc_stepCarries = {
 				[_carry, "he woke"] call brmh_cmd_fnc_carryFinish;
 			};
 			case (_state isEqualTo "going"): {
-				if ((_medic distance2D _casualty) <= 2.5) exitWith {
-					doStop _medic;
-					_medic selectWeapon primaryWeapon _medic;
-					_medic playMoveNow "AcinPknlMstpSnonWnonDnon_AcinPercMrunSnonWnonDnon";
-					_casualty switchMove "AinjPfalMstpSnonWrflDnon_carried_Up";
-					_carry set ["state", "lifting"];
+				private _away = _medic distance _casualty;
+				private _ready = unitReady _medic and {
+					(time - (_carry get "ordered")) >= 3
+				};
+				// A house position can stop him a few metres short, through a wall or not. He snaps the man to him when he lifts.
+				if (_away <= 2.5 or {
+					_ready and {
+						_away <= 8
+					}
+				}) exitWith {
+					[_carry] call brmh_cmd_fnc_carryStartLift;
+				};
+				// As close as he can get. The owner's way: he works for a while, and the man is then with him.
+				if (_ready and {
+					_away <= 35
+				}) exitWith {
+					[_medic, "AinvPknlMstpSlayWrflDnon_medicOther"] call brmh_cmd_fnc_carryPose;
+					_carry set ["state", "fetching"];
 					_carry set ["since", time];
 				};
-				if (_in >= 120) exitWith {
-					[_carry, "can't reach him"] call brmh_cmd_fnc_carryFinish;
+				if ((_medic distance2D (_carry get "last")) >= 1) then {
+					_carry set ["last", getPosATL _medic];
+					_carry set ["moved", time];
 				};
-				if ((time - (_carry get "asked")) >= 10) then {
-					_medic doMove (getPosATL _casualty);
-					_carry set ["asked", time];
+				if (_ready or {
+					(time - (_carry get "moved")) >= 20
+				}) then {
+					if (not ([_carry] call brmh_cmd_fnc_carryApproach)) then {
+						[_carry, "can't reach him"] call brmh_cmd_fnc_carryFinish;
+					};
+				};
+			};
+			case (_state isEqualTo "fetching"): {
+				if (_in >= 8) then {
+					_casualty setPosATL (_medic getPos [1.2, getDir _medic]);
+					[_casualty, "UnconsciousReviveDefault"] call brmh_cmd_fnc_carryPose;
+					[_medic, "AmovPercMstpSrasWrflDnon"] call brmh_cmd_fnc_carryPose;
+					[_carry] call brmh_cmd_fnc_carryStartLift;
 				};
 			};
 			case (_state isEqualTo "lifting"): {
@@ -1419,7 +1504,7 @@ brmh_cmd_fnc_stepCarries = {
 					if (_left <= 60) then {
 						[_carry] call brmh_cmd_fnc_carryRelease;
 						_medic disableAI "ANIM";
-						_medic switchMove "AinvPknlMstpSlayWrflDnon_medicOther";
+						[_medic, "AinvPknlMstpSlayWrflDnon_medicOther"] call brmh_cmd_fnc_carryPose;
 						_carry set ["state", "working"];
 						_carry set ["since", time];
 					} else {
