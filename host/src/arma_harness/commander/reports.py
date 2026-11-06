@@ -39,7 +39,8 @@ REPORT_DELAYS = ((0.1, 5.0), (0.4, 15.0), (math.inf, 30.0))
 BEARING_ERROR_DEG = 5  # a soldier's snap estimate, widened by how vaguely the target's position is known
 BEARING_ERROR_MAX_DEG = 20
 BEARING_ROUND_DEG = 5
-DEFAULT_TOPICS = ["position", "task", "strength", "ammo", "contacts", "vehicles"]
+DEFAULT_TOPICS = ["position", "task", "strength", "casualties", "ammo", "contacts", "vehicles"]
+LEFT_BEHIND_M = 150  # a squad further than this from one of its own who's down has left him
 PLACING_ORDERS = {"OCCUPY", "CORDON"}
 TASK_ORDERS = {"ATTACK", "DEFEND", "PATROL_AREA", "SWEEP"}  # CBA tasks: they run until replaced, with no end to report
 SINGLE_LEG_ORDERS = {"CLEAR"} | PLACING_ORDERS | TASK_ORDERS
@@ -190,10 +191,13 @@ def answer(packet: dict, route: dict | None, topics: list[str] | None = None,
             case "task":
                 parts.append(_task_words(packet, route, in_combat))
             case "strength":
-                wounded = packet.get("wounded", 0)
-                hurt = f", {wounded} wounded" if wounded else ""
-                parts.append(f"{packet['alive']} of {packet['baseline']} effective{hurt}.{_legs_words(packet)} "
+                parts.append(f"{packet['alive']} of {packet['baseline']} effective{_hurt_words(packet)}."
+                             f"{_legs_words(packet)} "
                              f"{packet['leader']} has command.")
+            case "casualties":
+                words = _casualty_words(packet)
+                if words or topics:
+                    parts.append(words or "No casualties.")
             case "ammo":
                 band = ammo_band(packet.get("rounds", 0), packet.get("rounds_baseline", 0))
                 parts.append(f"Ammo {band}, {_AMMO_WORDS[band]}.")
@@ -213,6 +217,68 @@ def answer(packet: dict, route: dict | None, topics: list[str] | None = None,
             case _:
                 parts.append(f"Can't say about {topic}.")
     return " ".join(parts)
+
+
+def _hurt_words(packet: dict) -> str:
+    down = sum(row["own"] for row in packet.get("casualties") or [])
+    wounded = packet.get("wounded", 0)
+    return (f", {down} down" if down else "") + (f", {wounded} wounded" if wounded else "")
+
+
+def _casualty_words(packet: dict) -> str:
+    """Who's down that this squad knows about, and roughly where from here."""
+    parts = []
+    for row in packet.get("casualties") or []:
+        if row["vehicle"]:
+            where = f"on {row['vehicle']}"
+        else:
+            away = math.hypot(row["dx"], row["dy"])
+            where = "right here" if away < 15 else f"about {_offset(away)} m {compass(row['dx'], row['dy'])}"
+        parts.append(f"{row['id']} {row['name']}, down, {where}.")
+    return " ".join(parts)
+
+
+_CARE_WORDS = {
+    ("carry", "carrying"): "Got {name}, on the way.",
+    ("carry", "carried"): "Set {name} down.",
+    ("carry", "placed"): "Set {name} down.",
+    ("carry", "loaded"): "{name}'s loaded.",
+    ("carry", "loaded directly"): "{name}'s loaded.",
+    ("carry", "couldn't load him"): "Couldn't load {name}, there's no room.",
+    ("carry", "he died"): "{name}'s dead.",
+    ("carry", "he woke"): "{name}'s back up.",
+    ("carry", "medic down"): "Lost the man carrying {name}.",
+    ("carry", "can't reach him"): "Can't get to {name}.",
+    ("carry", "stuck"): "Got stuck with {name}, set down short.",
+    ("carry", "aboard"): "{name}'s on {detail}. Get them off first.",
+    ("carry", "already"): "{name}'s already being moved.",
+    ("carry", "no bearer"): "Nobody free to carry {name}.",
+    ("carry", "nobody down"): "Nobody down here.",
+    ("carry", "wrecked"): "Unable, {detail} is wrecked.",
+    ("unload", "off"): "{name}'s off {detail}.",
+    ("unload", "stuck"): "Can't get {name} off {detail}.",
+    ("unload", "moving"): "{detail} has to stop first.",
+    ("unload", "nobody there"): "Unable, nobody at {detail}.",
+    ("unload", "nobody aboard"): "Nobody down on {detail}.",
+    ("unload", "not aboard"): "{name} isn't on {detail}.",
+    ("unload", "wrecked"): "Unable, {detail} is wrecked.",
+    ("treat", "treating"): "Treating {name}.",
+    ("treat", "up"): "{name}'s back up.",
+    ("treat", "he died"): "{name}'s dead.",
+    ("treat", "medic down"): "Lost the medic treating {name}.",
+    ("treat", "no medic"): "Unable, no medic here.",
+    ("treat", "nobody down"): "Nobody down here.",
+    ("treat", "aboard"): "{name}'s on {detail}, which isn't a medical vehicle. Get them off first.",
+    ("treat", "can't find"): "Can't find {name}.",
+    ("treat", "can't reach"): "Can't get to {name}.",
+    ("post", "building"): "Setting up the aid post.",
+    ("post", "up"): "Aid post up, grid {grid}. Listed as {detail}.",
+    ("post", "have one"): "Unable, we've already got a post up.",
+    ("post", "no medic"): "Unable, no medic here.",
+    ("post", "medic down"): "Lost the medic setting up the post.",
+    ("post", "can't reach"): "Can't get to that spot for the post.",
+    ("joined", "joined"): "{name}'s with us now. There's nobody left to go back to.",
+}
 
 
 def _vehicle_words(packet: dict) -> str:
@@ -327,6 +393,9 @@ class Tracker:
     explosions_at: float = -1
     no_view_said: list[str] = field(default_factory=list)
     limping: list[str] = field(default_factory=list)
+    downs: dict[str, dict] = field(default_factory=dict)
+    care_said: dict[str, str] = field(default_factory=dict)
+    gone: list[str] = field(default_factory=list)  # who the runtime should take off the list after this update
     trail: list[list] = field(default_factory=list)
     trail_leader: str = ""
 
@@ -370,7 +439,56 @@ class Tracker:
         out += self._missions(packet)
         out += self._heard_impacts(packet, now)
         out += self._new_limps(packet)
+        out += self._downed(packet, now)
+        out += self._care(packet)
         return [_without_own_grid(report) for report in out] if self.in_combat(packet, now) else out
+
+    def _downed(self, packet: dict, now: float) -> list[Report]:
+        """Who it knows is down. A squad that's left one of its own behind can't say what's become of him."""
+        out, rows = [], {row["id"]: row for row in packet.get("casualties") or []}
+        in_combat = self.in_combat(packet, now)
+        self.gone = []
+        for one, row in rows.items():
+            away = math.hypot(row["dx"], row["dy"])
+            known = self.downs.get(one)
+            if known is None and (row["own"] or row["new"]):
+                where = "" if in_combat or row["vehicle"] else f", grid {row['grid']}"
+                said = f"{row['name']}'s down{where}." if row["own"] else f"Found {row['name']} down{where}."
+                out.append(Report(PRIORITY, f"{said} Listed as {one}."))
+                known = {"name": row["name"], "left": False}
+            if known is None:
+                continue
+            with_us = row["vehicle"] or row["handled"]
+            if row["own"] and not with_us and away > LEFT_BEHIND_M and not known["left"]:
+                out.append(Report(ROUTINE, f"We've left {row['name']}, about {_offset(away)} m "
+                                           f"{compass(row['dx'], row['dy'])} of us."))
+                known["left"] = True
+            elif away <= LEFT_BEHIND_M:
+                known["left"] = False
+            known["near"] = away <= LEFT_BEHIND_M or bool(row["vehicle"])
+            self.downs[one] = known
+        up = packet.get("up") or []
+        for one in [one for one in self.downs if one not in rows]:
+            known = self.downs.pop(one)
+            self.gone.append(one)
+            if one in up:
+                out.append(Report(ROUTINE, f"{known['name']}'s back on their feet."))
+            elif known.get("near"):
+                out.append(Report(PRIORITY, f"{known['name']}'s dead."))
+        return out
+
+    def _care(self, packet: dict) -> list[Report]:
+        out = []
+        for order, kind, one, name, state, detail, grid in packet.get("medical") or []:
+            key = f"{order}:{kind}:{one}"
+            if self.care_said.get(key) == state:
+                continue
+            self.care_said[key] = state
+            words = _CARE_WORDS.get((kind, state))
+            if words:
+                bad = state not in ("carrying", "carried", "loaded", "treating", "up", "off", "building")
+                out.append(Report(PRIORITY if bad else ROUTINE, words.format(name=name, detail=detail, grid=grid)))
+        return out
 
     def _new_limps(self, packet: dict) -> list[Report]:
         names = packet.get("limping") or []
@@ -566,9 +684,8 @@ class Tracker:
         self.alive = alive
         if self.casualties_since >= 0 and now - self.casualties_since >= CASUALTY_GROUP_S:
             self.casualties_since = -1.0
-            wounded = packet.get("wounded", 0)
-            hurt = f", {wounded} wounded" if wounded else ""
-            out.append(Report(PRIORITY, f"Taking casualties, {alive} of {packet['baseline']} effective{hurt}."))
+            out.append(Report(PRIORITY, f"Taking casualties, {alive} of {packet['baseline']} effective"
+                                        f"{_hurt_words(packet)}."))
         return out
 
     def _stuck(self, packet: dict, route: dict | None, now: float) -> list[Report]:

@@ -96,8 +96,8 @@ class Demo:
         self.say("It ran out of time.")
 
     def pause(self, check_wait: float = 0) -> None:
-        """A person always takes a while here, and in that time ACE's AI medic has its hands on the medic. A check with no
-        wait once passed while the demo failed for the first person to watch it."""
+        """A person always takes a while here. A check with no wait once passed while the demo failed for the first
+        person to watch it."""
         if CHECK:
             time.sleep(check_wait)
         else:

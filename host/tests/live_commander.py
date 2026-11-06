@@ -583,6 +583,261 @@ def play_motor_march(client: Client) -> list[str]:
     return log
 
 
+def play_casevac(client: Client) -> list[str]:
+    """The owner's plan, step by step, by the commander's tools alone. Only the two men going down come from outside."""
+    harness = Harness()
+    begin(client)
+    finish_turn(client, "Waiting")
+    log: list[str] = []
+
+    def hear(phrase, timeout=120, times=1):
+        text, deadline = "", time.time() + timeout
+        while text.count(phrase) < times:
+            assert time.time() < deadline, f"never heard {phrase!r} {times}x: {text[-900:]}"
+            text += heard(client, phrase, max(1, deadline - time.time()))
+        log.append(text)
+        return text
+
+    def order(to, *legs):
+        return client.tool("commander_order", to=to, legs=list(legs))
+
+    def alpha_state():
+        return in_game(harness, """
+        private _group = brmh_cmd_stations get "Alpha";
+        [count units _group, {alive _x} count units _group, {vehicle _x isNotEqualTo _x} count units _group,
+         {lifeState _x isEqualTo "INCAPACITATED"} count units _group,
+         round ((leader _group) distance2D [4050, 6050]), round ((brmh_cmd_vehicles get "V1") distance2D [4050, 6050])]
+        """)
+
+    # Two of six go down.
+    in_game(harness, """
+    missionNamespace setVariable ["ace_medical_spontaneousWakeUpChance", 0, true];
+    private _men = (units (brmh_cmd_stations get "Alpha")) - [leader (brmh_cmd_stations get "Alpha")];
+    {
+        [_x, 0.4, "body", "bullet"] call ace_medical_fnc_addDamageToUnit;
+        [_x, true, 0, false] call ace_medical_fnc_setUnconscious;
+    } forEach (_men select [0, 2]);
+    true
+    """)
+    text = hear("Listed as C", 40, 2)
+    assert "C1" in text and "C2" in text, text
+    print("STATE two down", alpha_state(), flush=True)
+
+    # Two healthy men carry them to the truck.
+    order("Alpha", {"type": "CARRY", "casualties": ["C1", "C2"], "vehicle": "V1"})
+    text = hear("'s loaded.", 200, 2)
+    assert "Copy, carrying" in text and "Got " in text, text[-900:]
+    print("STATE loaded", alpha_state(), flush=True)
+
+    # The squad gets on after them, and goes to the rendezvous.
+    order("Alpha", {"type": "MOUNT", "vehicle": "V1"})
+    text = hear(" on V1.", 120)
+    state = alpha_state()
+    print("STATE mounted", state, flush=True)
+    assert "didn't fit" not in text and state[2] == 6 and state[3] == 2, (text[-500:], state)
+    order("Alpha", {"type": "MOVE", "at": "040 060"})
+
+    # Meanwhile the medics get on theirs, go there, get off and set up.
+    order("Angel", {"type": "MOUNT", "vehicle": "V2"})
+    hear(" on V2.", 120)
+    order("Angel", {"type": "MOVE", "at": "040 060"})
+    text = hear("Arrived, grid 040 060", 300, 2)
+    print("STATE at the rendezvous", alpha_state(), flush=True)
+    order("Angel", {"type": "DISMOUNT"})
+    hear("Off the vehicle", 60)
+    order("Angel", {"type": "AID_POST", "at": "040 060"})
+    text = hear("Listed as A1", 90)
+    assert "Setting up the aid post." in text and "Aid post up, grid 04" in text, text[-500:]
+
+    # The squad gets off, and gets its casualties off, and over to the post.
+    order("Alpha", {"type": "DISMOUNT"})
+    hear("Off the vehicle", 60)
+    state = alpha_state()
+    print("STATE squad off", state, flush=True)
+    assert state[2] == 2, state  # the two casualties are still in their seats
+    order("Alpha", {"type": "UNLOAD", "vehicle": "V1"})
+    hear("'s off V1.", 40, 2)
+    state = alpha_state()
+    print("STATE unloaded", state, flush=True)
+    assert state[2] == 0 and state[3] == 2 and state[0] == 6, state  # still his squad's
+    order("Alpha", {"type": "CARRY", "casualties": ["C1", "C2"], "at": "A1"})
+    hear("Set ", 200, 2)
+    order("Alpha", {"type": "SENTRY", "at": "040 060"})
+
+    # The medics treat them, at the post's speed.
+    started = time.time()
+    order("Angel", {"type": "TREAT", "casualties": ["C1", "C2"]})
+    text = hear("'s back up.", 180, 2)
+    assert "Treating " in text, text[-500:]
+    print(f"TREATED both in {time.time() - started:.0f} s", flush=True)
+    state = alpha_state()
+    print("STATE treated", state, flush=True)
+    assert state[0] == 6 and state[1] == 6 and state[3] == 0, state
+    time.sleep(15)
+
+    # The squad mounts back up, all six, and goes back.
+    order("Alpha", {"type": "MOUNT", "vehicle": "V1"})
+    text = hear(" on V1.", 150)
+    state = alpha_state()
+    print("STATE back on", state, flush=True)
+    assert state[2] == 6, (state, text[-400:])
+    tent = "brmh_cmd_posts apply { [alive _x, round (damage _x * 100) / 100, round (_x distance2D (brmh_cmd_vehicles get 'V1'))] }"
+    print("POST before driving", in_game(harness, tent), flush=True)
+    order("Alpha", {"type": "MOVE", "at": "070 060"})
+    time.sleep(10)
+    print("POST after driving off", in_game(harness, tent), flush=True)
+    hear("Arrived, grid 070 060", 300)
+    order("Alpha", {"type": "DISMOUNT"})
+    text = ""
+    deadline = time.time() + 90
+    while "MISSION END" not in text:
+        assert time.time() < deadline, text[-600:]
+        text += next_wake(client, 60)["content"]
+        if "MISSION END" not in text:
+            finish_turn(client, "Waiting")
+    assert "OBJECTIVE COMPLETE" in text, text[-500:]
+    log.append(text)
+    errors = harness.events(since=0, kinds=["err"]).get("events", [])
+    assert not errors, [str(e.get("text"))[:200] for e in errors[:4]]
+    return log
+
+
+def play_casevac_cases(client: Client) -> list[str]:
+    """What the plan doesn't touch: treating in the field, a medical vehicle, nobody to go back to, a leader waking, a
+    man left behind, a carry while the squad is on the move, and the things that fail."""
+    harness = Harness()
+    begin(client)
+    finish_turn(client, "Waiting")
+    log: list[str] = []
+
+    def hear(phrase, timeout=120, times=1):
+        text, deadline = "", time.time() + timeout
+        while text.count(phrase) < times:
+            assert time.time() < deadline, f"never heard {phrase!r} {times}x: {text[-900:]}"
+            text += heard(client, phrase, max(1, deadline - time.time()))
+        log.append(text)
+        return text
+
+    def order(to, *legs):
+        return client.tool("commander_order", to=to, legs=list(legs))
+
+    def knock(callsign, how_many=1, leader=False):
+        return in_game(harness, f"""
+        missionNamespace setVariable ["ace_medical_spontaneousWakeUpChance", 0, true];
+        private _group = brmh_cmd_stations get "{callsign}";
+        private _men = (units _group) - [leader _group];
+        if ({str(leader).lower()}) then {{ _men = [leader _group]; }};
+        private _chosen = (_men select {{ lifeState _x isNotEqualTo "INCAPACITATED" }}) select [0, {how_many}];
+        {{ [_x, true, 0, false] call ace_medical_fnc_setUnconscious; }} forEach _chosen;
+        _chosen apply {{ name _x }}
+        """)
+
+    def listed(name):
+        return next(row["id"] for row in client.tool("commander_mission")["casualties"] if row["name"] == name)
+
+    # No medic in the squad: refused aloud.
+    who = knock("Bravo")[0]
+    hear("Listed as C", 40)
+    order("Bravo", {"type": "CARRY", "at": "051 060"})
+    hear("Set ", 150)
+    # The field, at the field's speed, by a medic team on foot.
+    near = in_game(harness, f"""
+    private _man = (units (brmh_cmd_stations get "Bravo")) select {{ name _x isEqualTo "{who}" }} select 0;
+    {{ _x setPosATL ((getPosATL _man) getPos [15 + random 10, random 360]); }}
+        forEach units (brmh_cmd_stations get "Medics");
+    mapGridPosition _man
+    """)
+    print("medics moved next to him at", near, flush=True)
+    time.sleep(3)
+    started = time.time()
+    order("Medics", {"type": "TREAT", "casualties": [listed(who)]})
+    text = hear("'s back up.", 120)
+    took = time.time() - started
+    print(f"FIELD treated in {took:.0f} s", flush=True)
+    assert took >= 20, took  # field_s is 25, and the post was 10
+
+    # Into a medical vehicle, and treated aboard it, faster, without coming off.
+    who = knock("Bravo")[0]
+    hear("Listed as C", 40)
+    order("Bravo", {"type": "CARRY", "casualties": [listed(who)], "vehicle": "V2"})
+    hear("'s loaded.", 200)
+    aboard = in_game(harness, """
+    (crew (brmh_cmd_vehicles get "V2")) apply { [name _x, lifeState _x] }
+    """)
+    print("ABOARD V2", aboard, flush=True)
+    in_game(harness, """
+    {
+        _x setPosATL ((brmh_cmd_vehicles get "V2") getPos [10 + random 5, random 360]);
+    } forEach units (brmh_cmd_stations get "Medics");
+    true
+    """)
+    time.sleep(3)
+    started = time.time()
+    order("Medics", {"type": "TREAT", "casualties": [listed(who)]})
+    hear("'s back up.", 120)
+    took = time.time() - started
+    print(f"MEDICAL VEHICLE treated in {took:.0f} s", flush=True)
+    assert took < 25, took
+    in_game(harness, f"""
+    private _man = (units (brmh_cmd_stations get "Bravo")) select {{ name _x isEqualTo "{who}" }} select 0;
+    if (vehicle _man isNotEqualTo _man) then {{ [_man] call brmh_cmd_fnc_getOff; }};
+    true
+    """)
+
+    # A treated man whose squad's gone joins whoever treated him.
+    lone = in_game(harness, """
+    private _group = brmh_cmd_stations get "Lone";
+    private _men = units _group;
+    { _x setDamage 1; } forEach (_men select [1, 3]);
+    missionNamespace setVariable ["ace_medical_spontaneousWakeUpChance", 0, true];
+    [_men # 0, true, 0, false] call ace_medical_fnc_setUnconscious;
+    { _x setPosATL ((getPosATL (_men # 0)) getPos [15 + random 5, random 360]); }
+        forEach units (brmh_cmd_stations get "Medics");
+    name (_men # 0)
+    """)
+    time.sleep(6)  # only the medics can see him: his squad's gone, and there's nobody to say
+    hear(f"Found {lone} down", 30)
+    order("Medics", {"type": "TREAT"})
+    hear("with us now", 120)
+    state = in_game(harness, """
+    [count units (brmh_cmd_stations get "Medics"), count units (brmh_cmd_stations get "Lone")]
+    """)
+    print("JOINED [medics, lone]", state, flush=True)
+    assert state[0] == 5, state
+
+    # A leader down: command passes, the squad obeys, and it stays with the new man when he wakes.
+    leader = knock("Bravo", leader=True)[0]
+    time.sleep(8)
+    order("Bravo", {"type": "MOVE", "at": "056 060"})
+    hear("Copy, moving", 40)
+    time.sleep(15)
+    in_game(harness, f"""
+    private _man = (units (brmh_cmd_stations get "Bravo")) select {{ name _x isEqualTo "{leader}" }} select 0;
+    [_man] call ace_medical_fnc_fullHeal;
+    true
+    """)
+    time.sleep(10)
+    who_leads = in_game(harness, 'name leader (brmh_cmd_stations get "Bravo")')
+    print("LEADER after waking", leader, who_leads, flush=True)
+    assert who_leads != leader, who_leads
+    hear("Arrived, grid 056 060", 180)
+
+    # A carry while the rest of the squad is moving: the bearer isn't dragged off by the squad's orders.
+    who = knock("Bravo")[0]
+    hear("Listed as C", 40)
+    order("Bravo", {"type": "MOVE", "at": "054 063"})
+    time.sleep(3)
+    order("Bravo", {"type": "CARRY", "casualties": [listed(who)], "at": "056 062"})
+    hear("Set ", 200)
+
+    # Left behind.
+    who = knock("Charlie")[0]
+    hear("Listed as C", 40)
+    order("Charlie", {"type": "MOVE", "at": "065 040"})
+    hear(f"We've left {who}", 120)
+    return log
+
+
 def play_village(client: Client) -> list[str]:
     """Plumbing for the combat scenario: timed attack, repeating check-in, markers, contact reports, an ending."""
     harness = Harness()
@@ -666,6 +921,8 @@ def main() -> None:
                ("fire missions", "fire_check", "hold", play_fire),
                ("fire support", "village_with_mortar", "hold", play_fire_support),
                ("motor march", "motor_march", "hold", play_motor_march),
+               ("casevac plan", "casevac_rv", "hold", play_casevac),
+               ("casevac cases", "casevac_cases", "hold", play_casevac_cases),
                ("combat: take the village", "take_the_village", "hold", play_village, True)]
     wanted = sys.argv[1:]  # words to match in battle names; none means all of them
     try:

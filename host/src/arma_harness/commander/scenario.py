@@ -32,6 +32,7 @@ class Scenario:
     ceiling_s: float = 15.0
     mid_turn_messages: str = HOLD
     objectives: list[dict] = field(default_factory=list)  # {id, text, success}. The battle's won when all are done
+    medical: dict = field(default_factory=dict)  # field_s, facility_s and build_s, over the game's defaults
 
 
 def load(path: str | Path) -> Scenario:
@@ -73,6 +74,7 @@ def build(raw: dict) -> Scenario:
             "callsign": station["callsign"], "role": station["role"], "capabilities": station["capabilities"],
             "at": station["at"], "units": station.get("units", 4), "class": station.get("class", "B_Soldier_F"),
             "spotter": bool(station.get("spotter")), "crew": station.get("crew") or {},
+            "medics": int(station.get("medics") or 0),
         }
     debounce = raw.get("debounce") or {}
     mode = raw.get("mid_turn_messages", HOLD)
@@ -90,7 +92,8 @@ def build(raw: dict) -> Scenario:
                         "units": enemy.get("units", 4), "class": enemy.get("class", "O_Soldier_F"),
                         "mode": enemy.get("mode", "hold"), "radius": enemy.get("radius", 100)})
     vehicles = [{"id": vehicle["id"], "class": vehicle["class"], "at": vehicle["at"],
-                 "known": vehicle.get("known", True), "ammo": vehicle.get("ammo") or {}}
+                 "known": vehicle.get("known", True), "ammo": vehicle.get("ammo") or {},
+                 "medical": bool(vehicle.get("medical"))}
                 for vehicle in raw.get("vehicles") or []]
     ids = {vehicle["id"] for vehicle in vehicles}
     for station in stations.values():
@@ -99,6 +102,7 @@ def build(raw: dict) -> Scenario:
             raise ValueError(f"{station['callsign']}: crew for unknown vehicles {sorted(unknown)}")
     return Scenario(
         objectives=_objectives(raw),
+        medical=raw.get("medical") or {},
         vehicles=vehicles,
         name=raw["name"], mission=raw["mission"], text=raw["text"].strip(),
         time_limit_s=parse_time(raw["time_limit"]), stations=stations, side=raw.get("side", "west"),

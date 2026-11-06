@@ -90,6 +90,12 @@ def start(path: str, mode: str | None = None, harness: Harness | None = None, wa
         _result(h.exec('[_this # 0, [west, east] select (_this # 1 isEqualTo "east"), _this # 2, _this # 3, _this # 4] '
                        "call brmh_cmd_fnc_enroll", "server", timeout=10,
                        args=[station["callsign"], scenario.side, station["units"], station["class"], at]))
+        if station["medics"]:
+            _result(h.exec("_this call brmh_cmd_fnc_makeMedics", "server", timeout=10,
+                           args=[station["callsign"], station["medics"]]))
+    if scenario.medical:
+        _result(h.exec("{brmh_cmd_careTimes set [_x # 0, _x # 1]} forEach _this; true", "server", timeout=10,
+                       args=[[key, value] for key, value in scenario.medical.items()]))
     _spawn_enemies(h, scenario, world_size)
     buildings = _list_buildings(h, scenario, world_size)
     _result(h.exec("brmh_cmd_buildings = createHashMapFromArray _this; true", "server", timeout=10,
@@ -143,6 +149,9 @@ def _spawn_vehicles(h: Harness, scenario: scenario_mod.Scenario, world_size: flo
         ammo = [[word.upper(), rounds] for word, rounds in vehicle["ammo"].items()]
         name = _result(h.exec("_this call brmh_cmd_fnc_spawnVehicle", "server", timeout=10,
                               args=[vehicle["id"], vehicle["class"], at, ammo]))
+        if vehicle["medical"]:
+            code = '(brmh_cmd_vehicles get _this # 0) setVariable ["ace_medical_isMedicalVehicle", true, true]; true'
+            _result(h.exec(code, "server", timeout=10, args=[vehicle["id"]]))
         placed.append({"id": vehicle["id"], "name": name, "at": grid, "known": vehicle["known"]})
     return placed
 

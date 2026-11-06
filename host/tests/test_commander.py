@@ -2072,6 +2072,210 @@ def test_a_limp_reaches_the_radio_through_the_runtime(tmp_path):
     assert "Slow going, Sam Reed's hit in the legs." in radio_words(b)
 
 
+CARE_LIST = {"V1": {"id": "V1", "key": "V1"}, "A1": {"id": "A1", "key": "P1"}}
+HURT = {"C1": {"id": "C1", "key": "m7", "name": "Sam Reed", "pos": [4100, 4100]},
+        "C2": {"id": "C2", "key": "m8", "name": "Ann Cole", "pos": [4110, 4100]}}
+CARERS = {"Alpha": {"capabilities": ["CARRY", "UNLOAD", "TREAT", "AID_POST", "MOVE"]},
+          "Bravo": {"capabilities": ["MOVE"]}}
+
+
+def care(kind="CARRY", to="Alpha", **leg) -> dict:
+    request = {"to": to, "legs": [{"type": kind, **leg}]}
+    return orders.validate(request, CARERS, MARKERS, 8192, BUILDINGS, CARE_LIST, HURT)
+
+
+def test_carry_to_a_vehicle_or_a_place_or_a_post():
+    to_truck = care(casualties=["C1", "C2"], vehicle="V1")
+    assert to_truck["mode"] == "carry"
+    assert to_truck["engine_legs"] == [[[["m7", [4100, 4100]], ["m8", [4110, 4100]]], "V1"]]
+    assert to_truck["words"] == "Copy, carrying Sam Reed and Ann Cole to V1."
+    to_grid = care(casualties=["C1"], at="041 041")
+    assert to_grid["engine_legs"] == [[[["m7", [4100, 4100]]], [4150.0, 4150.0, 0]]]
+    assert care(at="A1")["engine_legs"] == [[[], "P1"]]
+    assert care(at="A1")["words"] == "Copy, carrying our casualties to A1."
+
+
+@pytest.mark.parametrize("kind, leg, words", [
+    ("CARRY", {}, "CARRY needs"),
+    ("CARRY", {"casualties": ["C9"], "vehicle": "V1"}, "aren't"),
+    ("CARRY", {"casualties": "C1", "vehicle": "V1"}, "list of ids"),
+    ("CARRY", {"vehicle": "V9"}, "isn't on it"),
+    ("UNLOAD", {}, "isn't on it"),
+    ("TREAT", {"casualties": ["C9"]}, "aren't"),
+    ("AID_POST", {}, "needs at"),
+])
+def test_bad_orders_about_the_wounded_are_refused(kind, leg, words):
+    with pytest.raises(Invalid, match=words):
+        care(kind, **leg)
+
+
+def test_unload_treat_and_post():
+    assert care("UNLOAD", vehicle="V1")["engine_legs"] == [[[], "V1"]]
+    assert care("UNLOAD", vehicle="V1", casualties=["C2"])["words"] == "Copy, getting Ann Cole off V1."
+    assert care("TREAT", casualties=["C1"])["engine_legs"] == [[[["m7", [4100, 4100]]]]]
+    assert care("TREAT")["words"] == "Copy, treating our casualties."
+    post = care("AID_POST", at="041 041")
+    assert post["mode"] == "post" and post["engine_legs"] == [[[4150.0, 4150.0, 0]]]
+    assert post["words"] == "Copy, setting up an aid post at grid 041 041."
+
+
+def test_they_need_the_capability_and_stand_alone():
+    with pytest.raises(Invalid, match="can't do CARRY"):
+        care(to="Bravo", vehicle="V1")
+    with pytest.raises(Invalid, match="only leg"):
+        orders.validate({"to": "Alpha", "legs": [{"type": "TREAT"}, {"type": "MOVE", "at": "041 041"}]},
+                        CARERS, MARKERS, 8192, [], CARE_LIST, HURT)
+
+
+def down_row(key="m7", name="Sam Reed", x=3080, y=3050, vehicle="", aboard=False, own=True, handled=""):
+    return [key, name, x, y, vehicle, aboard, own, handled]
+
+
+def wounded_battle(tmp_path, **raw) -> Battle:
+    capabilities = ["MOVE", "CARRY", "UNLOAD", "TREAT", "AID_POST"]
+    station = {"callsign": "Alpha", "role": "x", "capabilities": capabilities, "at": "030 030"}
+    b = Battle(tmp_path, stations=[station], **raw)
+    b.start()
+    b.runtime.end_turn("x", messages_only=True)
+    return b
+
+
+def said(b) -> list[str]:
+    return [row["text"] for row in b.records.read("radio") if row["from"] != "HQ"]
+
+
+def test_a_man_going_down_is_reported_and_listed_once(tmp_path):
+    b = wounded_battle(tmp_path)
+    b.advance(102, casualties=[down_row()], alive=3)
+    b.advance(104, casualties=[down_row()], alive=3)
+    assert said(b).count("Sam Reed's down, grid 030 030. Listed as C1.") == 1
+    assert "C1  Sam Reed  Alpha's  grid 030 030" in b.runtime.briefing()
+
+
+def test_going_down_in_a_fight_gives_no_grid(tmp_path):
+    b = wounded_battle(tmp_path)
+    b.advance(102, casualties=[down_row()], contacts=[contact()], suppression=0.5)
+    b.advance(200)
+    assert "Sam Reed's down. Listed as C1." in said(b)
+
+
+def test_getting_up_and_dying_are_different(tmp_path):
+    b = wounded_battle(tmp_path)
+    b.advance(102, casualties=[down_row(), down_row("m8", "Ann Cole", 3090)])
+    b.advance(104, casualties=[down_row("m8", "Ann Cole", 3090)], up=["m7"])
+    assert "Sam Reed's back on their feet." in said(b)
+    b.advance(106, casualties=[])
+    assert "Ann Cole's dead." in said(b)
+    assert "CASUALTIES" not in b.runtime.briefing()
+
+
+def test_going_down_again_is_news(tmp_path):
+    b = wounded_battle(tmp_path)
+    b.advance(102, casualties=[down_row()])
+    b.advance(104, casualties=[], up=["m7"])
+    b.advance(106, casualties=[down_row()])
+    assert said(b).count("Sam Reed's down, grid 030 030. Listed as C1.") == 2  # the same man keeps his id
+
+
+def test_leaving_a_man_behind_is_said_and_then_nothing_is_known(tmp_path):
+    b = wounded_battle(tmp_path)
+    b.advance(102, casualties=[down_row()])
+    b.advance(150, casualties=[down_row()], pos=[3050, 3300])
+    assert "We've left Sam Reed, about 250 m south of us." in said(b)
+    b.advance(152, casualties=[], pos=[3050, 3300])
+    assert "Sam Reed's dead." not in said(b)  # it isn't there to see
+
+
+def test_a_man_on_the_truck_with_them_isnt_left_behind(tmp_path):
+    b = wounded_battle(tmp_path, vehicles=[{"id": "V1", "class": "x", "at": "030 030"}])
+    b.runtime.vehicles = {"V1": {"id": "V1", "key": "V1", "name": "Truck", "at": "030 030", "t": None,
+                                 "wrecked": False}}
+    b.advance(102, casualties=[down_row(vehicle="V1", aboard=True, x=5000)])
+    assert not [words for words in said(b) if "left" in words]
+    assert b.runtime.ask("Alpha", ["casualties"])["replies"][0]["text"] == "C1 Sam Reed, down, on V1."
+
+
+def test_someone_elses_man_is_found_only_if_nobody_had_listed_him(tmp_path):
+    b = wounded_battle(tmp_path)
+    b.advance(102, casualties=[down_row(own=False)])
+    assert "Found Sam Reed down, grid 030 030. Listed as C1." in said(b)
+    b.advance(104, casualties=[down_row(own=False)])
+    assert said(b).count("Found Sam Reed down, grid 030 030. Listed as C1.") == 1
+
+
+def test_strength_and_the_casualties_topic(tmp_path):
+    answer = reports.answer(packet(alive=2, wounded=1, casualties=[
+        {"id": "C1", "name": "Sam Reed", "dx": 40, "dy": 0, "grid": "030 030", "vehicle": "", "own": True, "new": False,
+         "handled": ""},
+        {"id": "C2", "name": "Ann Cole", "dx": 2, "dy": 0, "grid": "030 030", "vehicle": "", "own": False, "new": False,
+         "handled": ""}]), None, ["strength", "casualties"])
+    assert answer.startswith("2 of 4 effective, 1 down, 1 wounded.")
+    assert "C1 Sam Reed, down, about 40 m east. C2 Ann Cole, down, right here." in answer
+    assert reports.answer(packet(), None, ["casualties"]) == "No casualties."
+    assert "casualties" not in reports.answer(packet(), None).lower()
+
+
+def test_orders_use_the_commanders_list_and_leave_the_route_alone(tmp_path):
+    b = wounded_battle(tmp_path)
+    b.runtime.order({"to": "Alpha", "legs": [{"type": "MOVE", "at": "034 030"}]})
+    route = b.runtime.routes["Alpha"]["legs"]
+    b.advance(102, casualties=[down_row()], order="O-0001")
+    b.runtime.order({"to": "Alpha", "legs": [{"type": "CARRY", "casualties": ["C1"], "at": "035 030"}]})
+    assert b.game.calls[-1][1][:4] == ["Alpha", "O-0002", "carry", [[[["m7", [3080, 3050]]], [3550.0, 3050.0, 0]]]]
+    assert b.runtime.routes["Alpha"]["legs"] == route
+    b.advance(104, casualties=[down_row()], order="O-0002")
+    assert "Copy, carrying Sam Reed to grid 035 030." in said(b)
+    with pytest.raises(Invalid, match="aren't"):
+        b.runtime.order({"to": "Alpha", "legs": [{"type": "CARRY", "casualties": ["C2"], "at": "035 030"}]})
+
+
+@pytest.mark.parametrize("kind, state, detail, words", [
+    ("carry", "carrying", "", "Got Sam Reed, on the way."),
+    ("carry", "loaded", "", "Sam Reed's loaded."),
+    ("carry", "he died", "", "Sam Reed's dead."),
+    ("carry", "medic down", "", "Lost the man carrying Sam Reed."),
+    ("carry", "aboard", "V1", "Sam Reed's on V1. Get them off first."),
+    ("unload", "off", "V1", "Sam Reed's off V1."),
+    ("unload", "moving", "V1", "V1 has to stop first."),
+    ("treat", "treating", "", "Treating Sam Reed."),
+    ("treat", "up", "", "Sam Reed's back up."),
+    ("treat", "no medic", "", "Unable, no medic here."),
+    ("treat", "can't find", "", "Can't find Sam Reed."),
+    ("post", "have one", "", "Unable, we've already got a post up."),
+])
+def test_how_each_part_of_it_sounds(tmp_path, kind, state, detail, words):
+    b = wounded_battle(tmp_path)
+    b.runtime.vehicles = {"V1": {"id": "V1", "key": "K1", "name": "Truck", "at": "030 030", "t": None,
+                                 "wrecked": False}}
+    row = ["O-1", kind, "m7", "Sam Reed", state, "K1" if detail else ""]
+    b.advance(102, medical=[row])
+    b.advance(104, medical=[row])
+    assert said(b).count(words) == 1
+
+
+def test_a_post_going_up_joins_the_list(tmp_path):
+    b = wounded_battle(tmp_path)
+    b.advance(102, medical=[["O-1", "post", "post", "", "up", ["P1", "040060"]]])
+    assert "Aid post up, grid 040 060. Listed as A1." in said(b)
+    assert b.runtime.vehicles["A1"]["key"] == "P1"
+    b.runtime.order({"to": "Alpha", "legs": [{"type": "CARRY", "at": "A1"}]})
+    assert b.game.calls[-1][1][3] == [[[], "P1"]]
+
+
+def test_the_downed_dont_count_as_enemy_or_block_the_end(tmp_path):
+    b = Battle(tmp_path, success={"enemy_cleared": True}, enemies=[{"id": "East", "at": "060 060", "units": 2}])
+    b.start()
+    truth(b, 110, {"group": "East", "side": "EAST", "alive": 0, "pos": [], "units": [], "down": [[6050, 6050]]})
+    assert met(b) == ["the enemy has been cleared"]
+
+
+def test_a_medical_scenario_loads():
+    raw = yaml.safe_load((Path(__file__).parents[2] / "scenarios/commander/casevac_rv.yaml").read_text())
+    built = scenario.build(raw)
+    assert built.mission == "commander_ace" and built.stations["Angel"]["medics"] == 2
+    assert built.medical["facility_s"] == 10 and built.objectives[0]["success"]["on_foot"]
+
+
 def in_the_fight(tmp_path) -> Battle:
     b = Battle(tmp_path)
     b.start()

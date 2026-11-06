@@ -30,8 +30,74 @@ if (isNil "brmh_cmd_fireActive") then {
 if (isNil "brmh_cmd_carries") then {
 	brmh_cmd_carries = [];
 };
+if (isNil "brmh_cmd_treats") then {
+	brmh_cmd_treats = [];
+};
+if (isNil "brmh_cmd_builds") then {
+	brmh_cmd_builds = [];
+};
+if (isNil "brmh_cmd_posts") then {
+	brmh_cmd_posts = [];
+};
+if (isNil "brmh_cmd_down") then {
+	brmh_cmd_down = [];
+};
+if (isNil "brmh_cmd_men") then {
+	brmh_cmd_men = createHashMap;
+	brmh_cmd_manCount = 0;
+};
+if (isNil "brmh_cmd_careTimes") then {
+	brmh_cmd_careTimes = createHashMapFromArray [["field_s", 120], ["facility_s", 60], ["build_s", 60]];
+};
+// A leader who wakes takes command back, and his squad runs back to him, wherever it's been sent. So whoever's got it keeps it.
+if (isNil "brmh_cmd_downHandler") then {
+	brmh_cmd_downHandler = ["ace_unconscious", {
+		params ["_unit", "_down"];
+		if (_down) then {
+			brmh_cmd_down pushBackUnique _unit;
+		} else {
+			brmh_cmd_down = brmh_cmd_down - [_unit];
+			private _group = group _unit;
+			private _acting = _group getVariable ["brmh_cmd_acting", objNull];
+			if (not isNull _acting and {
+				_acting isNotEqualTo _unit
+			}) then {
+				{
+					[{
+						params ["_group", "_acting"];
+						if ([_acting] call brmh_cmd_fnc_able and {
+							group _acting isEqualTo _group
+						}) then {
+							_group selectLeader _acting;
+						};
+					}, [_group, _acting], _x] call CBA_fnc_waitAndExecute;
+				} forEach [0.2, 1, 3];
+			};
+		};
+	}] call CBA_fnc_addEventHandler;
+};
 brmh_cmd_sightTurn = 0;
 brmh_cmd_nextTruth = 0;
+
+// Who can do anything. Under ACE a downed man is alive, and stays in his group, lying where he fell.
+brmh_cmd_fnc_able = {
+	params ["_man"];
+	alive _man and {
+		lifeState _man isNotEqualTo "INCAPACITATED"
+	}
+};
+
+brmh_cmd_fnc_manKey = {
+	params ["_man"];
+	private _key = _man getVariable ["brmh_cmd_man", ""];
+	if (_key isEqualTo "") then {
+		brmh_cmd_manCount = brmh_cmd_manCount + 1;
+		_key = format ["m%1", brmh_cmd_manCount];
+		_man setVariable ["brmh_cmd_man", _key];
+		brmh_cmd_men set [_key, _man];
+	};
+	_key
+};
 
 brmh_cmd_fnc_rounds = {
 	params ["_unit"];
@@ -133,7 +199,7 @@ brmh_cmd_fnc_canSee = {
 brmh_cmd_fnc_sightings = {
 	params ["_group"];
 	private _alive = (units _group) select {
-		alive _x
+		[_x] call brmh_cmd_fnc_able
 	};
 	if (_alive isEqualTo []) exitWith {};
 	private _lookers = _alive select [0, 4];
@@ -258,15 +324,22 @@ brmh_cmd_fnc_startMount = {
 	// The newest first, and the leader last: a leader on a gun stays there and holds the squad with him.
 	private _newestFirst = +(units _group);
 	reverse _newestFirst;
+	// Not a man carrying someone, or one who's too far off to be part of this.
 	private _free = _newestFirst select {
-		alive _x and {
+		[_x] call brmh_cmd_fnc_able and {
 			_x isNotEqualTo _leader
 		} and {
 			vehicle _x isEqualTo _x
+		} and {
+			not (_x getVariable ["brmh_cmd_busy", false])
+		} and {
+			(_x distance2D _vehicle) < 500
 		}
 	};
-	if (alive _leader and {
+	if ([_leader] call brmh_cmd_fnc_able and {
 		vehicle _leader isEqualTo _leader
+	} and {
+		not (_leader getVariable ["brmh_cmd_busy", false])
 	}) then {
 		_free pushBack _leader;
 	};
@@ -408,7 +481,7 @@ brmh_cmd_fnc_startDismount = {
 	params ["_group", "_key"];
 	_group setVariable ["brmh_cmd_mountList", []];
 	private _men = (units _group) select {
-		alive _x and {
+		[_x] call brmh_cmd_fnc_able and {
 			vehicle _x isNotEqualTo _x
 		} and {
 			_key isEqualTo "" or {
@@ -430,7 +503,7 @@ brmh_cmd_fnc_stepDismount = {
 	private _status = _group getVariable ["brmh_cmd_mount", []];
 	if ((_status param [1, ""]) isNotEqualTo "going off") exitWith {};
 	private _still = (units _group) select {
-		alive _x and {
+		[_x] call brmh_cmd_fnc_able and {
 			vehicle _x isNotEqualTo _x
 		} and {
 			(_status # 0) isEqualTo "" or {
@@ -489,20 +562,43 @@ brmh_cmd_fnc_crew = {
 	true
 };
 
+// Who a squad knows is down: its own, wherever they are, and anyone else's within sight of its leader.
+brmh_cmd_fnc_casualties = {
+	params ["_group", "_leader"];
+	private _down = (units _group) select {
+		alive _x and {
+			not ([_x] call brmh_cmd_fnc_able)
+		}
+	};
+	private _others = brmh_cmd_down select {
+		alive _x and {
+			group _x isNotEqualTo _group
+		} and {
+			(_x distance2D _leader) < 30
+		}
+	};
+	(_down + _others) apply {
+		private _position = getPosATL _x;
+		[[_x] call brmh_cmd_fnc_manKey, name _x, _position # 0, _position # 1, (vehicle _x) getVariable ["brmh_cmd_key", ""],
+		 vehicle _x isNotEqualTo _x, group _x isEqualTo _group, _x getVariable ["brmh_cmd_handled", ""]]
+	}
+};
+
 brmh_cmd_fnc_packet = {
 	params ["_callsign", "_group"];
 	private _alive = (units _group) select {
-		alive _x
+		[_x] call brmh_cmd_fnc_able
 	};
 	if (_alive isEqualTo []) exitWith {
 		nil
 	};
-	// For several seconds after a leader dies, leader still returns the body.
-	private _leader = if (alive leader _group) then {
+	// For several seconds after a leader dies, leader still returns the body. A downed one takes a moment to pass it on too.
+	private _leader = if ([leader _group] call brmh_cmd_fnc_able) then {
 		leader _group
 	} else {
 		_alive # 0
 	};
+	_group setVariable ["brmh_cmd_acting", _leader];
 	private _rounds = 0;
 	{
 		_rounds = _rounds + ([_x] call brmh_cmd_fnc_rounds);
@@ -551,6 +647,11 @@ brmh_cmd_fnc_packet = {
 			[_x getVariable ["brmh_cmd_key", ""], [_x] call brmh_cmd_fnc_gunAmmo]
 		}],
 		["placed", _group getVariable ["brmh_cmd_placed", -1]],
+		["casualties", [_group, _leader] call brmh_cmd_fnc_casualties],
+		["up", _alive apply {
+			[_x] call brmh_cmd_fnc_manKey
+		}],
+		["medical", _group getVariable ["brmh_cmd_care", []]],
 		["contacts", [_leader] call brmh_cmd_fnc_contacts]
 	]
 };
@@ -560,12 +661,20 @@ brmh_cmd_fnc_truth = {
 		side _x in [west, east, independent]
 	}) apply {
 		private _alive = (units _x) select {
-			alive _x
+			[_x] call brmh_cmd_fnc_able
 		};
 		createHashMapFromArray [
 			["group", groupId _x],
 			["side", str side _x],
 			["alive", count _alive],
+			["down", ((units _x) select {
+				alive _x and {
+					not ([_x] call brmh_cmd_fnc_able)
+				}
+			}) apply {
+				private _position = getPosATL _x;
+				[round (_position # 0), round (_position # 1)]
+			}],
 			["mounted", {
 				vehicle _x isNotEqualTo _x
 			} count _alive],
@@ -642,7 +751,7 @@ brmh_cmd_fnc_stepClearing = {
 			};
 		};
 	} forEach ((units _group) select {
-		alive _x
+		[_x] call brmh_cmd_fnc_able
 	});
 	if (_spots isEqualTo [] and {
 		_busy isEqualTo 0
@@ -693,14 +802,14 @@ brmh_cmd_fnc_startPlacing = {
 			_x doMove (_spots # (_forEachIndex mod _count));
 		};
 	} forEach ((units _group) select {
-		alive _x
+		[_x] call brmh_cmd_fnc_able
 	});
 };
 
 brmh_cmd_fnc_stepPlacing = {
 	params ["_group"];
 	private _soldiers = (units _group) select {
-		alive _x
+		[_x] call brmh_cmd_fnc_able
 	};
 	private _waiting = {
 		not unitReady _x
@@ -769,6 +878,8 @@ brmh_cmd_fnc_step = {
 			} forEach units _y;
 		};
 	} forEach brmh_cmd_stations;
+	call brmh_cmd_fnc_stepTreats;
+	call brmh_cmd_fnc_stepBuilds;
 	// One squad per step looks around, so nobody's sight checks pile up.
 	private _names = keys brmh_cmd_stations;
 	if (_names isNotEqualTo []) then {
@@ -873,6 +984,10 @@ brmh_cmd_fnc_order = {
 		[_group, _order, _legs # 0 # 0] call brmh_cmd_fnc_checkFire;
 		true
 	};
+	if (_mode in ["carry", "unload", "treat", "post"]) exitWith {
+		([_group, _order] + (_legs # 0)) call (missionNamespace getVariable format ["brmh_cmd_fnc_%1Order", _mode]);
+		true
+	};
 	if (_mode isNotEqualTo "posture") then {
 		_group setVariable ["brmh_cmd_clearQueue", nil];
 		_group setVariable ["brmh_cmd_clearLeft", -1];
@@ -931,8 +1046,12 @@ brmh_cmd_fnc_order = {
 		not (vehicle (leader _group) isKindOf "StaticWeapon")
 	};
 	{
-		if (not _riding or {
-			vehicle _x isEqualTo _x
+		if ([_x] call brmh_cmd_fnc_able and {
+			not (_x getVariable ["brmh_cmd_busy", false])
+		} and {
+			not _riding or {
+				vehicle _x isEqualTo _x
+			}
 		}) then {
 			_x doFollow leader _group;
 		};
@@ -951,7 +1070,7 @@ brmh_cmd_fnc_order = {
 		};
 		if (_type isEqualTo "CORDON") then {
 			private _count = ({
-				alive _x
+				[_x] call brmh_cmd_fnc_able
 			} count units _group) max 1;
 			private _ring = [];
 			for "_i" from 0 to (_count - 1) do {
@@ -1173,7 +1292,7 @@ brmh_cmd_fnc_whoHeard = {
 	private _rows = [];
 	{
 		private _alive = (units _y) select {
-			alive _x
+			[_x] call brmh_cmd_fnc_able
 		};
 		if (_alive isNotEqualTo []) then {
 			private _near = [_alive, [], {
@@ -1249,11 +1368,13 @@ brmh_cmd_fnc_carryPose = {
 	ENVIRONMENT: Server
 */
 brmh_cmd_fnc_startCarry = {
-	params ["_medic", "_casualty", "_to"];
-	private _carry = createHashMapFromArray [["medic", _medic], ["casualty", _casualty], ["to", _to], ["state", "going"], ["since", time], ["tries", 0], ["result", ""], ["moved", time], ["last", getPosATL _medic]];
+	params ["_medic", "_casualty", "_to", ["_group", grpNull], ["_order", ""]];
+	private _carry = createHashMapFromArray [["group", _group], ["order", _order], ["medic", _medic], ["casualty", _casualty], ["to", _to], ["state", "going"], ["since", time], ["tries", 0], ["result", ""], ["moved", time], ["last", getPosATL _medic]];
 	{
 		_x forceSpeed -1;
 	} forEach [_medic, _casualty];
+	_medic setVariable ["brmh_cmd_busy", true];
+	_casualty setVariable ["brmh_cmd_handled", "carried"];
 	[_carry] call brmh_cmd_fnc_carryApproach;
 	brmh_cmd_carries pushBack _carry;
 	if (isNil "brmh_cmd_carryPfh") then {
@@ -1393,11 +1514,14 @@ brmh_cmd_fnc_carryFinish = {
 	params ["_carry", "_result"];
 	private _medic = _carry get "medic";
 	[_carry] call brmh_cmd_fnc_carryRelease;
-	if (alive _medic) then {
+	if ([_medic] call brmh_cmd_fnc_able) then {
 		_medic doFollow leader group _medic;
 	};
+	_medic setVariable ["brmh_cmd_busy", nil];
+	(_carry get "casualty") setVariable ["brmh_cmd_handled", nil];
 	_carry set ["state", "done"];
 	_carry set ["result", _result];
+	[_carry get "group", _carry get "order", "carry", _carry get "casualty", _result] call brmh_cmd_fnc_careSay;
 };
 
 // A vehicle, or the place. The man's either loaded, or laid down there.
@@ -1408,7 +1532,7 @@ brmh_cmd_fnc_carryDeliver = {
 	private _medic = _carry get "medic";
 	[_carry] call brmh_cmd_fnc_carryRelease;
 	if (_to isEqualType objNull) then {
-		[_medic, _casualty, _to] call ace_common_fnc_loadPerson;
+		[_casualty, _to] call brmh_cmd_fnc_loadMan;
 		_carry set ["state", "loading"];
 		_carry set ["since", time];
 		_carry set ["how", _how];
@@ -1485,6 +1609,7 @@ brmh_cmd_fnc_stepCarries = {
 					[_carry] call brmh_cmd_fnc_carryLift;
 					_carry set ["state", "carrying"];
 					_carry set ["since", time];
+					[_carry get "group", _carry get "order", "carry", _casualty, "carrying"] call brmh_cmd_fnc_careSay;
 				};
 			};
 			case (_state isEqualTo "carrying"): {
@@ -1536,6 +1661,625 @@ brmh_cmd_fnc_stepCarries = {
 	}) then {
 		[brmh_cmd_carryPfh] call CBA_fnc_removePerFrameHandler;
 		brmh_cmd_carryPfh = nil;
+	};
+};
+
+// A radio line for the host to word. One row for each man, job and order, whatever its latest state is.
+brmh_cmd_fnc_careSay = {
+	params ["_group", "_order", "_kind", "_man", "_state", ["_detail", ""]];
+	if (isNull _group) exitWith {};
+	private _key = if (_man isEqualType objNull) then {
+		if (isNull _man) then {
+			""
+		} else {
+			[_man] call brmh_cmd_fnc_manKey
+		}
+	} else {
+		_man
+	};
+	private _name = if (_man isEqualType objNull and {
+		not isNull _man
+	}) then {
+		name _man
+	} else {
+		""
+	};
+	private _rows = _group getVariable ["brmh_cmd_care", []];
+	private _at = _rows findIf {
+		(_x # 0) isEqualTo _order and {
+			(_x # 1) isEqualTo _kind
+		} and {
+			(_x # 2) isEqualTo _key
+		}
+	};
+	private _row = [_order, _kind, _key, _name, _state, _detail];
+	if (_at < 0) then {
+		_rows pushBack _row;
+	} else {
+		_rows set [_at, _row];
+	};
+	_group setVariable ["brmh_cmd_care", _rows select [(count _rows - 40) max 0, 40]];
+};
+
+// ACE's own loading moves a man to a new group if the vehicle is empty, and he'd vanish from his squad until unloaded.
+brmh_cmd_fnc_loadMan = {
+	params ["_man", "_vehicle"];
+	private _seats = (fullCrew [_vehicle, "cargo", true]) select {
+		isNull (_x # 0)
+	};
+	if (_seats isEqualTo []) exitWith {
+		false
+	};
+	_man assignAsCargoIndex [_vehicle, _seats # 0 # 2];
+	_man moveInCargo [_vehicle, _seats # 0 # 2];
+	true
+};
+
+brmh_cmd_fnc_targets = {
+	params ["_rows"];
+	(_rows apply {
+		brmh_cmd_men getOrDefault [_x # 0, objNull]
+	}) select {
+		not isNull _x
+	}
+};
+
+/*
+	NAME: brmh_cmd_fnc_carryOrder
+	DESCRIPTION: A squad's free men each pick up a downed man, and carry him to a place or into a vehicle. The rest of the
+		squad carries on with its orders. With no list, it's everyone down within 100 m.
+	PARAMETERS:
+		0 - Group (GROUP)
+		1 - Order id (STRING)
+		2 - Who: [[man key, place], ...] (ARRAY)
+		3 - To: a position, or a vehicle's key (ARRAY or STRING)
+	ENVIRONMENT: Server
+*/
+brmh_cmd_fnc_carryOrder = {
+	params ["_group", "_order", "_who", "_to"];
+	private _target = if (_to isEqualType "") then {
+		brmh_cmd_vehicles getOrDefault [_to, objNull]
+	} else {
+		_to
+	};
+	if (_target isEqualType objNull and {
+		isNull _target or {
+			not alive _target
+		}
+	}) exitWith {
+		[_group, _order, "carry", objNull, "wrecked", _to] call brmh_cmd_fnc_careSay;
+	};
+	// A post isn't something to get into: it's somewhere to put him down.
+	if (_target isEqualType objNull and {
+		_target in brmh_cmd_posts
+	}) then {
+		_target = getPosATL _target;
+	};
+	private _men = [_who] call brmh_cmd_fnc_targets;
+	if (_who isEqualTo []) then {
+		_men = (brmh_cmd_down + ((units _group) select {
+			alive _x and {
+				not ([_x] call brmh_cmd_fnc_able)
+			}
+		})) arrayIntersect (brmh_cmd_down + units _group);
+		_men = _men select {
+			(_x distance2D leader _group) < 100
+		};
+	};
+	if (_men isEqualTo []) exitWith {
+		[_group, _order, "carry", objNull, "nobody down"] call brmh_cmd_fnc_careSay;
+	};
+	private _bearers = (units _group) select {
+		[_x] call brmh_cmd_fnc_able and {
+			vehicle _x isEqualTo _x
+		} and {
+			not (_x getVariable ["brmh_cmd_busy", false])
+		}
+	};
+	{
+		private _man = _x;
+		switch (true) do {
+			case (not alive _man): {
+				[_group, _order, "carry", _man, "he died"] call brmh_cmd_fnc_careSay;
+			};
+			case ([_man] call brmh_cmd_fnc_able): {
+				[_group, _order, "carry", _man, "he woke"] call brmh_cmd_fnc_careSay;
+			};
+			case (vehicle _man isNotEqualTo _man): {
+				[_group, _order, "carry", _man, "aboard", (vehicle _man) getVariable ["brmh_cmd_key", ""]] call brmh_cmd_fnc_careSay;
+			};
+			case ((_man getVariable ["brmh_cmd_handled", ""]) isNotEqualTo ""): {
+				[_group, _order, "carry", _man, "already"] call brmh_cmd_fnc_careSay;
+			};
+			case (_bearers isEqualTo []): {
+				[_group, _order, "carry", _man, "no bearer"] call brmh_cmd_fnc_careSay;
+			};
+			default {
+				private _nearest = [_bearers, [_man], {
+					// The leader last: the squad's orders go through him.
+					(_x distance _input0) + ([0, 1000] select (_x isEqualTo leader group _x))
+				}] call BIS_fnc_sortBy;
+				private _bearer = _nearest # 0;
+				_bearers = _bearers - [_bearer];
+				[_group, _order, "carry", _man, "going"] call brmh_cmd_fnc_careSay;
+				[_bearer, _man, _target, _group, _order] call brmh_cmd_fnc_startCarry;
+			};
+		};
+	} forEach _men;
+};
+
+/*
+	NAME: brmh_cmd_fnc_unloadOrder
+	DESCRIPTION: Takes downed men out of a stopped vehicle, by a squad that has someone there.
+	PARAMETERS:
+		0 - Group (GROUP)
+		1 - Order id (STRING)
+		2 - Who: [[man key, place], ...], or nobody for all of them (ARRAY)
+		3 - Vehicle's key (STRING)
+	ENVIRONMENT: Server
+*/
+brmh_cmd_fnc_unloadOrder = {
+	params ["_group", "_order", "_who", "_key"];
+	private _vehicle = brmh_cmd_vehicles getOrDefault [_key, objNull];
+	if (isNull _vehicle or {
+		not alive _vehicle
+	}) exitWith {
+		[_group, _order, "unload", objNull, "wrecked", _key] call brmh_cmd_fnc_careSay;
+	};
+	if ((abs speed _vehicle) > 1) exitWith {
+		[_group, _order, "unload", objNull, "moving", _key] call brmh_cmd_fnc_careSay;
+	};
+	if (((units _group) findIf {
+		[_x] call brmh_cmd_fnc_able and {
+			(_x distance2D _vehicle) < 25
+		}
+	}) < 0) exitWith {
+		[_group, _order, "unload", objNull, "nobody there", _key] call brmh_cmd_fnc_careSay;
+	};
+	private _aboard = (crew _vehicle) select {
+		alive _x and {
+			not ([_x] call brmh_cmd_fnc_able)
+		}
+	};
+	private _men = if (_who isEqualTo []) then {
+		_aboard
+	} else {
+		[_who] call brmh_cmd_fnc_targets
+	};
+	if (_men isEqualTo []) exitWith {
+		[_group, _order, "unload", objNull, "nobody aboard", _key] call brmh_cmd_fnc_careSay;
+	};
+	{
+		if (_x in _aboard) then {
+			[_x] call ace_common_fnc_unloadPerson;
+			[{
+				params ["_man", "_group", "_order", "_key"];
+				if (alive _man and {
+					not ([_man] call brmh_cmd_fnc_able)
+				}) then {
+					[_man, "UnconsciousReviveDefault"] call brmh_cmd_fnc_carryPose;
+				};
+				[_group, _order, "unload", _man, ["stuck", "off"] select (vehicle _man isEqualTo _man), _key] call brmh_cmd_fnc_careSay;
+			}, [_x, _group, _order, _key], 3] call CBA_fnc_waitAndExecute;
+		} else {
+			[_group, _order, "unload", _x, "not aboard", _key] call brmh_cmd_fnc_careSay;
+		};
+	} forEach _men;
+};
+
+// A medical vehicle or an aid post close enough to make a difference. ACE itself makes no treatment faster for being in one.
+brmh_cmd_fnc_atFacility = {
+	params ["_man"];
+	private _inside = vehicle _man;
+	if (_inside isNotEqualTo _man and {
+		[_inside] call brmh_cmd_fnc_isMedicalVehicle
+	}) exitWith {
+		true
+	};
+	(brmh_cmd_posts findIf {
+		alive _x and {
+			(_x distance2D _man) < 30
+		}
+	}) >= 0 or {
+		(((_man nearEntities [["Car", "Tank", "Air"], 15]) findIf {
+			alive _x and {
+				[_x] call brmh_cmd_fnc_isMedicalVehicle
+			}
+		}) >= 0)
+	}
+};
+
+brmh_cmd_fnc_isMedicalVehicle = {
+	params ["_vehicle"];
+	_vehicle getVariable ["ace_medical_isMedicalVehicle", getNumber (configOf _vehicle >> "attendant") > 0]
+};
+
+brmh_cmd_fnc_isMedic = {
+	params ["_man"];
+	(_man getVariable ["ace_medical_medicClass", parseNumber (_man getUnitTrait "medic")]) > 0
+};
+
+/*
+	NAME: brmh_cmd_fnc_treatOrder
+	DESCRIPTION: A station's medics go to downed men, one at a time each, and treat them. The time depends on where the man
+		is: see brmh_cmd_careTimes. Early on it stops him dying, and at the end he gets up.
+	PARAMETERS:
+		0 - Group (GROUP)
+		1 - Order id (STRING)
+		2 - Who: [[man key, place], ...], or nobody for everyone down within 100 m (ARRAY)
+	ENVIRONMENT: Server
+*/
+brmh_cmd_fnc_treatOrder = {
+	params ["_group", "_order", "_who"];
+	private _medics = (units _group) select {
+		[_x] call brmh_cmd_fnc_able and {
+			[_x] call brmh_cmd_fnc_isMedic
+		}
+	};
+	if (_medics isEqualTo []) exitWith {
+		[_group, _order, "treat", objNull, "no medic"] call brmh_cmd_fnc_careSay;
+	};
+	private _men = [_who] call brmh_cmd_fnc_targets;
+	if (_who isEqualTo []) then {
+		_men = brmh_cmd_down select {
+			alive _x and {
+				(_x distance2D leader _group) < 100
+			}
+		};
+	};
+	if (_men isEqualTo []) exitWith {
+		[_group, _order, "treat", objNull, "nobody down"] call brmh_cmd_fnc_careSay;
+	};
+	private _queue = [];
+	{
+		private _man = _x;
+		private _places = _who select {
+			(_x # 0) isEqualTo ([_man] call brmh_cmd_fnc_manKey)
+		};
+		switch (true) do {
+			case (not alive _man): {
+				[_group, _order, "treat", _man, "he died"] call brmh_cmd_fnc_careSay;
+			};
+			case ([_man] call brmh_cmd_fnc_able): {
+				[_group, _order, "treat", _man, "up"] call brmh_cmd_fnc_careSay;
+			};
+			case (vehicle _man isNotEqualTo _man and {
+				not ([vehicle _man] call brmh_cmd_fnc_isMedicalVehicle)
+			}): {
+				[_group, _order, "treat", _man, "aboard", (vehicle _man) getVariable ["brmh_cmd_key", ""]] call brmh_cmd_fnc_careSay;
+			};
+			// Sent to where he was last reported. If he isn't anywhere near it, they won't find him.
+			case (_places isNotEqualTo [] and {
+				(_man distance2D ((_places # 0) # 1)) > 150
+			}): {
+				[_group, _order, "treat", _man, "can't find"] call brmh_cmd_fnc_careSay;
+			};
+			default {
+				_queue pushBack _man;
+			};
+		};
+	} forEach _men;
+	if (_queue isEqualTo []) exitWith {};
+	brmh_cmd_treats pushBack (createHashMapFromArray [["group", _group], ["order", _order], ["queue", _queue], ["jobs", []]]);
+};
+
+brmh_cmd_fnc_stepTreats = {
+	{
+		private _treat = _x;
+		private _group = _treat get "group";
+		private _order = _treat get "order";
+		private _queue = _treat get "queue";
+		// A finished job frees a medic for the next man in the queue.
+		private _jobs = (_treat get "jobs") select {
+			private _job = _x;
+			private _medic = _job get "medic";
+			private _man = _job get "casualty";
+			private _left = true;
+			switch (true) do {
+				case (not ([_medic] call brmh_cmd_fnc_able)): {
+					[_group, _order, "treat", _man, "medic down"] call brmh_cmd_fnc_careSay;
+					[_job] call brmh_cmd_fnc_treatRelease;
+					_queue pushBack _man;
+					_left = false;
+				};
+				case (not alive _man): {
+					[_group, _order, "treat", _man, "he died"] call brmh_cmd_fnc_careSay;
+					[_job] call brmh_cmd_fnc_treatRelease;
+					_left = false;
+				};
+				case ((_job get "state") isEqualTo "going"): {
+					_left = [_job, _group, _order] call brmh_cmd_fnc_treatGo;
+				};
+				default {
+					_left = [_job, _group, _order] call brmh_cmd_fnc_treatWork;
+				};
+			};
+			_left
+		};
+		_treat set ["jobs", _jobs];
+		private _free = (units _group) select {
+			[_x] call brmh_cmd_fnc_able and {
+				[_x] call brmh_cmd_fnc_isMedic
+			} and {
+				not (_x getVariable ["brmh_cmd_busy", false])
+			}
+		};
+		_queue = _queue select {
+			alive _x and {
+				not ([_x] call brmh_cmd_fnc_able)
+			}
+		};
+		while {
+			_free isNotEqualTo [] and {
+				_queue isNotEqualTo []
+			}
+		} do {
+			private _medic = _free deleteAt 0;
+			private _man = _queue deleteAt 0;
+			private _job = createHashMapFromArray [["medic", _medic], ["casualty", _man], ["state", "going"], ["tries", 0], ["last", getPosATL _medic], ["moved", time], ["ordered", time], ["since", time]];
+			_medic setVariable ["brmh_cmd_busy", true];
+			_man setVariable ["brmh_cmd_handled", "treated"];
+			if (vehicle _medic isNotEqualTo _medic) then {
+				[_medic] call brmh_cmd_fnc_getOff;
+			};
+			[_job] call brmh_cmd_fnc_treatApproach;
+			_jobs pushBack _job;
+			[_group, _order, "treat", _man, "going"] call brmh_cmd_fnc_careSay;
+		};
+		_treat set ["queue", _queue];
+		_treat set ["jobs", _jobs];
+	} forEach brmh_cmd_treats;
+	brmh_cmd_treats = brmh_cmd_treats select {
+		(_x get "jobs") isNotEqualTo [] or {
+			(_x get "queue") isNotEqualTo []
+		}
+	};
+};
+
+brmh_cmd_fnc_treatRelease = {
+	params ["_job"];
+	private _medic = _job get "medic";
+	_medic setVariable ["brmh_cmd_busy", nil];
+	(_job get "casualty") setVariable ["brmh_cmd_handled", nil];
+	if ([_medic] call brmh_cmd_fnc_able) then {
+		_medic enableAI "ANIM";
+		[_medic, "AmovPknlMstpSrasWrflDnon"] call brmh_cmd_fnc_carryPose;
+		_medic doFollow leader group _medic;
+	};
+};
+
+brmh_cmd_fnc_treatApproach = {
+	params ["_job"];
+	private _man = _job get "casualty";
+	private _medic = _job get "medic";
+	private _tries = _job get "tries";
+	if (vehicle _man isNotEqualTo _man) exitWith {
+		_medic doMove ((vehicle _man) getPos [4, random 360]);
+		_job set ["tries", _tries + 1];
+		_job set ["ordered", time];
+		_job set ["moved", time];
+		_tries < 4
+	};
+	private _spots = [_man, getPosATL _medic] call brmh_cmd_fnc_nearBody;
+	if (_tries >= count _spots) exitWith {
+		false
+	};
+	_medic doMove (_spots # _tries);
+	_job set ["tries", _tries + 1];
+	_job set ["ordered", time];
+	_job set ["moved", time];
+	true
+};
+
+// True while he's still getting there, or starts working.
+brmh_cmd_fnc_treatGo = {
+	params ["_job", "_group", "_order"];
+	private _medic = _job get "medic";
+	private _man = _job get "casualty";
+	private _away = _medic distance (vehicle _man);
+	private _aboard = vehicle _man isNotEqualTo _man;
+	private _ready = unitReady _medic and {
+		(time - (_job get "ordered")) >= 3
+	};
+	if (_away <= ([3, 8] select _aboard) or {
+		_ready and {
+			_away <= 8
+		}
+	}) exitWith {
+		[_job, _group, _order] call brmh_cmd_fnc_treatStart;
+		true
+	};
+	if (not _aboard and {
+		_ready
+	} and {
+		_away <= 35
+	}) exitWith {
+		// As with a carry: as close as he can get. He works for a while, and the man is then with him.
+		_man setPosATL (_medic getPos [1.2, getDir _medic]);
+		[_man, "UnconsciousReviveDefault"] call brmh_cmd_fnc_carryPose;
+		[_job, _group, _order] call brmh_cmd_fnc_treatStart;
+		true
+	};
+	if ((_medic distance2D (_job get "last")) >= 1) then {
+		_job set ["last", getPosATL _medic];
+		_job set ["moved", time];
+	};
+	if (_ready or {
+		(time - (_job get "moved")) >= 20
+	}) exitWith {
+		if ([_job] call brmh_cmd_fnc_treatApproach) then {
+			true
+		} else {
+			[_group, _order, "treat", _man, "can't reach"] call brmh_cmd_fnc_careSay;
+			[_job] call brmh_cmd_fnc_treatRelease;
+			false
+		}
+	};
+	true
+};
+
+brmh_cmd_fnc_treatStart = {
+	params ["_job", "_group", "_order"];
+	private _medic = _job get "medic";
+	private _man = _job get "casualty";
+	private _fast = [_man] call brmh_cmd_fnc_atFacility;
+	private _need = brmh_cmd_careTimes get (["field_s", "facility_s"] select _fast);
+	doStop _medic;
+	_medic setDir (_medic getDir _man);
+	_medic disableAI "ANIM";
+	[_medic, "AinvPknlMstpSlayWrflDnon_medicOther"] call brmh_cmd_fnc_carryPose;
+	_job set ["state", "working"];
+	_job set ["since", time];
+	_job set ["need", _need];
+	_job set ["stable", false];
+	_job set ["anim", time];
+	[_group, _order, "treat", _man, "treating", ["field", "facility"] select _fast] call brmh_cmd_fnc_careSay;
+};
+
+// False when it's over.
+brmh_cmd_fnc_treatWork = {
+	params ["_job", "_group", "_order"];
+	private _medic = _job get "medic";
+	private _man = _job get "casualty";
+	private _in = time - (_job get "since");
+	private _need = _job get "need";
+	if ([_man] call brmh_cmd_fnc_able) exitWith {
+		[_group, _order, "treat", _man, "up"] call brmh_cmd_fnc_careSay;
+		[_job] call brmh_cmd_fnc_treatRelease;
+		false
+	};
+	if (_in >= _need) exitWith {
+		[_man] call ace_medical_fnc_fullHeal;
+		[_man, _group] call brmh_cmd_fnc_treated;
+		[_group, _order, "treat", _man, "up"] call brmh_cmd_fnc_careSay;
+		[_job] call brmh_cmd_fnc_treatRelease;
+		false
+	};
+	// He stops getting worse once they've got to work on him. It's the same as ACE's own treatments, without the items.
+	if (not (_job get "stable") and {
+		_in >= (5 min (_need / 2))
+	}) then {
+		_job set ["stable", true];
+		_man setVariable ["ace_medical_openWounds", createHashMap, true];
+		_man setVariable ["ace_medical_woundBleeding", 0, true];
+		_man setVariable ["ace_medical_bloodVolume", (_man getVariable ["ace_medical_bloodVolume", 6]) max 4.5, true];
+		if (_man getVariable ["ace_medical_inCardiacArrest", false]) then {
+			["ace_medical_CPRSucceeded", _man] call CBA_fnc_localEvent;
+		};
+	};
+	if ((time - (_job get "anim")) >= 8) then {
+		_job set ["anim", time];
+		[_medic, "AinvPknlMstpSlayWrflDnon_medicOther"] call brmh_cmd_fnc_carryPose;
+	};
+	true
+};
+
+// If he's nobody left to go back to, he stays with whoever saved him.
+brmh_cmd_fnc_treated = {
+	params ["_man", "_rescuers"];
+	private _home = group _man;
+	if (_home isEqualTo _rescuers) exitWith {};
+	if ((((units _home) - [_man]) findIf {
+		[_x] call brmh_cmd_fnc_able
+	}) < 0) then {
+		[_man] joinSilent _rescuers;
+		_rescuers setVariable ["brmh_cmd_baseline", (_rescuers getVariable ["brmh_cmd_baseline", 0]) + 1];
+		[_rescuers, "", "joined", _man, "joined"] call brmh_cmd_fnc_careSay;
+	};
+};
+
+/*
+	NAME: brmh_cmd_fnc_postOrder
+	DESCRIPTION: A medic goes to a place and sets up an aid post, a real tent that can be destroyed. One per station.
+	PARAMETERS:
+		0 - Group (GROUP)
+		1 - Order id (STRING)
+		2 - Position (ARRAY)
+	ENVIRONMENT: Server
+*/
+brmh_cmd_fnc_postOrder = {
+	params ["_group", "_order", "_at"];
+	if (alive (_group getVariable ["brmh_cmd_post", objNull])) exitWith {
+		[_group, _order, "post", "post", "have one"] call brmh_cmd_fnc_careSay;
+	};
+	private _medics = (units _group) select {
+		[_x] call brmh_cmd_fnc_able and {
+			[_x] call brmh_cmd_fnc_isMedic
+		} and {
+			not (_x getVariable ["brmh_cmd_busy", false])
+		}
+	};
+	if (_medics isEqualTo []) exitWith {
+		[_group, _order, "post", "post", "no medic"] call brmh_cmd_fnc_careSay;
+	};
+	private _medic = _medics # 0;
+	_medic setVariable ["brmh_cmd_busy", true];
+	if (vehicle _medic isNotEqualTo _medic) then {
+		[_medic] call brmh_cmd_fnc_getOff;
+	};
+	_medic doMove _at;
+	brmh_cmd_builds pushBack (createHashMapFromArray [["group", _group], ["order", _order], ["medic", _medic], ["at", _at], ["state", "going"], ["since", time], ["ordered", time]]);
+	[_group, _order, "post", "post", "going"] call brmh_cmd_fnc_careSay;
+};
+
+brmh_cmd_fnc_stepBuilds = {
+	brmh_cmd_builds = brmh_cmd_builds select {
+		private _build = _x;
+		private _group = _build get "group";
+		private _order = _build get "order";
+		private _medic = _build get "medic";
+		private _keep = true;
+		switch (true) do {
+			case (not ([_medic] call brmh_cmd_fnc_able)): {
+				[_group, _order, "post", "post", "medic down"] call brmh_cmd_fnc_careSay;
+				_medic setVariable ["brmh_cmd_busy", nil];
+				_keep = false;
+			};
+			case ((_build get "state") isEqualTo "going"): {
+				private _away = _medic distance2D (_build get "at");
+				if (_away <= 8 or {
+					unitReady _medic and {
+						(time - (_build get "ordered")) >= 3
+					} and {
+						_away <= 40
+					}
+				}) then {
+					doStop _medic;
+					_medic disableAI "ANIM";
+					[_medic, "AinvPknlMstpSlayWrflDnon_medicOther"] call brmh_cmd_fnc_carryPose;
+					_build set ["state", "building"];
+					_build set ["since", time];
+					[_group, _order, "post", "post", "building"] call brmh_cmd_fnc_careSay;
+				} else {
+					if (unitReady _medic and {
+						(time - (_build get "ordered")) >= 3
+					}) then {
+						_medic setVariable ["brmh_cmd_busy", nil];
+						[_group, _order, "post", "post", "can't reach"] call brmh_cmd_fnc_careSay;
+						_keep = false;
+					};
+				};
+			};
+			default {
+				if ((time - (_build get "since")) >= (brmh_cmd_careTimes get "build_s")) then {
+					private _tent = createVehicle ["Land_MedicalTent_01_MTP_closed_F", _medic getPos [8, getDir _medic], [], 6, "NONE"];
+					brmh_cmd_postCount = (missionNamespace getVariable ["brmh_cmd_postCount", 0]) + 1;
+					private _key = format ["P%1", brmh_cmd_postCount];
+					_tent setVariable ["brmh_cmd_key", _key];
+					_tent setVariable ["ace_medical_isMedicalFacility", true, true];
+					brmh_cmd_vehicles set [_key, _tent];
+					brmh_cmd_posts pushBack _tent;
+					_group setVariable ["brmh_cmd_post", _tent];
+					_medic setVariable ["brmh_cmd_busy", nil];
+					_medic enableAI "ANIM";
+					[_medic, "AmovPknlMstpSrasWrflDnon"] call brmh_cmd_fnc_carryPose;
+					_medic doFollow leader group _medic;
+					[_group, _order, "post", "post", "up", [_key, mapGridPosition _tent]] call brmh_cmd_fnc_careSay;
+					_keep = false;
+				};
+			};
+		};
+		_keep
 	};
 };
 
@@ -1708,6 +2452,18 @@ brmh_cmd_fnc_checkFire = {
 	_group setVariable ["brmh_cmd_missions", _kept + _rows];
 };
 
+// Which of a squad are medics, from the end of its list. Operator action, from the scenario.
+brmh_cmd_fnc_makeMedics = {
+	params [["_callsign", "", [""]], ["_count", 0, [0]]];
+	private _men = +(units (brmh_cmd_stations get _callsign));
+	reverse _men;
+	{
+		_x setVariable ["ace_medical_medicClass", 1, true];
+		_x setUnitTrait ["medic", true];
+	} forEach (_men select [0, _count]);
+	true
+};
+
 brmh_cmd_fnc_clearAll = {
 	{
 		deleteVehicle _y;
@@ -1715,6 +2471,12 @@ brmh_cmd_fnc_clearAll = {
 	brmh_cmd_vehicles = createHashMap;
 	brmh_cmd_buildings = createHashMap;
 	brmh_cmd_fireActive = [];
+	brmh_cmd_carries = [];
+	brmh_cmd_treats = [];
+	brmh_cmd_builds = [];
+	brmh_cmd_posts = [];
+	brmh_cmd_down = [];
+	brmh_cmd_men = createHashMap;
 	{
 		[_x] call brmh_cmd_fnc_deleteStation;
 		_y setGroupIdGlobal ["Retired"];

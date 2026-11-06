@@ -1,0 +1,34 @@
+# The owner's CASEVAC plan as a mission: a squad with casualties falls back to a rendezvous by truck, medics come up in their
+# own vehicle and set up there, and the squad goes back when its men are treated. Times are short, to test it, not to play it.
+name: casevac_rv
+mission: commander_ace
+time_limit: "25:00"
+spectator: true
+objective: All six of Alpha on foot at the objective, grid 070 060.
+text: >
+  Alpha is at grid 060 060 with a truck beside it, V1, and Angel, a medical team, is at grid 020 060 with a medical truck, V2.
+  When Alpha takes casualties, get them to a rendezvous at grid 040 060 and have Angel treat them there. Alpha then goes on
+  to the objective at grid 070 060, with its men back on their feet.
+medical: { field_s: 25, facility_s: 10, build_s: 10 }
+vehicles:
+  - { id: V1, class: B_Truck_01_transport_F, at: "061 060" }
+  - { id: V2, class: B_Truck_01_medical_F, at: "021 060" }
+stations:
+  - callsign: Alpha
+    role: infantry squad
+    capabilities: [MOVE, HOLD, SENTRY, MOUNT, DISMOUNT, CARRY, UNLOAD, HALT, POSTURE]
+    at: "060 060"
+    units: 6
+  - callsign: Angel
+    role: medical team
+    capabilities: [MOVE, HOLD, MOUNT, DISMOUNT, CARRY, UNLOAD, TREAT, AID_POST, HALT, POSTURE]
+    at: "020 060"
+    units: 4
+    medics: 2
+success:
+  stations: [Alpha]
+  on_foot: true
+  within_m: 100
+  of: "070 060"
+debounce: { quiet_s: 3, ceiling_s: 15 }
+mid_turn_messages: hold

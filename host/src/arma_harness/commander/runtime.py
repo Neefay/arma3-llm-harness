@@ -33,7 +33,7 @@ MIN_REPEAT_S = 30
 MARKER_KINDS = {"enemy", "friendly", "objective", "phase_line", "area", "danger", "hypothesis", "note"}
 MARKER_CONFIDENCE = {"low", "medium", "high"}
 NOTES_LIMIT = 1500
-QUESTION_TOPICS = {"position", "task", "strength", "ammo", "contacts", "eta", "vehicles"}
+QUESTION_TOPICS = {"position", "task", "strength", "casualties", "ammo", "contacts", "eta", "vehicles"}
 ORDER_CODE = "_this call brmh_cmd_fnc_order"
 DELETE_CODE = "_this call brmh_cmd_fnc_deleteStation"
 KILL_CODE = "_this call brmh_cmd_fnc_killStation"
@@ -71,6 +71,7 @@ class Runtime:
         self.restarted: bool = saved.get("restarted", False)
         self.outbox: list[dict] = saved.get("outbox", [])
         self.fire_orders: dict[str, dict] = saved.get("fire_orders", {})
+        self.casualties: dict[str, dict] = saved.get("casualties", {})
         self.destroyed: dict[str, float] = saved.get("destroyed", {})
         self.vehicles: dict[str, dict] = saved.get("vehicles") or {
             vehicle["id"]: {"id": vehicle["id"], "key": vehicle["id"], "name": vehicle["name"], "at": vehicle["at"],
@@ -263,19 +264,24 @@ class Runtime:
             "callsign", "pos", "grid", "dir", "speed", "alive", "wounded", "baseline", "leader", "rounds",
             "rounds_baseline", "behaviour", "combat_mode", "order", "unable", "leg", "legs", "clearing", "cleared",
             "placed", "contacts", "suppression", "ruined", "seen_vehicles", "seen_ruins", "mounted", "mount",
-            "missions", "gun_ammo", "limping")}
+            "missions", "gun_ammo", "limping", "casualties", "up", "medical")}
         packet["missions"] = [[self._vehicle_id(row[0]), *row[1:]] for row in packet.get("missions") or []]
         packet["gun_ammo"] = [[self._vehicle_id(row[0]), *row[1:]] for row in packet.get("gun_ammo") or []]
         packet["mounted"] = [[self._vehicle_id(row[0]), *row[1:]] for row in packet.get("mounted") or []]
         if packet.get("mount"):
             packet["mount"] = [self._vehicle_id(packet["mount"][0]), *packet["mount"][1:]]
         packet["t"] = float(event.get("t", 0))
+        self._casualty_rows(callsign, packet)
         self.packets[callsign] = packet
         if self.t0 is None or self.ended:
             return
         tracker = self._tracker(callsign)
         tracker.note_movement(packet)
         said = tracker.update(packet, self.routes.get(callsign), packet["t"], self.buildings)
+        for one in tracker.gone:
+            entry = next((entry for entry in self.casualties.values() if entry["id"] == one), None)
+            if entry and entry["squad"] == callsign:
+                entry["state"] = "gone"
         in_combat = tracker.in_combat(packet, packet["t"])
         for report in said:
             # A squad out of the fight still can't get ahead of what it hasn't finished saying.
@@ -299,6 +305,46 @@ class Runtime:
         if self.t0 is None or self.restarted or rel < 0:
             return False
         return self.ended_at is None or rel <= self.ended_at + RECORD_AFTER_END_S
+
+    def _casualty_rows(self, callsign: str, packet: dict) -> None:
+        """Puts the commander's own ids on the game's rows, and keeps its list of who's down from what it's told."""
+        x, y = packet["pos"] or (0, 0)
+        rows = []
+        for key, name, cx, cy, vehicle, aboard, own, handled in packet.get("casualties") or []:
+            entry = self.casualties.get(key)
+            new = entry is None
+            if new:
+                entry = self.casualties[key] = {"id": f"C{len(self.casualties) + 1}", "key": key, "name": name,
+                                                "squad": callsign}
+            grid = f"{int(cx / 100):03d} {int(cy / 100):03d}"
+            where = self._vehicle_id(vehicle) if aboard else ""
+            entry.update(pos=[cx, cy], grid=grid, t=packet["t"], vehicle=where, state="down")
+            if own:
+                entry["squad"] = callsign
+            rows.append({"id": entry["id"], "name": name, "dx": cx - x, "dy": cy - y, "grid": grid, "vehicle": where,
+                         "own": own, "new": new, "handled": handled})
+        packet["casualties"] = rows
+        known = self.casualties
+        packet["up"] = [known[key]["id"] for key in packet.get("up") or [] if key in known]
+        medical = []
+        for order, kind, key, name, state, detail in packet.get("medical") or []:
+            grid = ""
+            if kind == "post" and state == "up":
+                detail, grid = self._post_up(detail, packet["t"])
+            elif isinstance(detail, str) and detail:
+                detail = self._vehicle_id(detail) or detail
+            medical.append([order, kind, known[key]["id"] if key in known else key, name, state, detail, grid])
+        packet["medical"] = medical
+
+    def _post_up(self, detail: list, t: float) -> tuple[str, str]:
+        key, grid = detail[0], format_grid(detail[1])
+        existing = self._vehicle_id(key)
+        if existing:
+            return existing, grid
+        number = 1 + sum(vehicle["id"].startswith("A") for vehicle in self.vehicles.values())
+        self.vehicles[f"A{number}"] = {"id": f"A{number}", "key": key, "name": "Aid post", "at": grid, "t": t,
+                                       "wrecked": False}
+        return f"A{number}", grid
 
     def _tracker(self, callsign: str) -> Tracker:
         if callsign not in self.trackers:
@@ -375,7 +421,7 @@ class Runtime:
             if len(wanted) == len(success["stations"]) and all(there(group) for group in wanted.values()):
                 how = "on foot at" if success.get("on_foot") else "at"
                 names = " and ".join(success["stations"])
-                return f"{names} are {how} grid {spoken}"
+                return f"{names} {'are' if len(success['stations']) > 1 else 'is'} {how} grid {spoken}"
         elif "station" in success:
             target, _ = parse_grid(success["of"], self.world_size)
             for group in groups:
@@ -555,6 +601,9 @@ class Runtime:
             lines += ["", "BUILDINGS DESTROYED", "  ".join(sorted(self.destroyed))]
         if self.vehicles:
             lines += ["", "VEHICLES", *(self._vehicle_line(vehicle) for vehicle in self.vehicles.values())]
+        down = [entry for entry in self.casualties.values() if entry.get("state") == "down"]
+        if down:
+            lines += ["", "CASUALTIES", *(self._casualty_line(entry) for entry in down)]
         if self.schedules:
             lines += ["", "SCHEDULED"]
             for entry in sorted(self.schedules.values(), key=lambda e: e["due"]):
@@ -590,6 +639,10 @@ class Runtime:
             lines.append("Nothing plotted yet.")
         return lines
 
+    def _casualty_line(self, entry: dict) -> str:
+        where = f"on {entry['vehicle']}" if entry.get("vehicle") else f"grid {entry['grid']}"
+        return f"{entry['id']}  {entry['name']}  {entry['squad']}'s  {where}  reported {_ago(self.now() - entry['t'])}"
+
     def _vehicle_line(self, vehicle: dict) -> str:
         when = "as briefed" if vehicle.get("t") is None else f"reported {_ago(self.now() - vehicle['t'])}"
         state = "wrecked  " if vehicle.get("wrecked") else ""
@@ -614,6 +667,7 @@ class Runtime:
             "t0": self.t0, "turn": self.turn, "cursor": self.cursor, "delivered": self.delivered,
             "ended": self.ended, "ended_at": self.ended_at, "restarted": self.restarted, "outbox": self.outbox,
             "destroyed": self.destroyed, "vehicles": self.vehicles, "fire_orders": self.fire_orders,
+            "casualties": self.casualties,
             "objectives_due": self.objectives_due, "objectives_done": self.objectives_done,
             "next_id": self.next_id, "routes": self.routes, "schedules": self.schedules, "missed": self.missed,
             "markers": self.markers, "checked": self.checked, "last_checkin": self.last_checkin,
@@ -660,6 +714,9 @@ class Runtime:
                 "buildings": [{"id": b["id"], "type": b["name"], "grid": b["at"], "positions": b["positions"]}
                               for b in self.buildings],
                 "vehicles": [{"id": v["id"], "type": v["name"], "grid": v["at"]} for v in self.vehicles.values()],
+                "casualties": [{"id": entry["id"], "name": entry["name"], "squad": entry["squad"],
+                                "grid": entry["grid"], "on": entry.get("vehicle") or None}
+                               for entry in self.casualties.values() if entry.get("state") == "down"],
                 "ended": self.ended or None,
             }
 
@@ -671,6 +728,7 @@ class Runtime:
                 stations.append({"callsign": station["callsign"], "role": station["role"],
                                  "capabilities": station["capabilities"],
                                  "corrects_fire": station.get("spotter", False),
+                                 "medics": station.get("medics", 0),
                                  "last_heard": _ago(self.now() - heard) if heard is not None else "not yet"})
             return {"stations": stations}
 
@@ -684,7 +742,7 @@ class Runtime:
 
     def _send_order(self, request: dict, via: str = "") -> str:
         checked = orders_mod.validate(request, self.scenario.stations, self.markers, self.world_size, self.buildings,
-                                      self.vehicles)
+                                      self.vehicles, {entry["id"]: entry for entry in self.casualties.values()})
         order_id = self._id("O")
         callsign = checked["to"]
         previous = self.routes.get(callsign)
@@ -692,8 +750,8 @@ class Runtime:
         if mode == "posture":
             base = previous or {"kind": "posture", "legs": []}
             route = {**base, "keeps_progress": order_id, "acknowledge": "Copy.", "keeps_done": True}
-        elif mode in ("fire", "checkfire"):
-            # About the gun alone: the squad carries on with whatever it was doing.
+        elif mode in ("fire", "checkfire", "carry", "unload", "treat", "post"):
+            # About the gun, or the wounded, alone: the rest of the squad carries on with whatever it was doing.
             base = previous or {"kind": "posture", "legs": []}
             route = {**base, "keeps_progress": order_id, "acknowledge": checked["words"], "keeps_done": True}
         elif mode == "append" and previous and previous.get("kind") == "route":
@@ -1019,6 +1077,7 @@ def _radio_line(row: dict) -> str:
 
 
 def _order_words(request: dict) -> str:
-    legs = ", ".join(f"{leg.get('type')} {leg.get('at', leg.get('vehicle', ''))}".strip()
+    legs = ", ".join(f"{leg.get('type')} {leg.get('at', leg.get('vehicle', ''))}".strip() +
+                     (f" {' '.join(leg['casualties'])}" if leg.get("casualties") else "")
                      for leg in request.get("legs") or [] if isinstance(leg, dict))
     return legs or "order"

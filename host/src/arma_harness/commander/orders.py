@@ -17,7 +17,8 @@ SINGLE_LEG = {"CLEAR", "OCCUPY", "CORDON", "ATTACK", "DEFEND", "PATROL_AREA", "S
 DEFAULT_RADIUS_M = {"CLEAR": 100, "CORDON": 30, "ATTACK": 80, "DEFEND": 100, "PATROL_AREA": 150, "SWEEP": 120}
 MAX_RADIUS_M = 300
 ORDER_TYPES = set(LEG_TYPES) | SINGLE_LEG | {"PATROL", "HALT", "POSTURE", "MOUNT", "DISMOUNT", "FIRE_MISSION",
-                                             "CHECK_FIRE"}
+                                             "CHECK_FIRE", "CARRY", "UNLOAD", "TREAT", "AID_POST"}
+CARE_ORDERS = {"CARRY": "carry", "UNLOAD": "unload", "TREAT": "treat", "AID_POST": "post"}
 AMMO = {"HE", "SMOKE"}
 MAX_FIRE_ROUNDS = 32
 MAX_FIRE_RADIUS_M = 150
@@ -92,7 +93,8 @@ def _number(value, label: str) -> float:
 
 
 def validate(request: dict, stations: dict[str, dict], markers: dict[str, dict], world_size: float,
-             buildings: list[dict] | None = None, vehicles: dict[str, dict] | None = None) -> dict:
+             buildings: list[dict] | None = None, vehicles: dict[str, dict] | None = None,
+             casualties: dict[str, dict] | None = None) -> dict:
     """Check a commander_order request and build what the game side needs: {to, mode, engine_legs, posture, route}."""
     to = request.get("to")
     if to not in stations:
@@ -126,6 +128,8 @@ def validate(request: dict, stations: dict[str, dict], markers: dict[str, dict],
         return _boarding(to, legs, types, posture, vehicles or {})
     if "FIRE_MISSION" in types or "CHECK_FIRE" in types:
         return _fire(to, legs, types, posture, stations, world_size, vehicles or {})
+    if CARE_ORDERS.keys() & set(types):
+        return _care(to, legs, types, posture, markers, buildings, world_size, vehicles or {}, casualties or {})
     single = SINGLE_LEG & set(types)
     if single and len(types) > 1:
         raise Invalid(f"{sorted(single)[0]} must be the only leg in an order. Move there first, or schedule it.")
@@ -146,6 +150,43 @@ def validate(request: dict, stations: dict[str, dict], markers: dict[str, dict],
         route_legs.append({"type": kind, "pos": pos, "grid": grid, "completion": completion})
     return {"to": to, "mode": mode, "engine_legs": engine_legs, "posture": posture,
             "route": {"kind": "route", "legs": route_legs}}
+
+
+def _care(to, legs, types, posture, markers, buildings, world_size, vehicles, casualties) -> dict:
+    """Orders about the wounded. They concern those doing the job: the rest of the squad carries on as it was. Each man
+    is found from where he was last reported to be, so an old report can send them to the wrong place."""
+    if len(types) > 1:
+        raise Invalid(f"{types[0]} must be the only leg in an order.")
+    kind, leg = types[0], legs[0]
+    ids = leg.get("casualties") or []
+    if not isinstance(ids, list):
+        raise Invalid("casualties must be a list of ids, such as [\"C1\", \"C2\"].")
+    unknown = [one for one in ids if one not in casualties]
+    if unknown:
+        raise Invalid(f"casualties must be from your list, and these aren't: {unknown}.")
+    who = [[casualties[one]["key"], casualties[one]["pos"]] for one in ids]
+    names = " and ".join(casualties[one]["name"] for one in ids) or "our casualties"
+    places = {**markers, **{building["id"]: building for building in buildings or []}}
+    base = {"to": to, "mode": CARE_ORDERS[kind], "posture": posture, "route": None}
+    if kind == "TREAT":
+        return {**base, "engine_legs": [[who]], "words": f"Copy, treating {names}."}
+    if kind == "AID_POST":
+        pos, grid = _place(leg.get("at"), places, world_size)
+        return {**base, "engine_legs": [[[*pos, 0]]], "words": f"Copy, setting up an aid post at grid {grid}."}
+    vehicle = leg.get("vehicle")
+    at = leg.get("at")
+    if kind == "UNLOAD" or vehicle:
+        if vehicle not in vehicles:
+            raise Invalid(f"{kind} needs a vehicle from your list, such as V1, and {vehicle!r} isn't on it.")
+        words = f"Copy, getting {names} off {vehicle}." if kind == "UNLOAD" else f"Copy, carrying {names} to {vehicle}."
+        return {**base, "engine_legs": [[who, vehicles[vehicle]["key"]]], "words": words}
+    if isinstance(at, str) and at.strip() in vehicles:  # an aid post
+        return {**base, "engine_legs": [[who, vehicles[at.strip()]["key"]]],
+                "words": f"Copy, carrying {names} to {at.strip()}."}
+    if not at:
+        raise Invalid("CARRY needs a vehicle, or at: a place or aid post to take them to.")
+    pos, grid = _place(at, places, world_size)
+    return {**base, "engine_legs": [[who, [*pos, 0]]], "words": f"Copy, carrying {names} to grid {grid}."}
 
 
 def _fire(to, legs, types, posture, stations, world_size, vehicles) -> dict:
