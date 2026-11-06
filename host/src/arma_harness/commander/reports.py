@@ -41,6 +41,13 @@ BEARING_ERROR_MAX_DEG = 20
 BEARING_ROUND_DEG = 5
 DEFAULT_TOPICS = ["position", "task", "strength", "casualties", "ammo", "contacts", "vehicles"]
 LEFT_BEHIND_M = 150  # a squad further than this from one of its own who's down has left him
+# How fast things go, measured on the real game: see host/tests/spikes/move_lag. For saying how long a move will take.
+PACE_ON_FOOT = {"": 3.5, "NORMAL": 3.5, "LIMITED": 1.5, "FULL": 4.5}
+PACE_DRIVING = 18.0
+PACE_CARRYING = 1.7
+PACE_LIMPING = 1.1
+CARRY_LIFT_S = 20
+ESTIMATE_FROM_M = 100  # nearer than this, there's nothing worth saying
 PLACING_ORDERS = {"OCCUPY", "CORDON"}
 TASK_ORDERS = {"ATTACK", "DEFEND", "PATROL_AREA", "SWEEP"}  # CBA tasks: they run until replaced, with no end to report
 SINGLE_LEG_ORDERS = {"CLEAR"} | PLACING_ORDERS | TASK_ORDERS
@@ -324,6 +331,44 @@ def _task_words(packet: dict, route: dict | None, in_combat: bool = False) -> st
     return f"{verb} grid {leg['grid']}, {rough_range(distance).replace('roughly', 'about')} out."
 
 
+def _time_words(seconds: float) -> str:
+    minutes = seconds / 60
+    if minutes < 1:
+        return "under a minute"
+    if minutes < 1.5:
+        return "about a minute"
+    return f"about {5 * round(minutes / 5) if minutes >= 20 else round(minutes)} minutes"
+
+
+def _distance_words(metres: float) -> str:
+    if metres < 950:
+        return f"{round(metres, -2):.0f} m"
+    return f"{round(metres / 500) / 2:g} km"
+
+
+def estimate(metres: float, pace: float, how: str, in_combat: bool = False, extra_s: float = 0) -> str:
+    """How far and how long, as a squad would say it when it gets an order. It's a guess, and a fight makes it worse."""
+    if metres < ESTIMATE_FROM_M:
+        return ""
+    time_words = _time_words(metres / pace + extra_s)
+    if in_combat:
+        words = time_words.replace("about", "at least")
+        return f" {words[:1].upper()}{words[1:]} {how}, under fire."
+    return f" That's {_distance_words(metres)} {how}, {time_words}."
+
+
+def pace_of(packet: dict, speed_mode: str = "") -> tuple[float, str]:
+    """How quickly this squad would get there, and how to say it. A leader in a vehicle has the squad with him, and one
+    who's hit in the legs sets the pace for all of them."""
+    leader = packet.get("leader")
+    riding = [row for row in packet.get("mounted") or [] if len(row) > 3 and row[2] == leader and not row[3]]
+    if riding:
+        return PACE_DRIVING, "by vehicle"
+    if leader in (packet.get("limping") or []):
+        return PACE_LIMPING, f"on foot, with {leader} hit in the legs"
+    return PACE_ON_FOOT.get(speed_mode, PACE_ON_FOOT[""]), "on foot"
+
+
 def _eta_words(packet: dict, route: dict | None) -> str:
     distance = remaining_distance(packet, route)
     leg = _current_leg(packet, route)
@@ -386,6 +431,7 @@ class Tracker:
     gunners: dict[str, str] = field(default_factory=dict)
     gunners_alive: int = 0
     fire_said: dict[str, str] = field(default_factory=dict)
+    speed_mode: str = ""
     spotter: bool = False
     impacts: list[dict] = field(default_factory=list)
     noted: int = 0
@@ -442,6 +488,21 @@ class Tracker:
         out += self._downed(packet, now)
         out += self._care(packet)
         return [_without_own_grid(report) for report in out] if self.in_combat(packet, now) else out
+
+    def _how_long(self, packet: dict, route: dict | None, now: float) -> str:
+        if not route:
+            return ""
+        self.speed_mode = route.get("speed") or self.speed_mode
+        pace, how = pace_of(packet, self.speed_mode)
+        in_combat = self.in_combat(packet, now)
+        if route.get("kind") == "mount" and route.get("walk_to"):
+            foot = PACE_ON_FOOT.get(self.speed_mode, PACE_ON_FOOT[""])
+            return estimate(math.dist(packet["pos"], route["walk_to"]), foot, "on foot", in_combat)
+        if route.get("kind") == "patrol" and route.get("legs"):
+            return estimate(math.dist(packet["pos"], route["legs"][0]["pos"]), pace, how, in_combat)
+        if route.get("kind") != "route" or not route.get("legs") or "pos" not in route["legs"][0]:
+            return ""
+        return estimate(remaining_distance(packet, route), pace, how, in_combat)
 
     def _downed(self, packet: dict, now: float) -> list[Report]:
         """Who it knows is down. A squad that's left one of its own behind can't say what's become of him."""
@@ -596,10 +657,13 @@ class Tracker:
             if route and route.get("keeps_progress") == order:
                 # POSTURE and appended legs continue the route, so its numbering carries on.
                 self.route_done = self.route_done and bool(route.get("keeps_done"))
-                out.append(Report(ROUTINE, route.get("acknowledge", "Copy.")))
+                said = route.get("acknowledge", "Copy.")
+                if said.startswith("Copy, then"):  # more legs on the end of its route
+                    said += self._how_long(packet, route, now)
+                out.append(Report(ROUTINE, said))
             else:
                 self.leg, self.on_station, self.route_done, self.checked = 0, [], False, []
-                words = f"{_acknowledgement(route, grid)}{_who_stays(packet, route)}"
+                words = _acknowledgement(route, grid) + _who_stays(packet, route) + self._how_long(packet, route, now)
                 out.append(Report(ROUTINE, words, grid if _is_stop(route) else None))
         if not route or self.route_done or route.get("kind") != "route":
             return out

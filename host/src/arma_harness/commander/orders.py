@@ -152,6 +152,11 @@ def validate(request: dict, stations: dict[str, dict], markers: dict[str, dict],
             "route": {"kind": "route", "legs": route_legs}}
 
 
+def _vehicle_place(vehicle: dict, world_size: float) -> list[float] | None:
+    """Where the commander believes it is, which is what a squad's estimate has to go by."""
+    return parse_grid(vehicle["at"], world_size)[0] if vehicle.get("at") else None
+
+
 def _care(to, legs, types, posture, markers, buildings, world_size, vehicles, casualties) -> dict:
     """Orders about the wounded. They concern those doing the job: the rest of the squad carries on as it was. Each man
     is found from where he was last reported to be, so an old report can send them to the wrong place."""
@@ -172,21 +177,24 @@ def _care(to, legs, types, posture, markers, buildings, world_size, vehicles, ca
         return {**base, "engine_legs": [[who]], "words": f"Copy, treating {names}."}
     if kind == "AID_POST":
         pos, grid = _place(leg.get("at"), places, world_size)
-        return {**base, "engine_legs": [[[*pos, 0]]], "words": f"Copy, setting up an aid post at grid {grid}."}
+        return {**base, "engine_legs": [[[*pos, 0]]], "dest": pos,
+                "words": f"Copy, setting up an aid post at grid {grid}."}
     vehicle = leg.get("vehicle")
     at = leg.get("at")
     if kind == "UNLOAD" or vehicle:
         if vehicle not in vehicles:
             raise Invalid(f"{kind} needs a vehicle from your list, such as V1, and {vehicle!r} isn't on it.")
         words = f"Copy, getting {names} off {vehicle}." if kind == "UNLOAD" else f"Copy, carrying {names} to {vehicle}."
-        return {**base, "engine_legs": [[who, vehicles[vehicle]["key"]]], "words": words}
+        return {**base, "engine_legs": [[who, vehicles[vehicle]["key"]]], "words": words,
+                "dest": _vehicle_place(vehicles[vehicle], world_size)}
     if isinstance(at, str) and at.strip() in vehicles:  # an aid post
         return {**base, "engine_legs": [[who, vehicles[at.strip()]["key"]]],
-                "words": f"Copy, carrying {names} to {at.strip()}."}
+                "words": f"Copy, carrying {names} to {at.strip()}.",
+                "dest": _vehicle_place(vehicles[at.strip()], world_size)}
     if not at:
         raise Invalid("CARRY needs a vehicle, or at: a place or aid post to take them to.")
     pos, grid = _place(at, places, world_size)
-    return {**base, "engine_legs": [[who, [*pos, 0]]], "words": f"Copy, carrying {names} to grid {grid}."}
+    return {**base, "engine_legs": [[who, [*pos, 0]]], "words": f"Copy, carrying {names} to grid {grid}.", "dest": pos}
 
 
 def _fire(to, legs, types, posture, stations, world_size, vehicles) -> dict:

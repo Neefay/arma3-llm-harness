@@ -757,13 +757,19 @@ class Runtime:
         elif mode in ("fire", "checkfire", "carry", "unload", "treat", "post"):
             # About the gun, or the wounded, alone: the rest of the squad carries on with whatever it was doing.
             base = previous or {"kind": "posture", "legs": []}
-            route = {**base, "keeps_progress": order_id, "acknowledge": checked["words"], "keeps_done": True}
+            words = checked["words"] + self._care_estimate(mode, request, checked, callsign)
+            route = {**base, "keeps_progress": order_id, "acknowledge": words, "keeps_done": True}
         elif mode == "append" and previous and previous.get("kind") == "route":
             words = reports.leg_words(route["legs"])
             route = {"kind": "route", "legs": previous["legs"] + route["legs"], "keeps_progress": order_id,
                      "acknowledge": f"Copy, then {words}."}
         elif mode == "append":
             mode = "replace"
+        if route and mode == "mount":
+            where = self.vehicles.get(route.get("vehicle"), {}).get("at")
+            route["walk_to"] = parse_grid(where, self.world_size, precise=True)[0] if where else None
+        if route and checked["posture"][0]:
+            route["speed"] = checked["posture"][0]
         self.routes[callsign] = route
         self._game_exec(ORDER_CODE, [callsign, order_id, mode, checked["engine_legs"], checked["posture"]])
         suffix = f" (timed, {via})" if via else ""
@@ -779,6 +785,33 @@ class Runtime:
                               for name, place in self.positions.items()},
                 "last_heard": {name: round(self.rel(t), 1) for name, t in self.last_heard.items()}})
         return order_id
+
+    def _care_estimate(self, mode: str, request: dict, checked: dict, callsign: str) -> str:
+        """How far and how long, from what the squad and the commander know, for orders about the wounded."""
+        packet = self.packets.get(callsign)
+        if mode not in ("carry", "treat", "post") or not packet:
+            return ""
+        in_combat = self._in_combat(callsign)
+        foot = reports.PACE_ON_FOOT[""]
+        leg = (request.get("legs") or [{}])[0]
+        known = {entry["id"]: entry for entry in self.casualties.values()}
+        named = [known[one]["pos"] for one in leg.get("casualties") or [] if one in known]
+        x, y = packet["pos"]
+        nearby = [[row["dx"] + x, row["dy"] + y] for row in packet.get("casualties") or []]
+        hurt = named or nearby
+        if mode == "post":
+            setup = self.scenario.medical.get("build_s", 60)
+            return (reports.estimate(math.dist(packet["pos"], checked["dest"]), foot, "on foot", in_combat)
+                    + f" Then {reports._time_words(setup)} to set up.")
+        if not hurt:
+            return ""
+        if mode == "treat":
+            reach = max(math.dist(packet["pos"], one) for one in hurt)
+            return reports.estimate(reach, foot, "on foot to reach them", in_combat)
+        if not checked.get("dest"):
+            return ""
+        far = max(math.dist(one, checked["dest"]) for one in hurt)
+        return reports.estimate(far, reports.PACE_CARRYING, "carrying them", in_combat, reports.CARRY_LIFT_S)
 
     def _ask_targets(self, to, topics) -> list[str]:
         unknown = set(topics or []) - QUESTION_TOPICS

@@ -79,7 +79,8 @@ def test_contacts_group_by_direction_and_drop_when_forgotten():
 def test_move_is_acknowledged_once_and_arrival_reported_once():
     tracker, trip = Tracker(), route(("MOVE", (3450, 3050), "034 030"))
     said = tracker.update(packet(order="O-1"), trip, 10)
-    assert [r.text for r in said] == ["Copy, moving to grid 034 030."] and said[0].grid is None
+    assert [r.text for r in said] == ["Copy, moving to grid 034 030. That's 400 m on foot, about 2 minutes."]
+    assert said[0].grid is None
     assert tracker.update(packet(order="O-1", pos=[3200, 3050]), trip, 12) == []
     arrived = tracker.update(packet(order="O-1", pos=[3450, 3050], grid="034030", leg=1), trip, 14)
     assert [r.text for r in arrived] == ["Arrived, grid 034 030."] and arrived[0].grid == "034 030"
@@ -121,7 +122,7 @@ def clear_route(*ids) -> dict:
 def test_clear_reports_each_building_and_never_claims_all_clear():
     tracker, trip = Tracker(), clear_route("B1", "B3")
     said = tracker.update(packet(order="O-1", clearing=30, cleared=[]), trip, 0)
-    assert [r.text for r in said] == ["Copy, checking B1, B3."]
+    assert [r.text for r in said] == ["Copy, checking B1, B3. That's 1.5 km on foot, about 7 minutes."]
     assert reports.answer(packet(order="O-1", clearing=30, cleared=["B1"]), trip, ["task"]) == "Checking B3."
     said = tracker.update(packet(order="O-1", clearing=12, cleared=["B1"]), trip, 200)  # slow isn't stuck
     assert [(r.text, r.checked) for r in said] == [("B1 checked, nothing seen.", "B1")]
@@ -163,7 +164,8 @@ def test_occupy_and_cordon_report_once_in_position():
 def test_cba_tasks_report_arriving_and_then_stay_quiet():
     far = {"type": "SWEEP", "pos": [3650, 3050], "grid": "036 030", "completion": 0, "radius": 120, "building": None}
     tracker, trip = Tracker(), {"kind": "route", "legs": [far]}
-    assert tracker.update(packet(order="O-1", leg=2, legs=5), trip, 0)[0].text == "Copy, sweeping around grid 036 030."
+    assert tracker.update(packet(order="O-1", leg=2, legs=5), trip, 0)[0].text == \
+        "Copy, sweeping around grid 036 030. That's 600 m on foot, about 3 minutes."
     assert reports.answer(packet(order="O-1", leg=3, legs=5), trip, ["task"]) == "Sweeping around grid 036 030."
     assert tracker.update(packet(order="O-1", leg=4, legs=5), trip, 300) == []  # not stuck: this order wanders
     said = tracker.update(packet(order="O-1", leg=4, legs=5, pos=[3550, 3050], grid="035030"), trip, 310)
@@ -1372,7 +1374,7 @@ def test_a_squad_moving_off_says_who_stays_on_the_gun():
     trip = route(("MOVE", (3450, 3050), "034 030"))
     seated = [["V1", "gunner", "Pat Vane", True]]
     assert Tracker().update(packet(order="O-1", mounted=seated), trip, 0)[0].text == \
-        "Copy, moving to grid 034 030. Pat Vane stays on V1."
+        "Copy, moving to grid 034 030. Pat Vane stays on V1. That's 400 m on foot, about 2 minutes."
     # A leader's taken off by the game side, and a man in a truck goes with it.
     leader = [["V1", "gunner", "Sam Reed", True]]
     assert "stays" not in Tracker().update(packet(order="O-1", mounted=leader), trip, 0)[0].text
@@ -2224,7 +2226,7 @@ def test_orders_use_the_commanders_list_and_leave_the_route_alone(tmp_path):
     assert b.game.calls[-1][1][:4] == ["Alpha", "O-0002", "carry", [[[["m7", [3080, 3050]]], [3550.0, 3050.0, 0]]]]
     assert b.runtime.routes["Alpha"]["legs"] == route
     b.advance(104, casualties=[down_row()], order="O-0002")
-    assert "Copy, carrying Sam Reed to grid 035 030." in said(b)
+    assert "Copy, carrying Sam Reed to grid 035 030. That's 500 m carrying them, about 5 minutes." in said(b)
     with pytest.raises(Invalid, match="aren't"):
         b.runtime.order({"to": "Alpha", "legs": [{"type": "CARRY", "casualties": ["C2"], "at": "035 030"}]})
 
@@ -2281,6 +2283,122 @@ def test_a_medical_scenario_loads():
     built = scenario.build(raw)
     assert built.mission == "commander_ace" and built.stations["Angel"]["medics"] == 2
     assert built.medical["facility_s"] == 10 and built.objectives[0]["success"]["on_foot"]
+
+
+def said_for(route_legs, **fields) -> str:
+    tracker = Tracker()
+    route = {"kind": "route", "legs": route_legs}
+    tracker.update(packet(order="", **fields), None, 90)
+    reports_said = tracker.update(packet(order="O-1", **fields), route, 100)
+    return reports_said[0].text
+
+
+def leg_to(x, y=3050, kind="MOVE"):
+    return {"type": kind, "pos": [x, y], "grid": f"{x // 100:03d} {y // 100:03d}", "completion": 0}
+
+
+@pytest.mark.parametrize("metres, words", [
+    (50, "Copy, moving to grid 031 030."),  # too near to bother
+    (150, "That's 200 m on foot, under a minute."),
+    (210, "That's 200 m on foot, about a minute."),
+    (420, "That's 400 m on foot, about 2 minutes."),
+    (2100, "That's 2 km on foot, about 10 minutes."),
+    (5250, "That's 5 km on foot, about 25 minutes."),
+])
+def test_a_move_says_how_far_and_how_long(metres, words):
+    assert words in said_for([leg_to(3050 + metres)])
+
+
+def test_a_long_route_is_the_whole_of_it():
+    words = said_for([leg_to(3550), leg_to(3550, 3550), leg_to(3050, 3550)])
+    assert "That's 1.5 km on foot, about 7 minutes." in words
+
+
+def test_a_squad_in_a_vehicle_gives_a_drive():
+    rows = [["V1", "driver", "Ann Cole", False], ["V1", "cargo", "Sam Reed", False]]
+    words = said_for([leg_to(5050)], mounted=rows, leader="Sam Reed")
+    assert "That's 2 km by vehicle, about 2 minutes." in words
+
+
+def test_a_man_on_a_gun_isnt_a_squad_in_a_vehicle():
+    words = said_for([leg_to(5050)], mounted=[["V1", "gunner", "Sam Reed", True]], leader="Sam Reed")
+    assert "on foot" in words
+
+
+def test_a_leader_hit_in_the_legs_says_it_will_be_slow():
+    words = said_for([leg_to(3550)], limping=["Sam Reed"], leader="Sam Reed")
+    assert "That's 500 m on foot, with Sam Reed hit in the legs, about 8 minutes." in words
+
+
+def test_under_fire_is_only_a_lower_bound():
+    words = said_for([leg_to(5050)], contacts=[contact()], suppression=0.5)
+    assert "At least 10 minutes on foot, under fire." in words and "That's" not in words
+    assert "030 030" not in words.split("grid 050 030.")[1]
+
+
+def test_speed_changes_the_estimate_and_is_remembered():
+    tracker = Tracker()
+    fast = {"kind": "route", "legs": [leg_to(5050)], "speed": "FULL"}
+    assert "about 7 minutes" in tracker.update(packet(order="O-1"), fast, 100)[0].text
+    same = {"kind": "route", "legs": [leg_to(5050)]}
+    assert "about 7 minutes" in tracker.update(packet(order="O-2"), same, 102)[0].text
+
+
+def test_appended_legs_are_estimated_too(tmp_path):
+    b = Battle(tmp_path)
+    b.start()
+    b.runtime.order({"to": "Alpha", "legs": [{"type": "MOVE", "at": "050 030"}]})
+    b.advance(102, order="O-0001")
+    b.runtime.order({"to": "Alpha", "mode": "append", "legs": [{"type": "MOVE", "at": "070 030"}]})
+    b.advance(104, order="O-0002")
+    assert "Copy, then moving to grid 070 030. That's 4 km on foot, about 19 minutes." in said(b)
+
+
+def test_boarding_says_how_far_the_vehicle_is(tmp_path):
+    b = wounded_battle(tmp_path)
+    b.runtime.vehicles = {"V1": {"id": "V1", "key": "V1", "name": "Truck", "at": "040 030", "t": None,
+                                 "wrecked": False}}
+    b.scenario.stations["Alpha"]["capabilities"].append("MOUNT")
+    b.advance(102, order="")
+    b.runtime.order({"to": "Alpha", "legs": [{"type": "MOUNT", "vehicle": "V1"}]})
+    b.advance(104, order="O-0001")
+    assert "Copy, mounting V1. That's 1 km on foot, about 5 minutes." in said(b)
+
+
+def test_carrying_says_how_long_that_really_is(tmp_path):
+    """Haiku, told nothing, had two men carried 2 km and expected them there in 90 s. It's 20 minutes."""
+    b = wounded_battle(tmp_path)
+    b.advance(102, casualties=[down_row(x=6050, y=6050)], pos=[6050, 6050])
+    b.runtime.order({"to": "Alpha", "legs": [{"type": "CARRY", "casualties": ["C1"], "at": "040 060"}]})
+    b.advance(104, casualties=[down_row(x=6050, y=6050)], pos=[6050, 6050], order="O-0001")
+    assert "Copy, carrying Sam Reed to grid 040 060. That's 2 km carrying them, about 20 minutes." in said(b)
+
+
+def test_carrying_to_a_vehicle_alongside_is_quick(tmp_path):
+    b = wounded_battle(tmp_path)
+    b.runtime.vehicles = {"V1": {"id": "V1", "key": "V1", "name": "Truck", "at": "031 030", "t": None,
+                                 "wrecked": False}}
+    b.advance(102, casualties=[down_row(x=3050, y=3050)])
+    b.runtime.order({"to": "Alpha", "legs": [{"type": "CARRY", "casualties": ["C1"], "vehicle": "V1"}]})
+    b.advance(104, casualties=[down_row(x=3050, y=3050)], order="O-0001")
+    assert "Copy, carrying Sam Reed to V1. That's 100 m carrying them, about a minute." in said(b)
+
+
+def test_medics_say_how_far_off_they_are(tmp_path):
+    b = wounded_battle(tmp_path)
+    b.advance(102, casualties=[down_row(x=3050, y=4050)])
+    b.runtime.order({"to": "Alpha", "legs": [{"type": "TREAT", "casualties": ["C1"]}]})
+    b.advance(104, casualties=[down_row(x=3050, y=4050)], order="O-0001")
+    assert "Copy, treating Sam Reed. That's 1 km on foot to reach them, about 5 minutes." in said(b)
+
+
+def test_a_post_says_how_long_to_get_there_and_set_up(tmp_path):
+    b = wounded_battle(tmp_path, medical={"build_s": 60})
+    b.advance(102)
+    b.runtime.order({"to": "Alpha", "legs": [{"type": "AID_POST", "at": "040 030"}]})
+    b.advance(104, order="O-0001")
+    assert ("Copy, setting up an aid post at grid 040 030. That's 1 km on foot, about 5 minutes. "
+            "Then about a minute to set up.") in said(b)
 
 
 def in_the_fight(tmp_path) -> Battle:
