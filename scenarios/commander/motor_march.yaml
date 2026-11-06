@@ -1,0 +1,35 @@
+# A road move with nobody to fight: two fire teams board Hunters, drive across the map past the village, and get out.
+# The commander has to sequence it itself: an order can't both drive and dismount.
+name: motor_march
+mission: commander
+time_limit: "15:00"
+spectator: true
+text: >
+  Alpha and Bravo are fire teams, with a Hunter parked beside each of them. Drive both teams to grid 052 044, about 2.5 km
+  to the north-east, which is believed to be clear, and dismount there. You're done when both teams are on foot at that
+  grid.
+vehicles:
+  - { id: V1, class: B_MRAP_01_hmg_F, at: "029 030" }
+  - { id: V2, class: B_MRAP_01_hmg_F, at: "031 030" }
+stations:
+  - callsign: Alpha
+    role: fire team
+    capabilities: [MOVE, HOLD, MOUNT, DISMOUNT, HALT, POSTURE]
+    at: "029 029"
+    units: 4
+  - callsign: Bravo
+    role: fire team
+    capabilities: [MOVE, HOLD, MOUNT, DISMOUNT, HALT, POSTURE]
+    at: "031 029"
+    units: 4
+markers:
+  - { id: O1, kind: objective, label: Dismount point, at: "052 044" }
+success:
+  stations: [Alpha, Bravo]
+  on_foot: true
+  within_m: 100
+  of: "052 044"
+failure:
+  all_stations_lost: true
+debounce: { quiet_s: 3, ceiling_s: 15 }
+mid_turn_messages: hold

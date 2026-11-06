@@ -873,7 +873,13 @@ House models matter here too: `Land_i_House_Small_01_V3_F` trapped soldiers insi
 
 `village_with_mortar` is the same village and enemy as above, adding Hammer, a mortar section crewing V1 at grid 041 032 with 16 HE and 4 smoke and no resupply, and making Recon a spotter. `fire_check` and `vehicles_check` have no enemy, and only exist so `host/tests/live_commander.py` can try the plumbing. The orders, reports and records are all in [COMMANDER_FIRE_SUPPORT.md](COMMANDER_FIRE_SUPPORT.md).
 
-### 14.4 Following scenarios
+### 14.4 Motor march
+
+`motor_march` has no enemy. Alpha and Bravo, four men each, board the two Hunters beside them, drive about 2.5 km past the village to grid 052 044, and dismount. An order can't both drive and dismount, so the commander has to sequence it, and being there aboard doesn't end the mission: every living man of both teams has to be on foot within 100 m. That's the `stations` and `on_foot` form of `success`.
+
+Scripted through the commander's tools on the real game, it boarded in about 30 s, drove in 110 s and finished at T+02:38, with no damage to either Hunter. Their AI drivers parked 9 m from the grid's centre, and both teams got out where they stopped.
+
+### 14.5 Following scenarios
 
 | Scenario | What it adds |
 |---|---|
@@ -881,7 +887,7 @@ House models matter here too: `Land_i_House_Small_01_V3_F` trapped soldiers insi
 
 Every scenario needs stations, an enemy setup, end conditions and a time limit. `orders_check` has no enemies, and only exists so `host/tests/live_commander.py` can try every order on a real game.
 
-### 14.5 Win and loss
+### 14.6 Win and loss
 
 The harness alone judges end conditions, and the commander learns the result only from the mission-end wake.
 

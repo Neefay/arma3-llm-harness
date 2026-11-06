@@ -507,6 +507,74 @@ def play_fire_support(client: Client) -> list[str]:
     return log
 
 
+def play_motor_march(client: Client) -> list[str]:
+    """Two fire teams board Hunters, drive 2.5 km past the village, and get out, by the commander's tools alone."""
+    harness = Harness()
+    brief = begin(client)
+    known = {vehicle["id"]: vehicle["type"] for vehicle in brief["vehicles"]}
+    assert set(known) == {"V1", "V2"} and "Hunter" in known["V1"], known
+    log = []
+    for team, hunter in (("Alpha", "V1"), ("Bravo", "V2")):
+        client.tool("commander_order", to=team, legs=[{"type": "MOUNT", "vehicle": hunter}])
+    finish_turn(client, "Boarding")
+    text = ""
+    deadline = time.time() + 120
+    while not (" on V1" in text and " on V2" in text):
+        assert time.time() < deadline, f"the teams never boarded: {text[-500:]}"
+        text += next_wake(client, 60)["content"]
+        finish_turn(client, "Waiting to board")
+    log.append(text)
+    assert "didn't fit" not in text, text[-500:]
+
+    for team in ("Alpha", "Bravo"):
+        client.tool("commander_order", to=team, legs=[{"type": "MOVE", "at": "052 044"}])
+    finish_turn(client, "Driving")
+    started = time.time()
+
+    # Told they were aboard, so they stay aboard: nobody climbs out when the order to drive comes.
+    aboard = []
+    for _ in range(10):
+        aboard.append(in_game(harness, """
+        ["V1", "V2"] apply {
+            count crew (brmh_cmd_vehicles get _x)
+        }
+        """))
+        time.sleep(2)
+    print("ABOARD", aboard, flush=True)
+    assert all(row == [4, 4] for row in aboard), aboard
+    text = ""
+    while not (text.count("Arrived") >= 2):
+        assert time.time() - started < 420, f"the teams never arrived: {text[-800:]}"
+        text += next_wake(client, 120)["content"]
+        finish_turn(client, "Driving")
+    log.append(text)
+    print(f"DROVE IN {time.time() - started:.0f} s", flush=True)
+    state = in_game(harness, """
+    ["V1", "V2"] apply {
+        private _hunter = brmh_cmd_vehicles get _x;
+        [_x, round (_hunter distance2D [5250, 4450]), count crew _hunter, damage _hunter]
+    }
+    """)
+    print("HUNTERS AT THE GRID", state, flush=True)
+    assert all(row[1] < 200 and row[2] == 4 for row in state), state
+
+    # Nobody gets out until told, and being there isn't enough to end the mission.
+    assert not client.tool("commander_mission").get("ended"), "it ended with the teams still mounted"
+    for team in ("Alpha", "Bravo"):
+        client.tool("commander_order", to=team, legs=[{"type": "DISMOUNT"}])
+    finish_turn(client, "Dismounting")
+    text = ""
+    deadline = time.time() + 90
+    while "MISSION END" not in text:
+        assert time.time() < deadline, f"the mission never ended: {text[-800:]}"
+        text += next_wake(client, 60)["content"]
+        if "MISSION END" not in text:
+            finish_turn(client, "Waiting")
+    log.append(text)
+    assert "Objective achieved: Alpha and Bravo are on foot at grid 052 044." in text, text[-500:]
+    return log
+
+
 def play_village(client: Client) -> list[str]:
     """Plumbing for the combat scenario: timed attack, repeating check-in, markers, contact reports, an ending."""
     harness = Harness()
@@ -589,6 +657,7 @@ def main() -> None:
                ("vehicles and crews", "vehicles_check", "hold", play_vehicles),
                ("fire missions", "fire_check", "hold", play_fire),
                ("fire support", "village_with_mortar", "hold", play_fire_support),
+               ("motor march", "motor_march", "hold", play_motor_march),
                ("combat: take the village", "take_the_village", "hold", play_village, True)]
     wanted = sys.argv[1:]  # words to match in battle names; none means all of them
     try:

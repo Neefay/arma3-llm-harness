@@ -353,6 +353,20 @@ class Runtime:
             enemies = self.scenario.enemies
             if enemies and all(alive.get(enemy["id"], 1) == 0 for enemy in enemies):
                 self.success_reason = "Objective achieved: the enemy has been cleared."
+        elif "stations" in success:
+            target, spoken = parse_grid(success["of"], self.world_size)
+
+            def there(group: dict) -> bool:
+                """Every living man, because a leader getting there isn't a team getting there."""
+                return bool(group.get("alive")) and all(
+                    math.dist(unit[:2], target) <= success["within_m"] for unit in group.get("units") or []
+                ) and not (success.get("on_foot") and group.get("mounted"))
+
+            wanted = {group.get("group"): group for group in groups if group.get("group") in success["stations"]}
+            if len(wanted) == len(success["stations"]) and all(there(group) for group in wanted.values()):
+                how = "on foot at" if success.get("on_foot") else "at"
+                names = " and ".join(success["stations"])
+                self.success_reason = f"Objective achieved: {names} are {how} grid {spoken}."
         elif "station" in success:
             target, _ = parse_grid(success["of"], self.world_size)
             for group in groups:

@@ -1799,6 +1799,52 @@ def test_the_mortar_scenario_is_a_real_battle():
     assert {"FIRE_MISSION", "CHECK_FIRE"} <= set(built.stations["Hammer"]["capabilities"])
 
 
+def marching(tmp_path) -> Battle:
+    teams = [{"callsign": name, "role": "x", "capabilities": ["MOVE"], "at": "029 029"} for name in ("Alpha", "Bravo")]
+    b = Battle(tmp_path, stations=teams, success={"stations": ["Alpha", "Bravo"], "on_foot": True, "within_m": 100,
+                                                  "of": "052 044"})
+    b.start()
+    return b
+
+
+def team(name, x=5250, y=4450, mounted=0, alive=4) -> dict:
+    return {"group": name, "side": "WEST", "alive": alive, "mounted": mounted, "pos": [x, y],
+            "units": [[x, y, 0]] * alive}
+
+
+def truth(b, t, *groups) -> None:
+    b.t = t
+    b.game.emit(type="cmd_truth", t=t, groups=list(groups))
+    b.runtime.step(0)
+
+
+@pytest.mark.parametrize("groups", [
+    [team("Alpha", mounted=4), team("Bravo", mounted=4)],  # there, but still aboard
+    [team("Alpha"), team("Bravo", mounted=1)],  # someone's still getting out
+    [team("Alpha"), team("Bravo", x=4000)],  # one team's elsewhere
+    [team("Alpha")],  # the other isn't on the net at all
+    [team("Alpha"), team("Bravo", alive=0)],  # wiped out
+])
+def test_a_march_isnt_over_until_both_teams_are_on_foot_there(tmp_path, groups):
+    b = marching(tmp_path)
+    truth(b, 110, *groups)
+    assert b.runtime.success_reason == ""
+
+
+def test_one_man_short_of_the_grid_isnt_there(tmp_path):
+    b = marching(tmp_path)
+    straggler = team("Bravo")
+    straggler["units"][3] = [4000, 4450, 0]
+    truth(b, 110, team("Alpha"), straggler)
+    assert b.runtime.success_reason == ""
+
+
+def test_a_march_ends_with_both_teams_on_foot_at_the_grid(tmp_path):
+    b = marching(tmp_path)
+    truth(b, 110, team("Alpha"), team("Bravo", x=5290, y=4470))
+    assert b.runtime.success_reason == "Objective achieved: Alpha and Bravo are on foot at grid 052 044."
+
+
 def in_the_fight(tmp_path) -> Battle:
     b = Battle(tmp_path)
     b.start()

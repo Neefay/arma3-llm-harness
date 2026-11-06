@@ -558,6 +558,9 @@ brmh_cmd_fnc_truth = {
 			["group", groupId _x],
 			["side", str side _x],
 			["alive", count _alive],
+			["mounted", {
+				vehicle _x isNotEqualTo _x
+			} count _alive],
 			["pos", if (_alive isEqualTo []) then {
 				[]
 			} else {
@@ -910,8 +913,17 @@ brmh_cmd_fnc_order = {
 	if (_mode isEqualTo "replace") then {
 		[_group] call brmh_cmd_fnc_clearRoute;
 	};
+	// A man in a seat told to follow climbs out to do it, and back in a few seconds later, so not when his leader is
+	// riding too. It's still needed when he isn't: a squad on foot barely moves while a man it left on a gun hasn't had it.
+	private _riding = vehicle (leader _group) isNotEqualTo (leader _group) and {
+		not (vehicle (leader _group) isKindOf "StaticWeapon")
+	};
 	{
-		_x doFollow leader _group;
+		if (not _riding or {
+			vehicle _x isEqualTo _x
+		}) then {
+			_x doFollow leader _group;
+		};
 	} forEach units _group;
 	private _first = [];
 	{
