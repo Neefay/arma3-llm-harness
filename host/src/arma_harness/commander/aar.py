@@ -61,6 +61,10 @@ def battle_data(folder: Path, commander: dict | None = None) -> dict:
     frames = [{"t": row["t"], "groups": [_group(g) for g in row.get("groups") or [] if g.get("group") in wanted]}
               for row in _until_clock_restarts(records.read_truth()) if in_battle(row)]
     radio = [_radio(row, world_size) for row in records.read("radio") if in_battle(row)]
+    objectives = [row for row in records.read("radio_events") if "objective_complete" in row]
+    radio = sorted(radio + [{"t": row["t"], "from": "HQ", "to": "all", "kind": "objective", "precedence": "flash",
+                             "text": f"Objective complete: {row['text']}"} for row in objectives],
+                   key=lambda row: row["t"])
     markers = _markers(records, scenario, world_size)
     truth = records.read_truth()
     kills = [_kill(row, folder.name) for row in _until_clock_restarts(records.read_kills())
@@ -85,6 +89,8 @@ def battle_data(folder: Path, commander: dict | None = None) -> dict:
         "enemy_total": sum(enemy.get("units", 4) for enemy in enemies), "frames": frames, "kills": kills,
         "radio": radio, "turns": turns, "markers": markers, "orders": orders, "notes": records.notes(),
         "shells": shells, "missions": [_mission(row, shells) for row in missions],
+        "objectives_done": [{"t": row["t"], "id": row["objective_complete"], "text": row["text"]}
+                            for row in objectives],
     }
     return {**data, "score": scorecard(data)}
 

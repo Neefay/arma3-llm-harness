@@ -1818,6 +1818,10 @@ def truth(b, t, *groups) -> None:
     b.runtime.step(0)
 
 
+def met(b) -> list[str]:
+    return [due["met"] for due in b.runtime.objectives_due.values()]
+
+
 @pytest.mark.parametrize("groups", [
     [team("Alpha", mounted=4), team("Bravo", mounted=4)],  # there, but still aboard
     [team("Alpha"), team("Bravo", mounted=1)],  # someone's still getting out
@@ -1828,7 +1832,7 @@ def truth(b, t, *groups) -> None:
 def test_a_march_isnt_over_until_both_teams_are_on_foot_there(tmp_path, groups):
     b = marching(tmp_path)
     truth(b, 110, *groups)
-    assert b.runtime.success_reason == ""
+    assert met(b) == []
 
 
 def test_one_man_short_of_the_grid_isnt_there(tmp_path):
@@ -1836,13 +1840,121 @@ def test_one_man_short_of_the_grid_isnt_there(tmp_path):
     straggler = team("Bravo")
     straggler["units"][3] = [4000, 4450, 0]
     truth(b, 110, team("Alpha"), straggler)
-    assert b.runtime.success_reason == ""
+    assert met(b) == []
 
 
 def test_a_march_ends_with_both_teams_on_foot_at_the_grid(tmp_path):
     b = marching(tmp_path)
     truth(b, 110, team("Alpha"), team("Bravo", x=5290, y=4470))
-    assert b.runtime.success_reason == "Objective achieved: Alpha and Bravo are on foot at grid 052 044."
+    assert met(b) == ["Alpha and Bravo are on foot at grid 052 044"]
+    b.advance(125)
+    assert b.runtime.ended == "Objective achieved: Alpha and Bravo are on foot at grid 052 044."
+
+
+TWO_TASKS = [{"id": "T1", "text": "Get Alpha to the bridge.",
+              "success": {"station": "Alpha", "within_m": 50, "of": "034 030"}},
+             {"id": "T2", "text": "Clear the enemy.", "success": {"enemy_cleared": True}}]
+EAST = [{"id": "East", "at": "060 060", "units": 4}]
+
+
+def two_tasks(tmp_path) -> Battle:
+    raw = {"objectives": TWO_TASKS, "enemies": EAST, "success": None}
+    b = Battle(tmp_path, **raw)
+    b.start()
+    return b
+
+
+def alpha_at(x=3450, y=3050) -> dict:
+    return {"group": "Alpha", "side": "WEST", "alive": 4, "pos": [x, y], "units": [[x, y, 0]] * 4}
+
+
+def enemy(alive) -> dict:
+    return {"group": "East", "side": "EAST", "alive": alive, "pos": [6050, 6050], "units": []}
+
+
+def test_an_objective_done_is_its_own_event_and_the_battle_goes_on(tmp_path):
+    b = two_tasks(tmp_path)
+    b.runtime.end_turn("x", messages_only=True)
+    truth(b, 110, alpha_at(), enemy(4))
+    b.wall = 1000
+    b.advance(125)
+    text = "\n".join(wake[0] for wake in b.wakes)
+    assert "OBJECTIVE COMPLETE: Get Alpha to the bridge." in text and "MISSION END" not in text
+    assert "Higher command confirms that Alpha reached grid 034 030. This is certain" in text
+    assert not b.runtime.ended and list(b.runtime.objectives_done) == ["T1"]
+    assert b.records.read("radio_events")[-1]["objective_complete"] == "T1"
+
+
+def test_the_briefing_shows_whats_done_and_whats_left(tmp_path):
+    b = two_tasks(tmp_path)
+    truth(b, 110, alpha_at(), enemy(4))
+    b.advance(125)
+    brief = b.runtime.briefing()
+    assert "OBJECTIVES, 04:35 left" in brief and "Done: Get Alpha to the bridge.\nClear the enemy." in brief
+    assert b.runtime.mission()["objectives"] == [{"text": "Get Alpha to the bridge.", "done": True},
+                                                 {"text": "Clear the enemy.", "done": False}]
+
+
+def test_the_mission_ends_only_when_all_are_done(tmp_path):
+    b = two_tasks(tmp_path)
+    b.runtime.end_turn("x", messages_only=True)
+    truth(b, 110, alpha_at(), enemy(4))
+    b.advance(125)
+    assert not b.runtime.ended
+    truth(b, 130, alpha_at(3000, 3000), enemy(0))
+    b.advance(145)
+    assert b.runtime.ended == "Objective achieved: all objectives are complete."
+    assert "OBJECTIVE COMPLETE: Clear the enemy." in "\n".join(wake[0] for wake in b.wakes)
+
+
+def test_a_done_objective_stays_done_if_they_leave(tmp_path):
+    b = two_tasks(tmp_path)
+    truth(b, 110, alpha_at(), enemy(4))
+    b.advance(125)
+    truth(b, 130, alpha_at(3000, 3000), enemy(4))
+    b.advance(150)
+    assert list(b.runtime.objectives_done) == ["T1"]
+
+
+def test_running_out_of_time_says_how_far_it_got(tmp_path):
+    b = two_tasks(tmp_path)
+    truth(b, 110, alpha_at(), enemy(4))
+    b.advance(125)
+    b.silent(100 + 301)
+    assert b.runtime.ended == "Time limit reached. 1 of 2 objectives complete."
+
+
+def test_objectives_survive_a_restart_of_the_host(tmp_path):
+    b = two_tasks(tmp_path)
+    truth(b, 110, alpha_at(), enemy(4))
+    b.runtime.save()
+    b.runtime = b.new_runtime()
+    b.advance(125)
+    assert list(b.runtime.objectives_done) == ["T1"]
+
+
+def test_one_objective_gets_both_events_in_one_wake(tmp_path):
+    b = Battle(tmp_path)
+    b.start()
+    b.runtime.end_turn("x", messages_only=True)
+    truth(b, 110, alpha_at())
+    b.advance(125)
+    text = "\n".join(wake[0] for wake in b.wakes)
+    assert "OBJECTIVE COMPLETE: Get Alpha to B." in text and "MISSION END. Objective achieved: Alpha reached" in text
+    assert text.index("OBJECTIVE COMPLETE") < text.index("MISSION END")
+
+
+@pytest.mark.parametrize("raw, words", [
+    ({"objectives": [{"text": "No id"}]}, "needs an id"),
+    ({"objectives": [{"id": "T1"}]}, "needs an id"),
+    ({"objectives": [{"id": "T1", "text": "a"}, {"id": "T1", "text": "b"}]}, "unique"),
+    ({"objectives": [{"id": "T1", "text": "a", "success": {"dance": True}}]}, "unknown success"),
+    ({"objectives": [{"id": "T1", "text": "a"}], "success": {"enemy_cleared": True}}, "not both"),
+])
+def test_bad_objectives_are_refused(raw, words):
+    base = {"name": "t", "mission": "m", "text": "x", "time_limit": "5:00", "stations": []}
+    with pytest.raises(ValueError, match=words):
+        scenario.build({**base, **raw})
 
 
 def test_two_calls_against_different_enemies_say_so(tmp_path):

@@ -258,6 +258,8 @@ def aar(home: Home | None = None) -> str:
     for row in records.read("radio_events"):
         if "mission_end" in row:
             rows.append((row["t"], f"END    {row['mission_end']}"))
+        elif "objective_complete" in row:
+            rows.append((row["t"], f"GOAL   {row['text']}"))
         else:
             rows.append((row["t"], f"EVENT  {row['scenario_event']}"))
     stations, dead = _stations(records), set()

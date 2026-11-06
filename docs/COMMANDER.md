@@ -897,6 +897,17 @@ Every scenario needs stations, an enemy setup, end conditions and a time limit. 
 
 ### 14.6 Win and loss
 
+A scenario has one or more objectives, each with its own success condition. A simple scenario gives `objective` and `success`. One with several tasks gives a list instead:
+
+```yaml
+objectives:
+  - { id: T1, text: Take the bridge., success: { station: Alpha, within_m: 50, of: "034 030" } }
+  - { id: T2, text: Clear the village., success: { enemy_cleared: true } }
+```
+
+They can be done in any order, and one stays done even if its condition stops holding. Each brings its own notice, `OBJECTIVE COMPLETE: <text> Higher command confirms that <what happened>. This is certain, whatever your own map says.`, and the mission ends when all are done, or at the time limit, which says how many were. The first LLM to get a bare mission end logged it as a discrepancy, because its map still showed enemies, so the notice says who's speaking, and the doctrine says to believe it.
+
+
 The harness alone judges end conditions, and the commander learns the result only from the mission-end wake.
 
 ## 15. Operating a battle

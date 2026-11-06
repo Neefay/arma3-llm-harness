@@ -76,8 +76,8 @@ class Runtime:
             vehicle["id"]: {"id": vehicle["id"], "key": vehicle["id"], "name": vehicle["name"], "at": vehicle["at"],
                             "t": None, "wrecked": False}
             for vehicle in vehicles or [] if vehicle.get("known", True)}
-        self.success_at: float | None = saved.get("success_at")
-        self.success_reason: str = saved.get("success_reason", "")
+        self.objectives_due: dict[str, dict] = saved.get("objectives_due", {})  # met, and waiting for last words
+        self.objectives_done: dict[str, float] = saved.get("objectives_done", {})
         self.next_id: dict[str, int] = saved.get("next_id", {})
         self.schedules: dict[str, dict] = saved.get("schedules", {})
         self.missed: dict[str, int] = saved.get("missed", {})
@@ -343,17 +343,25 @@ class Runtime:
     def _judge(self, groups: list[dict]) -> None:
         """The harness alone decides how a battle ends. The commander only hears the result."""
         alive = {group.get("group"): group.get("alive", 0) for group in groups}
-        success = self.scenario.success
         if self.scenario.failure.get("all_stations_lost") and all(
                 alive.get(callsign, 1) == 0 for callsign in self.scenario.stations):
             self._end("All stations have been lost.")
             return
-        if self.success_at is not None or not success:
-            return
+        for objective in self.scenario.objectives:
+            key = objective["id"]
+            if key in self.objectives_due or key in self.objectives_done:
+                continue
+            met = self._met(objective["success"], groups, alive)
+            if met:
+                # True position can get there seconds before the group reports arriving. Let its last words through.
+                self.objectives_due[key] = {"at": self.rel() + SUCCESS_GRACE_S, "met": met}
+
+    def _met(self, success: dict, groups: list[dict], alive: dict) -> str | None:
+        """What's been achieved, if this objective's condition holds now."""
         if success.get("enemy_cleared"):
             enemies = self.scenario.enemies
             if enemies and all(alive.get(enemy["id"], 1) == 0 for enemy in enemies):
-                self.success_reason = "Objective achieved: the enemy has been cleared."
+                return "the enemy has been cleared"
         elif "stations" in success:
             target, spoken = parse_grid(success["of"], self.world_size)
 
@@ -367,16 +375,33 @@ class Runtime:
             if len(wanted) == len(success["stations"]) and all(there(group) for group in wanted.values()):
                 how = "on foot at" if success.get("on_foot") else "at"
                 names = " and ".join(success["stations"])
-                self.success_reason = f"Objective achieved: {names} are {how} grid {spoken}."
+                return f"{names} are {how} grid {spoken}"
         elif "station" in success:
             target, _ = parse_grid(success["of"], self.world_size)
             for group in groups:
                 if group.get("group") == success["station"] and group.get("alive") and group.get("pos") \
                         and math.dist(group["pos"], target) <= success["within_m"]:
-                    self.success_reason = f"Objective achieved: {success['station']} reached grid {success['of']}."
-        if self.success_reason:
-            # True position can get there seconds before the group reports arriving. Let its last words through.
-            self.success_at = self.rel() + SUCCESS_GRACE_S
+                    return f"{success['station']} reached grid {success['of']}"
+        return None
+
+    def _complete_objectives(self, rel: float) -> None:
+        """Each its own event, said by someone who can see what the commander can't, so it can be believed."""
+        met = ""
+        for objective in self.scenario.objectives:
+            due = self.objectives_due.get(objective["id"])
+            if due and rel >= due["at"]:
+                del self.objectives_due[objective["id"]]
+                self.objectives_done[objective["id"]] = round(rel, 1)
+                met = due["met"]
+                self._show(f"OBJECTIVE COMPLETE: {objective['text']}")
+                self.wake.notice(f"OBJECTIVE COMPLETE: {objective['text']} Higher command confirms that {met}. This is "
+                                 "certain, whatever your own map says.")
+                self.records.append("radio_events", {"t": round(rel, 1), "objective_complete": objective["id"],
+                                                     "text": objective["text"], "met": met})
+                self.dirty = True
+        if met and len(self.objectives_done) == len(self.scenario.objectives):
+            many = len(self.scenario.objectives) > 1
+            self._end("Objective achieved: all objectives are complete." if many else f"Objective achieved: {met}.")
 
     def _end(self, reason: str) -> None:
         self.ended, self.ended_at = reason, self.rel()
@@ -397,10 +422,12 @@ class Runtime:
                 if index not in self.events_done and rel >= event["at_s"]:
                     self.events_done.append(index)
                     self._scenario_event(event)
-            if not self.ended and self.success_at is not None and rel >= self.success_at:
-                self._end(self.success_reason)
+            if not self.ended:
+                self._complete_objectives(rel)
             if not self.ended and rel >= self.scenario.time_limit_s:
-                self._end("Time limit reached.")
+                total = len(self.scenario.objectives)
+                done = f" {len(self.objectives_done)} of {total} objectives complete." if total > 1 else ""
+                self._end(f"Time limit reached.{done}")
             self._fire_schedules()
             self._send_due()
             wake = self.wake.poll(self.now())
@@ -494,7 +521,10 @@ class Runtime:
         if not self.ended:
             # A long quiet stretch of routine checks drifted away from this once: a real commander has it in mind.
             left = max(0, round(self.scenario.time_limit_s - self.rel()))
-            lines += ["", f"OBJECTIVE, {left // 60:02d}:{left % 60:02d} left", self.scenario.objective]
+            many = len(self.scenario.objectives) > 1
+            lines += ["", f"{'OBJECTIVES' if many else 'OBJECTIVE'}, {left // 60:02d}:{left % 60:02d} left"]
+            lines += [("Done: " if objective["id"] in self.objectives_done else "") + objective["text"]
+                      for objective in self.scenario.objectives]
         if wake and wake.notices:
             lines += ["", "NOTICE", *wake.notices]
         if wake and wake.timers:
@@ -584,7 +614,7 @@ class Runtime:
             "t0": self.t0, "turn": self.turn, "cursor": self.cursor, "delivered": self.delivered,
             "ended": self.ended, "ended_at": self.ended_at, "restarted": self.restarted, "outbox": self.outbox,
             "destroyed": self.destroyed, "vehicles": self.vehicles, "fire_orders": self.fire_orders,
-            "success_at": self.success_at, "success_reason": self.success_reason,
+            "objectives_due": self.objectives_due, "objectives_done": self.objectives_done,
             "next_id": self.next_id, "routes": self.routes, "schedules": self.schedules, "missed": self.missed,
             "markers": self.markers, "checked": self.checked, "last_checkin": self.last_checkin,
             "last_heard": self.last_heard,
@@ -621,6 +651,8 @@ class Runtime:
             return {
                 "time": format_time(self.rel()), "mission": self.scenario.text,
                 "time_limit": format_time(self.scenario.time_limit_s),
+                "objectives": [{"text": objective["text"], "done": objective["id"] in self.objectives_done}
+                               for objective in self.scenario.objectives],
                 "roster": self.roster()["stations"],
                 "markers": [{"id": m["id"], "kind": m["kind"], "label": m.get("label"), "at": m["at"],
                              **({"building": m["building"]} if m.get("building") else {})}

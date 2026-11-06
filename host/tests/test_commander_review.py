@@ -188,6 +188,17 @@ def test_a_battle_is_over_even_if_the_session_closed_before_saving_that(battle):
     assert data["ended"] == "Objective achieved." and data["score"]["ended"] == "Objective achieved."
 
 
+def test_an_objective_done_is_on_the_radio_log_and_the_page(battle):
+    rows(battle / "radio_events.jsonl", {"t": 40, "objective_complete": "T1", "text": "Take the bridge.", "met": "x"},
+         {"t": 100, "mission_end": "Objective achieved."})
+    data = aar.battle_data(battle)
+    assert data["objectives_done"] == [{"t": 40, "id": "T1", "text": "Take the bridge."}]
+    row = next(row for row in data["radio"] if row.get("kind") == "objective")
+    assert row["text"] == "Objective complete: Take the bridge." and row["t"] == 40
+    assert [row["t"] for row in data["radio"]] == sorted(row["t"] for row in data["radio"])
+    assert data["score"]["questions"] == 0
+
+
 def test_the_page_holds_this_battle_and_nothing_else(battle):
     data = aar.battle_data(battle)
     assert data["name"] == "Take the village" and data["attempt"] == 2 and data["enemy_total"] == 14

@@ -22,7 +22,6 @@ class Scenario:
     stations: dict[str, dict]
     side: str = "west"
     markers: dict[str, dict] = field(default_factory=dict)
-    success: dict = field(default_factory=dict)
     failure: dict = field(default_factory=dict)
     enemies: list[dict] = field(default_factory=list)
     events: list[dict] = field(default_factory=list)
@@ -32,7 +31,7 @@ class Scenario:
     quiet_s: float = 3.0
     ceiling_s: float = 15.0
     mid_turn_messages: str = HOLD
-    objective: str = ""  # what every briefing reminds the commander of. Falls back to the mission text
+    objectives: list[dict] = field(default_factory=list)  # {id, text, success}. The battle's won when all are done
 
 
 def load(path: str | Path) -> Scenario:
@@ -42,6 +41,26 @@ def load(path: str | Path) -> Scenario:
         file = SCENARIO_DIR / f"{path}.yaml"
     raw = yaml.safe_load(file.read_text(encoding="utf-8"))
     return build(raw)
+
+
+def _objectives(raw: dict) -> list[dict]:
+    """A list under `objectives`, or the one a simple scenario describes with `objective` and `success`."""
+    if raw.get("objectives") and (raw.get("success") or raw.get("objective")):
+        raise ValueError("use either objectives, or objective and success, not both")
+    listed = raw.get("objectives") or [{"id": "OBJ1", "text": raw.get("objective") or raw["text"],
+                                        "success": raw.get("success") or {}}]
+    out = []
+    for item in listed:
+        if not item.get("id") or not item.get("text"):
+            raise ValueError(f"an objective needs an id and text: {item}")
+        success = item.get("success") or {}
+        if success and not {"enemy_cleared", "stations", "station"} & set(success):
+            raise ValueError(f"{item['id']}: unknown success {success}")
+        out.append({"id": item["id"], "text": str(item["text"]).strip(), "success": success})
+    ids = [item["id"] for item in out]
+    if len(set(ids)) != len(ids):
+        raise ValueError(f"objective ids must be unique: {ids}")
+    return out
 
 
 def build(raw: dict) -> Scenario:
@@ -79,11 +98,11 @@ def build(raw: dict) -> Scenario:
         if unknown:
             raise ValueError(f"{station['callsign']}: crew for unknown vehicles {sorted(unknown)}")
     return Scenario(
+        objectives=_objectives(raw),
         vehicles=vehicles,
         name=raw["name"], mission=raw["mission"], text=raw["text"].strip(),
-        objective=str(raw.get("objective") or raw["text"]).strip(),
         time_limit_s=parse_time(raw["time_limit"]), stations=stations, side=raw.get("side", "west"),
-        markers={m["id"]: m for m in raw.get("markers") or []}, success=raw.get("success") or {}, events=events,
+        markers={m["id"]: m for m in raw.get("markers") or []}, events=events,
         failure=raw.get("failure") or {}, enemies=enemies, spectator=bool(raw.get("spectator")),
         ao=raw.get("ao") or {},
         quiet_s=debounce.get("quiet_s", 3.0), ceiling_s=debounce.get("ceiling_s", 15.0), mid_turn_messages=mode,

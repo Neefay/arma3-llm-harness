@@ -578,6 +578,8 @@ def play_motor_march(client: Client) -> list[str]:
             finish_turn(client, "Waiting")
     log.append(text)
     assert "Objective achieved: Alpha and Bravo are on foot at grid 052 044." in text, text[-500:]
+    assert "OBJECTIVE COMPLETE: Both teams on foot at grid 052 044. Higher command confirms" in text, text[-500:]
+    assert text.index("OBJECTIVE COMPLETE") < text.index("MISSION END"), text[-500:]
     return log
 
 
