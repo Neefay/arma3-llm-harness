@@ -14,9 +14,10 @@ from arma_harness.commander.orders import Invalid
 from arma_harness.commander.records import Records
 from arma_harness.commander.reports import Tracker
 from arma_harness.commander.runtime import Runtime
-from arma_harness.commander.server import ORDER_TYPES_HELP, TOOL_NAMES, Server
+from arma_harness.commander.server import EARLIER_BATTLE, NO_BATTLE, ORDER_TYPES_HELP, TOOL_NAMES, Server
 from arma_harness.commander.wake import DELIVER, HOLD, WakeLogic
-from arma_harness.config import REPO_ROOT
+from arma_harness.config import REPO_ROOT, Home
+from arma_harness.harness import HarnessError
 
 
 @pytest.fixture(autouse=True)
@@ -2635,6 +2636,93 @@ def test_server_declares_the_channel_and_keeps_errors_clean():
     assert rows[5]["result"]["content"][0]["text"] == "Call commander_mission first."
     assert "Unknown tool" in rows[6]["result"]["content"][0]["text"]
     assert "error" in rows[7]
+
+
+def tool_reply(server: Server, stdout: io.BytesIO) -> str:
+    server._tool({"id": 1, "params": {"name": "commander_roster"}})
+    return json.loads(stdout.getvalue().splitlines()[-1])["result"]["content"][0]["text"]
+
+
+def test_a_session_opened_while_the_game_boots_gets_the_battle_once_its_ready():
+    """It used to find the last battle, finished, and report the mission as already over."""
+    ready = []
+
+    def factory(deliver):
+        if not ready:
+            raise HarnessError("no commander scenario is set up")
+        return StubRuntime()
+
+    stdout = io.BytesIO()
+    server = Server(io.BytesIO(), stdout, runtime_factory=factory)
+    server.stop.set()
+    assert tool_reply(server, stdout) == NO_BATTLE
+    ready.append(True)
+    assert tool_reply(server, stdout) != NO_BATTLE
+
+
+def test_a_session_from_an_earlier_battle_is_told_so_and_stops_running():
+    current = [True]
+    stdout = io.BytesIO()
+    steps = []
+
+    class Counting(StubRuntime):
+        def step(self):
+            steps.append(1)
+            time.sleep(0.01)
+
+    server = Server(io.BytesIO(), stdout, runtime_factory=lambda deliver: Counting(),
+                    still_current=lambda runtime: current[0])
+    assert tool_reply(server, stdout) != EARLIER_BATTLE
+    current[0] = False
+    assert tool_reply(server, stdout) == EARLIER_BATTLE
+    time.sleep(0.05)
+    counted = len(steps)
+    time.sleep(0.05)
+    assert len(steps) == counted
+    server.stop.set()
+
+
+def test_is_current_goes_by_the_records_folder(tmp_path):
+    from types import SimpleNamespace
+
+    from arma_harness.commander import operator
+    home = Home(tmp_path)
+    file = operator._current_file(home)
+    mine = SimpleNamespace(records=SimpleNamespace(folder=tmp_path / "one"))
+    assert not operator.is_current(mine, home)  # none set up
+    file.write_text(json.dumps({"folder": str(tmp_path / "one")}), encoding="utf-8")
+    assert operator.is_current(mine, home)
+    file.write_text(json.dumps({"folder": str(tmp_path / "two")}), encoding="utf-8")
+    assert not operator.is_current(mine, home)
+    file.write_text('{"fold', encoding="utf-8")
+    assert operator.is_current(mine, home)  # being written just now, so it can't be told
+
+
+def starting(tmp_path, state):
+    from types import SimpleNamespace
+
+    from arma_harness.commander import operator
+
+    def boot(mission):
+        assert not operator._current_file(home).exists()  # already gone by the time anything takes long
+        raise HarnessError("stopping here")
+
+    home = Home(tmp_path)
+    operator._current_file(home).write_text("{}", encoding="utf-8")
+    harness = SimpleNamespace(home=home, forget_dead_run=lambda: None, state=lambda: state, start=boot)
+    with pytest.raises(HarnessError) as caught:
+        operator.start(str(REPO_ROOT / "scenarios" / "commander" / "casevac_rv.yaml"), harness=harness)
+    return operator._current_file(home).exists(), str(caught.value)
+
+
+def test_starting_forgets_the_last_battle_before_booting(tmp_path):
+    assert starting(tmp_path, None) == (False, "stopping here")
+
+
+def test_a_start_that_was_refused_leaves_the_running_battle_alone(tmp_path):
+    from types import SimpleNamespace
+    exists, why = starting(tmp_path, SimpleNamespace(mission="something_else", run_id="r1"))
+    assert exists and "Stop it first" in why
 
 
 def test_wakes_are_channel_notifications():

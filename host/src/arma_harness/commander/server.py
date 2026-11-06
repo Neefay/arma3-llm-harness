@@ -14,7 +14,8 @@ import time
 import traceback
 from importlib import resources
 
-from .operator import load_current
+from ..harness import HarnessError
+from .operator import is_current, load_current
 from .orders import Invalid
 
 # Delivered by the server, not as a CLAUDE.md: the tool lockdown denies Read, which also stops the client loading one.
@@ -133,14 +134,19 @@ TOOLS = [
                                                       "limit": {"type": "number"}}}},
 ]
 TOOL_NAMES = {tool["name"] for tool in TOOLS}
+NO_BATTLE = ("No battle is set up yet. If one is still starting, try again in a minute. If not, the operator needs to "
+             "run: arma-harness commander start <scenario>")
+EARLIER_BATTLE = ("This session belongs to an earlier battle, which has been replaced or stopped. Nothing you do here "
+                  "reaches the new one: tell the operator to open a new session.")
 
 
 class Server:
-    def __init__(self, stdin=None, stdout=None, runtime_factory=load_current):
+    def __init__(self, stdin=None, stdout=None, runtime_factory=load_current, still_current=None):
         self.stdin = stdin or sys.stdin.buffer
         self.stdout = stdout or sys.stdout.buffer
         self.write_lock = threading.Lock()
         self.runtime_factory = runtime_factory
+        self.still_current = still_current or (lambda runtime: True)
         self.runtime = None
         self.stop = threading.Event()
 
@@ -156,12 +162,16 @@ class Server:
 
     def get_runtime(self):
         if self.runtime is None:
-            self.runtime = self.runtime_factory(self.wake)
+            try:
+                self.runtime = self.runtime_factory(self.wake)
+            except HarnessError as exc:
+                raise Invalid(NO_BATTLE) from exc
             threading.Thread(target=self._loop, daemon=True).start()
         return self.runtime
 
     def _loop(self) -> None:
-        while not self.stop.is_set():
+        # Its timers and scenario events would otherwise go on running, in a new battle with the same callsigns.
+        while not self.stop.is_set() and self.still_current(self.runtime):
             try:
                 self.runtime.step()
             except Exception:
@@ -173,6 +183,8 @@ class Server:
         if name not in TOOL_NAMES:
             raise Invalid(f"Unknown tool {name}.")
         runtime = self.get_runtime()
+        if not self.still_current(runtime):
+            raise Invalid(EARLIER_BATTLE)
         match name:
             case "commander_mission":
                 return {**runtime.mission(), "doctrine": DOCTRINE}
@@ -253,7 +265,7 @@ class Server:
 
 
 def main() -> None:
-    Server().serve()
+    Server(still_current=is_current).serve()
 
 
 if __name__ == "__main__":

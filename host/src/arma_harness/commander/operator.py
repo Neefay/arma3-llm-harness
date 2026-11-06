@@ -72,12 +72,14 @@ def start(path: str, mode: str | None = None, harness: Harness | None = None, wa
     scenario = scenario_mod.build(raw)
     h.forget_dead_run()
     state = h.state()
+    if state is not None and state.mission != scenario.mission:
+        raise HarnessError(f"run {state.run_id} is {state.mission!r}, and this scenario needs {scenario.mission!r}. "
+                           "Stop it first (arma-harness commander stop).")
+    # Booting takes a while, and a session opened meanwhile mustn't find the last battle and think it's this one.
+    _current_file(h.home).unlink(missing_ok=True)
     if state is None:
         h.start(mission=scenario.mission)
         state = h.state()
-    elif state.mission != scenario.mission:
-        raise HarnessError(f"run {state.run_id} is {state.mission!r}, and this scenario needs {scenario.mission!r}. "
-                           "Stop it first (arma-harness commander stop).")
     world = _result(h.exec("[worldSize, mapGridPosition [3450, 3050, 0]]", "server", timeout=10))
     world_size, sample = world
     if sample != "034030":
@@ -228,6 +230,17 @@ def load_current(deliver) -> Runtime:
     return Runtime(HarnessGame(h), scenario_mod.build(current["scenario"]), Records(Path(current["folder"])), deliver,
                    world_size=current["world_size"], buildings=current.get("buildings"),
                    vehicles=current.get("vehicles"))
+
+
+def is_current(runtime: Runtime, home: Home | None = None) -> bool:
+    """Whether this is still the battle that `commander start` last set up."""
+    file = _current_file(home or Home())
+    try:
+        return Path(json.loads(file.read_text(encoding="utf-8"))["folder"]) == runtime.records.folder
+    except FileNotFoundError:
+        return False
+    except ValueError:  # caught halfway through being written, which says nothing
+        return True
 
 
 def _load_records(home: Home) -> tuple[dict, Records]:
