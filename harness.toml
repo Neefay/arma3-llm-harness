@@ -34,6 +34,12 @@ source = "missions/brmh_commander.VR"
 mods = ["@CBA_A3", "@Pythia", "@brmh"]
 client_mods = ["@CBA_A3", "@brmh"]
 
+[missions.commander_ace]
+# The same, with ACE's medical system, for CASEVAC.
+source = "missions/brmh_commander.VR"
+mods = ["@CBA_A3", "@ace", "@Pythia", "@brmh"]
+client_mods = ["@CBA_A3", "@ace", "@brmh"]
+
 # Example profile for your own mission:
 #
 # [missions.my_mission]
