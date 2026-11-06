@@ -636,6 +636,14 @@ A squad under fire can't do what a calm one can, so its radio behaviour changes 
 - **Questions get "Wait one."** The real answer comes as a message when the delay is up, built from what the squad knows by then, and it wakes the commander like any message. Asking again while one is waiting adds nothing.
 - **A squad wiped out before it gets a message away never sends it.** That's noted only in the operator's log.
 
+### 10.6.1 Wounds
+
+Measured on the real game, in [spike_wounds.py](../host/tests/spikes/move_lag/spike_wounds.py). A leader with `hitLegs` at 0.5 or more walks at about 1 m/s, and his whole squad goes at that pace: 45 m in 40 s, against 167 m when fit. At 0.3 there's no effect. `canStand` stays true even at 0.9, so it's no use for this. A leader with hurt arms or body isn't slowed. Real bullets raise `damage` and set `lifeState` to `INJURED`, which is what the wounded count reads, but neither says where.
+
+So a squad says who's hit in the legs: `Slow going, Sam Reed's hit in the legs.` as PRIORITY for its leader, and the same without "Slow going" as ROUTINE for anyone else, once each. The `strength` answer names them too. Truth records hold the count and whether the leader is one, so a review can tell a limping squad from a stuck one.
+
+A man at `damage` 0.7 was down to 0.25 within 40 s, so it looks like AI soldiers treat themselves with their first aid kits. The commander has no medical orders, and ACE isn't loaded in this mission.
+
 ### 10.7 Rule-based first, personas later
 
 The first version uses templates with a little seeded variation in wording. A later persona layer would rewrite rendered text and answer free-form questions using the packet alone. The rest of the system doesn't change when personas arrive. Any persona must pass a check that its output adds no facts beyond the packet.

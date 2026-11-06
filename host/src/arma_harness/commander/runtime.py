@@ -263,7 +263,7 @@ class Runtime:
             "callsign", "pos", "grid", "dir", "speed", "alive", "wounded", "baseline", "leader", "rounds",
             "rounds_baseline", "behaviour", "combat_mode", "order", "unable", "leg", "legs", "clearing", "cleared",
             "placed", "contacts", "suppression", "ruined", "seen_vehicles", "seen_ruins", "mounted", "mount",
-            "missions", "gun_ammo")}
+            "missions", "gun_ammo", "limping")}
         packet["missions"] = [[self._vehicle_id(row[0]), *row[1:]] for row in packet.get("missions") or []]
         packet["gun_ammo"] = [[self._vehicle_id(row[0]), *row[1:]] for row in packet.get("gun_ammo") or []]
         packet["mounted"] = [[self._vehicle_id(row[0]), *row[1:]] for row in packet.get("mounted") or []]

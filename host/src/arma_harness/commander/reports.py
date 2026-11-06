@@ -192,7 +192,7 @@ def answer(packet: dict, route: dict | None, topics: list[str] | None = None,
             case "strength":
                 wounded = packet.get("wounded", 0)
                 hurt = f", {wounded} wounded" if wounded else ""
-                parts.append(f"{packet['alive']} of {packet['baseline']} effective{hurt}. "
+                parts.append(f"{packet['alive']} of {packet['baseline']} effective{hurt}.{_legs_words(packet)} "
                              f"{packet['leader']} has command.")
             case "ammo":
                 band = ammo_band(packet.get("rounds", 0), packet.get("rounds_baseline", 0))
@@ -326,6 +326,7 @@ class Tracker:
     shelled_at: float = -1
     explosions_at: float = -1
     no_view_said: list[str] = field(default_factory=list)
+    limping: list[str] = field(default_factory=list)
     trail: list[list] = field(default_factory=list)
     trail_leader: str = ""
 
@@ -368,7 +369,20 @@ class Tracker:
         out += self._boarding(packet)
         out += self._missions(packet)
         out += self._heard_impacts(packet, now)
+        out += self._new_limps(packet)
         return [_without_own_grid(report) for report in out] if self.in_combat(packet, now) else out
+
+    def _new_limps(self, packet: dict) -> list[Report]:
+        names = packet.get("limping") or []
+        out = []
+        for name in names:
+            if name not in self.limping:
+                if name == packet.get("leader"):
+                    out.append(Report(PRIORITY, f"Slow going, {name}'s hit in the legs."))
+                else:
+                    out.append(Report(ROUTINE, f"{name}'s hit in the legs."))
+        self.limping = list(names)
+        return out
 
     def _heard_impacts(self, packet: dict, now: float) -> list[Report]:
         """Every shell, whoever fired it. No station can tell whose they were, and none ever says."""
@@ -604,6 +618,13 @@ def _boarding_words(status: list) -> str | None:
         "off": f"Off {vehicle}.",
     }
     return said.get(word)
+
+
+def _legs_words(packet: dict) -> str:
+    """A leg wound is the one that changes what a squad can do: at 0.5 and over a man walks at about 1 m/s, and a leader
+    sets the pace for all of them. canStand stays true at 0.9, and a bare count of wounded doesn't say."""
+    names = packet.get("limping") or []
+    return f" {' and '.join(names)} hit in the legs." if names else ""
 
 
 def _rounds(count: int) -> str:

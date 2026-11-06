@@ -1925,6 +1925,41 @@ def test_the_trail_survives_a_restart_of_the_host(tmp_path):
     assert "moving south" in b.runtime.ask("Alpha", ["position"])["replies"][0]["text"]
 
 
+def test_a_leader_hit_in_the_legs_says_why_the_squad_is_slow():
+    tracker = Tracker()
+    fields = packet(limping=["Sam Reed"], leader="Sam Reed", order="")
+    said = tracker.update(fields, None, 100)
+    assert [(r.precedence, r.text) for r in said] == [(reports.PRIORITY, "Slow going, Sam Reed's hit in the legs.")]
+    assert tracker.update(fields, None, 102) == []  # and says so once
+
+
+def test_anyone_else_hit_in_the_legs_is_mentioned():
+    tracker = Tracker()
+    said = tracker.update(packet(limping=["Ann Cole"], leader="Sam Reed", order=""), None, 100)
+    assert [(r.precedence, r.text) for r in said] == [(reports.ROUTINE, "Ann Cole's hit in the legs.")]
+
+
+def test_being_hit_again_after_being_treated_is_news():
+    tracker = Tracker()
+    tracker.update(packet(limping=["Ann Cole"], leader="Sam Reed", order=""), None, 100)
+    assert tracker.update(packet(limping=[], leader="Sam Reed", order=""), None, 102) == []
+    said = tracker.update(packet(limping=["Ann Cole"], leader="Sam Reed", order=""), None, 104)
+    assert [r.text for r in said] == ["Ann Cole's hit in the legs."]
+
+
+def test_asking_for_strength_names_who_cant_walk():
+    answer = reports.answer(packet(wounded=2, limping=["Sam Reed", "Ann Cole"]), None, ["strength"])
+    assert answer.startswith("4 of 4 effective, 2 wounded. Sam Reed and Ann Cole hit in the legs. ")
+    assert "legs" not in reports.answer(packet(wounded=1), None, ["strength"])
+
+
+def test_a_limp_reaches_the_radio_through_the_runtime(tmp_path):
+    b = Battle(tmp_path)
+    b.start()
+    b.advance(102, limping=["Sam Reed"], leader="Sam Reed")
+    assert "Slow going, Sam Reed's hit in the legs." in radio_words(b)
+
+
 def in_the_fight(tmp_path) -> Battle:
     b = Battle(tmp_path)
     b.start()

@@ -471,6 +471,12 @@ def play_fire(client: Client) -> list[str]:
     text = hear("seen.", 90)
     assert "of the enemy at bearing" in text or "Splash on the enemy at bearing" in text, text[-500:]
 
+    # A leg wound, which a squad says, and which the game's own measures don't.
+    in_game(harness, 'leader (brmh_cmd_stations get "Bravo") setHitPointDamage ["hitLegs", 0.6]; true')
+    assert "Slow going," in hear("hit in the legs", 30)
+    answer = client.tool("commander_ask", to="Bravo", topics=["strength"])["replies"][0]["text"]
+    assert "hit in the legs." in answer, answer
+
     # The fourth silent failure: a Scorcher that says it can reach, and doesn't fire.
     fire(to="Anvil", at="040 050", rounds=2)
     text = hear("Unable, can't lay on that target.", 60)

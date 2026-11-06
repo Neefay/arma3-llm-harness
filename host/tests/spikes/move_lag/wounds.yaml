@@ -1,0 +1,21 @@
+# For spike_wounds.py only. Eight squads on empty ground with their leaders hurt, and two in a real firefight.
+name: wounds
+mission: commander
+time_limit: "15:00"
+text: >
+  A spike, not a battle.
+stations:
+  - { callsign: Fit, role: x, capabilities: [MOVE], at: "020 020", units: 4 }
+  - { callsign: Legs3, role: x, capabilities: [MOVE], at: "024 020", units: 4 }
+  - { callsign: Legs5, role: x, capabilities: [MOVE], at: "028 020", units: 4 }
+  - { callsign: Legs6, role: x, capabilities: [MOVE], at: "032 020", units: 4 }
+  - { callsign: Legs9, role: x, capabilities: [MOVE], at: "036 020", units: 4 }
+  - { callsign: Whole4, role: x, capabilities: [MOVE], at: "040 020", units: 4 }
+  - { callsign: Whole7, role: x, capabilities: [MOVE], at: "044 020", units: 4 }
+  - { callsign: Body, role: x, capabilities: [MOVE], at: "048 020", units: 4 }
+  - { callsign: FightA, role: x, capabilities: [MOVE], at: "060 056", units: 8 }
+  - { callsign: FightB, role: x, capabilities: [MOVE], at: "064 056", units: 8 }
+enemies:
+  - { id: East Line, at: "062 059", units: 12, mode: hold }
+debounce: { quiet_s: 3, ceiling_s: 15 }
+mid_turn_messages: hold

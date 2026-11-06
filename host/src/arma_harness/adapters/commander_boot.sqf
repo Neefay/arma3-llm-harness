@@ -516,6 +516,11 @@ brmh_cmd_fnc_packet = {
 		["wounded", {
 			lifeState _x isEqualTo "INJURED"
 		} count _alive],
+		["limping", (_alive select {
+			(_x getHitPointDamage "hitLegs") >= 0.5
+		}) apply {
+			name _x
+		}],
 		["baseline", _group getVariable ["brmh_cmd_baseline", count _alive]],
 		["leader", name _leader],
 		["rounds", _rounds],
@@ -561,6 +566,10 @@ brmh_cmd_fnc_truth = {
 			["mounted", {
 				vehicle _x isNotEqualTo _x
 			} count _alive],
+			["limping", {
+				(_x getHitPointDamage "hitLegs") >= 0.5
+			} count _alive],
+			["leader_limping", ((leader _x) getHitPointDamage "hitLegs") >= 0.5],
 			["pos", if (_alive isEqualTo []) then {
 				[]
 			} else {
