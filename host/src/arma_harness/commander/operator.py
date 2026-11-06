@@ -70,6 +70,7 @@ def start(path: str, mode: str | None = None, harness: Harness | None = None, wa
     if mode:
         raw["mid_turn_messages"] = mode
     scenario = scenario_mod.build(raw)
+    h.forget_dead_run()
     state = h.state()
     if state is None:
         h.start(mission=scenario.mission)
