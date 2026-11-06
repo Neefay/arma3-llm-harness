@@ -27,6 +27,9 @@ if (isNil "brmh_cmd_buildings") then {
 if (isNil "brmh_cmd_fireActive") then {
 	brmh_cmd_fireActive = [];
 };
+if (isNil "brmh_cmd_carries") then {
+	brmh_cmd_carries = [];
+};
 brmh_cmd_sightTurn = 0;
 brmh_cmd_nextTruth = 0;
 
@@ -1223,6 +1226,232 @@ brmh_cmd_fnc_fireChunk = {
 	_gun doArtilleryFire [_at, _mission get "mag", [_left, 1] select (_radius > 0)];
 	_mission set ["issued", time];
 	_mission set ["firedAtIssue", _mission getOrDefault ["fired", 0]];
+};
+
+/*
+	NAME: brmh_cmd_fnc_startCarry
+	DESCRIPTION: Sends a medic to pick up a downed man and carry him somewhere. An AI can't walk in ACE's carrying state, so
+		a hidden dummy does the walking, with the medic attached to it. The idea is Antistasi's, for a drag. If the dummy
+		stops getting anywhere and the place isn't far, the medic stays where he is, works on the man for a while, and the
+		man is then put there directly, so a bad spot can't leave a medic stuck.
+	PARAMETERS:
+		0 - Medic (OBJECT)
+		1 - Casualty (OBJECT)
+		2 - Where to: a position, or a vehicle to load him into (ARRAY or OBJECT)
+	RETURNS: The carry (HASHMAP). "state" ends as "done", and "result" says how
+	ENVIRONMENT: Server
+*/
+brmh_cmd_fnc_startCarry = {
+	params ["_medic", "_casualty", "_to"];
+	private _carry = createHashMapFromArray [["medic", _medic], ["casualty", _casualty], ["to", _to], ["state", "going"], ["since", time], ["asked", -100], ["result", ""], ["moved", time], ["last", getPosATL _medic]];
+	// ACE's AI medic would give them both its own orders
+	{
+		_x setVariable ["ace_medical_ai_lastFired", CBA_missionTime + 86400];
+	} forEach [_medic, _casualty];
+	_medic forceSpeed -1;
+	brmh_cmd_carries pushBack _carry;
+	if (isNil "brmh_cmd_carryPfh") then {
+		brmh_cmd_carryPfh = [{
+			call brmh_cmd_fnc_stepCarries
+		}, 0.5] call CBA_fnc_addPerFrameHandler;
+	};
+	_carry
+};
+
+brmh_cmd_fnc_carryPlace = {
+	params ["_carry"];
+	private _to = _carry get "to";
+	if (_to isEqualType objNull) then {
+		getPosATL _to
+	} else {
+		_to
+	}
+};
+
+brmh_cmd_fnc_carryLift = {
+	params ["_carry"];
+	private _medic = _carry get "medic";
+	private _casualty = _carry get "casualty";
+	private _group = createGroup [civilian, true];
+	private _dummy = _group createUnit ["C_man_polo_1_F", [0, 0, 20], [], 0, "FORM"];
+	_dummy forceWalk true;
+	hideObjectGlobal _dummy;
+	_dummy allowDamage false;
+	_dummy setCaptive true;
+	_dummy setBehaviour "CARELESS";
+	{
+		_dummy disableAI _x;
+	} forEach ["FSM", "SUPPRESSION", "AUTOTARGET", "TARGET"];
+	_dummy setPosATL (getPosATL _medic);
+	_dummy setDir (_medic getDir ([_carry] call brmh_cmd_fnc_carryPlace));
+	_medic disableAI "ANIM";
+	_medic attachTo [_dummy, [0, 0, 0]];
+	_medic setDir 0;
+	_casualty attachTo [_medic, [0.4, -0.1, -1.25], "LeftShoulder"];
+	_casualty setDir 195;
+	_casualty switchMove "AinjPfalMstpSnonWnonDf_carried_dead";
+	_dummy doMove ([_carry] call brmh_cmd_fnc_carryPlace);
+	_medic playMove "AcinPercMrunSnonWnonDf";
+	_carry set ["dummy", _dummy];
+	_carry set ["moved", time];
+	_carry set ["last", getPosATL _dummy];
+};
+
+// Lets go of him here, whatever's happened. Safe to call before he's been picked up.
+brmh_cmd_fnc_carryRelease = {
+	params ["_carry"];
+	private _medic = _carry get "medic";
+	private _casualty = _carry get "casualty";
+	private _dummy = _carry getOrDefault ["dummy", objNull];
+	if (not isNull attachedTo _casualty) then {
+		detach _casualty;
+		_casualty setPosATL (getPosATL _medic);
+	};
+	if (alive _casualty and {
+		lifeState _casualty isEqualTo "INCAPACITATED"
+	}) then {
+		_casualty switchMove "UnconsciousReviveDefault";
+	};
+	if (not isNull _dummy) then {
+		detach _medic;
+		deleteVehicle _dummy;
+		_carry deleteAt "dummy";
+	};
+	if (alive _medic) then {
+		_medic enableAI "ANIM";
+		if (lifeState _medic isNotEqualTo "INCAPACITATED") then {
+			_medic switchMove "AmovPknlMstpSrasWrflDnon";
+		};
+	};
+};
+
+brmh_cmd_fnc_carryFinish = {
+	params ["_carry", "_result"];
+	private _medic = _carry get "medic";
+	[_carry] call brmh_cmd_fnc_carryRelease;
+	{
+		_x setVariable ["ace_medical_ai_lastFired", nil];
+	} forEach [_medic, _carry get "casualty"];
+	if (alive _medic) then {
+		_medic doFollow leader group _medic;
+	};
+	_carry set ["state", "done"];
+	_carry set ["result", _result];
+};
+
+// A vehicle, or the place. The man's either loaded, or laid down there.
+brmh_cmd_fnc_carryDeliver = {
+	params ["_carry", "_how"];
+	private _to = _carry get "to";
+	private _casualty = _carry get "casualty";
+	private _medic = _carry get "medic";
+	[_carry] call brmh_cmd_fnc_carryRelease;
+	if (_to isEqualType objNull) then {
+		[_medic, _casualty, _to] call ace_common_fnc_loadPerson;
+		_carry set ["state", "loading"];
+		_carry set ["since", time];
+		_carry set ["how", _how];
+	} else {
+		if (_how isEqualTo "placed") then {
+			_casualty setPosATL _to;
+		};
+		[_carry, _how] call brmh_cmd_fnc_carryFinish;
+	};
+};
+
+brmh_cmd_fnc_stepCarries = {
+	{
+		private _carry = _x;
+		private _medic = _carry get "medic";
+		private _casualty = _carry get "casualty";
+		private _state = _carry get "state";
+		private _in = time - (_carry get "since");
+		switch (true) do {
+			case (not alive _medic or {
+				lifeState _medic isEqualTo "INCAPACITATED"
+			}): {
+				[_carry, "medic down"] call brmh_cmd_fnc_carryFinish;
+			};
+			case (not alive _casualty): {
+				[_carry, "he died"] call brmh_cmd_fnc_carryFinish;
+			};
+			case (lifeState _casualty isNotEqualTo "INCAPACITATED"): {
+				[_carry, "he woke"] call brmh_cmd_fnc_carryFinish;
+			};
+			case (_state isEqualTo "going"): {
+				if ((_medic distance2D _casualty) <= 2.5) exitWith {
+					doStop _medic;
+					_medic selectWeapon primaryWeapon _medic;
+					_medic playMoveNow "AcinPknlMstpSnonWnonDnon_AcinPercMrunSnonWnonDnon";
+					_casualty switchMove "AinjPfalMstpSnonWrflDnon_carried_Up";
+					_carry set ["state", "lifting"];
+					_carry set ["since", time];
+				};
+				if (_in >= 120) exitWith {
+					[_carry, "can't reach him"] call brmh_cmd_fnc_carryFinish;
+				};
+				if ((time - (_carry get "asked")) >= 10) then {
+					_medic doMove (getPosATL _casualty);
+					_carry set ["asked", time];
+				};
+			};
+			case (_state isEqualTo "lifting"): {
+				if (_in >= 9) then {
+					[_carry] call brmh_cmd_fnc_carryLift;
+					_carry set ["state", "carrying"];
+					_carry set ["since", time];
+				};
+			};
+			case (_state isEqualTo "carrying"): {
+				private _dummy = _carry get "dummy";
+				private _place = [_carry] call brmh_cmd_fnc_carryPlace;
+				private _left = _dummy distance2D _place;
+				// A vehicle's own bulk stops the dummy short of its middle
+				if (_left <= ([5, 8] select ((_carry get "to") isEqualType objNull))) exitWith {
+					[_carry, "carried"] call brmh_cmd_fnc_carryDeliver;
+				};
+				if ((_dummy distance2D (_carry get "last")) >= 1) then {
+					_carry set ["last", getPosATL _dummy];
+					_carry set ["moved", time];
+				};
+				if ((time - (_carry get "moved")) >= 8) exitWith {
+					// Not far: the owner's way, of working on him a while and then putting him there
+					if (_left <= 60) then {
+						[_carry] call brmh_cmd_fnc_carryRelease;
+						_medic disableAI "ANIM";
+						_medic switchMove "AinvPknlMstpSlayWrflDnon_medicOther";
+						_carry set ["state", "working"];
+						_carry set ["since", time];
+					} else {
+						[_carry, "stuck"] call brmh_cmd_fnc_carryFinish;
+					};
+				};
+			};
+			case (_state isEqualTo "working"): {
+				if (_in >= 8) then {
+					[_carry, "placed"] call brmh_cmd_fnc_carryDeliver;
+				};
+			};
+			case (_state isEqualTo "loading"): {
+				private _to = _carry get "to";
+				if (vehicle _casualty isEqualTo _to) exitWith {
+					[_carry, ["loaded", "loaded directly"] select ((_carry get "how") isEqualTo "placed")] call brmh_cmd_fnc_carryFinish;
+				};
+				if (_in >= 5) exitWith {
+					[_carry, "couldn't load him"] call brmh_cmd_fnc_carryFinish;
+				};
+			};
+		};
+	} forEach brmh_cmd_carries;
+	brmh_cmd_carries = brmh_cmd_carries select {
+		(_x get "state") isNotEqualTo "done"
+	};
+	if (brmh_cmd_carries isEqualTo [] and {
+		not isNil "brmh_cmd_carryPfh"
+	}) then {
+		[brmh_cmd_carryPfh] call CBA_fnc_removePerFrameHandler;
+		brmh_cmd_carryPfh = nil;
+	};
 };
 
 /*

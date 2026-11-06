@@ -65,6 +65,19 @@ A rescue in the open at 130 m, in plain view of 4 enemies, with a medic set to C
 - **A leader going down:** command passes by itself, and the squad obeyed a new order at full speed, leaving him behind.
 - **A leader waking up takes command back,** and the squad **ran back to him**, 40 m in 10 s. That would pull a squad off its objective unasked, so it needs handling.
 
+### 2.6 The carry as built
+
+`brmh_cmd_fnc_startCarry` in [commander_boot.sqf](../host/src/arma_harness/adapters/commander_boot.sqf) is the controller, and [demo_carry.py](../host/tests/demo_carry.py) shows it, with `--check` to run headless as a test. All six scenes pass on a dedicated server with no script errors:
+
+| Scene | Result |
+|---|---|
+| In the open, 100 m | Reached him in 8 s, lifted in about 9 s, carried in 59 s, at about 1.7 m/s |
+| Around a house, then into a Hunter | Went around it with no help, and he's in the cargo seat |
+| Out of a house, from a ground floor position | Reached him in 20 s, and got out with no help |
+| The dummy stuck on the way | Gave up after 8 s, the medic worked on him for 8 s, and he was put at the place, 39 m off |
+| The medic killed on the way | Let go at once, and the casualty lies where they were, still alive |
+| The casualty killed on the way | Let go at once, and the medic carries on with his squad |
+
 ## 3. What changes for the harness
 
 These are needed whatever the orders look like:
@@ -137,10 +150,12 @@ The review gets casualties on the maps, a downed marker distinct from a death, a
 - Whether ACE changes how long battles take, or how the AI fights.
 - The cost of ACE on the server with 40 men.
 
-## 7. Decisions for the owner
+## 7. Decisions
 
-1. **Carry or drag?** Proposed: carry, because it's quicker and one behaviour is simpler. A drag is lower to the ground, so it could be added for short moves under fire.
-2. **Extra chance of death?** Proposed: none, because ACE's defaults already kill 36% outright and most of the rest within 6 minutes.
-3. **Who treats?** Proposed: the scenario decides. A dedicated medical team with the capabilities above, with medics in squads being optional.
-4. **How strong is the aid post?** Proposed: 60 s per man, built in about a minute, and one per team, to be tuned by playing.
-5. **Getting back:** proposed: running back alone at first, and ferrying as a second stage.
+Made by the owner, 2026-11-06:
+
+1. **Carry only,** by the dummy method, and no drag for now.
+2. **No extra chance of death.** ACE's defaults stand.
+3. **Who treats:** any soldier with ACE's medic flag. Who has one is up to the scenario.
+4. **The aid post:** about a minute to build, 60 s to heal each man, and one per team. A scenario sets these, because testing needs them much faster.
+5. **Getting back:** running back alone is fine for now, with ferrying as a later stage.
