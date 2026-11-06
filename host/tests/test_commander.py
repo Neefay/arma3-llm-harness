@@ -14,7 +14,7 @@ from arma_harness.commander.orders import Invalid
 from arma_harness.commander.records import Records
 from arma_harness.commander.reports import Tracker
 from arma_harness.commander.runtime import Runtime
-from arma_harness.commander.server import TOOL_NAMES, Server
+from arma_harness.commander.server import ORDER_TYPES_HELP, TOOL_NAMES, Server
 from arma_harness.commander.wake import DELIVER, HOLD, WakeLogic
 from arma_harness.config import REPO_ROOT
 
@@ -62,7 +62,7 @@ def test_sitrep_and_specific_answers():
     assert "One infantry, bearing 045, roughly 300 metres, seen now." in text
     assert reports.answer(packet(), None, ["ammo"]) == "Ammo green, good."
     trip = route(("MOVE", (3450, 3050), "034 030"))
-    assert "About 3 minutes to grid 034 030" in reports.answer(packet(), trip, ["eta"])
+    assert "About 2 minutes to grid 034 030" in reports.answer(packet(), trip, ["eta"])
     assert reports.answer(packet(), trip, ["task"]) == "Moving to grid 034 030, about 400 metres out."
 
 
@@ -122,7 +122,7 @@ def clear_route(*ids) -> dict:
 def test_clear_reports_each_building_and_never_claims_all_clear():
     tracker, trip = Tracker(), clear_route("B1", "B3")
     said = tracker.update(packet(order="O-1", clearing=30, cleared=[]), trip, 0)
-    assert [r.text for r in said] == ["Copy, checking B1, B3. That's 1.5 km on foot, about 7 minutes."]
+    assert [r.text for r in said] == ["Copy, checking B1, B3. That's 1.5 km on foot, about 6 minutes."]
     assert reports.answer(packet(order="O-1", clearing=30, cleared=["B1"]), trip, ["task"]) == "Checking B3."
     said = tracker.update(packet(order="O-1", clearing=12, cleared=["B1"]), trip, 200)  # slow isn't stuck
     assert [(r.text, r.checked) for r in said] == [("B1 checked, nothing seen.", "B1")]
@@ -165,7 +165,7 @@ def test_cba_tasks_report_arriving_and_then_stay_quiet():
     far = {"type": "SWEEP", "pos": [3650, 3050], "grid": "036 030", "completion": 0, "radius": 120, "building": None}
     tracker, trip = Tracker(), {"kind": "route", "legs": [far]}
     assert tracker.update(packet(order="O-1", leg=2, legs=5), trip, 0)[0].text == \
-        "Copy, sweeping around grid 036 030. That's 600 m on foot, about 3 minutes."
+        "Copy, sweeping around grid 036 030. That's 600 m on foot, about 2 minutes."
     assert reports.answer(packet(order="O-1", leg=3, legs=5), trip, ["task"]) == "Sweeping around grid 036 030."
     assert tracker.update(packet(order="O-1", leg=4, legs=5), trip, 300) == []  # not stuck: this order wanders
     said = tracker.update(packet(order="O-1", leg=4, legs=5, pos=[3550, 3050], grid="035030"), trip, 310)
@@ -2300,10 +2300,10 @@ def leg_to(x, y=3050, kind="MOVE"):
 @pytest.mark.parametrize("metres, words", [
     (50, "Copy, moving to grid 031 030."),  # too near to bother
     (150, "That's 200 m on foot, under a minute."),
-    (210, "That's 200 m on foot, about a minute."),
+    (300, "That's 300 m on foot, about a minute."),
     (420, "That's 400 m on foot, about 2 minutes."),
-    (2100, "That's 2 km on foot, about 10 minutes."),
-    (5250, "That's 5 km on foot, about 25 minutes."),
+    (2100, "That's 2 km on foot, about 9 minutes."),
+    (5250, "That's 5 km on foot, about 20 minutes."),
 ])
 def test_a_move_says_how_far_and_how_long(metres, words):
     assert words in said_for([leg_to(3050 + metres)])
@@ -2311,7 +2311,7 @@ def test_a_move_says_how_far_and_how_long(metres, words):
 
 def test_a_long_route_is_the_whole_of_it():
     words = said_for([leg_to(3550), leg_to(3550, 3550), leg_to(3050, 3550)])
-    assert "That's 1.5 km on foot, about 7 minutes." in words
+    assert "That's 1.5 km on foot, about 6 minutes." in words
 
 
 def test_a_squad_in_a_vehicle_gives_a_drive():
@@ -2332,16 +2332,46 @@ def test_a_leader_hit_in_the_legs_says_it_will_be_slow():
 
 def test_under_fire_is_only_a_lower_bound():
     words = said_for([leg_to(5050)], contacts=[contact()], suppression=0.5)
-    assert "At least 10 minutes on foot, under fire." in words and "That's" not in words
+    assert "At least 8 minutes on foot, under fire." in words and "That's" not in words
     assert "030 030" not in words.split("grid 050 030.")[1]
 
 
-def test_speed_changes_the_estimate_and_is_remembered():
-    tracker = Tracker()
-    fast = {"kind": "route", "legs": [leg_to(5050)], "speed": "FULL"}
-    assert "about 7 minutes" in tracker.update(packet(order="O-1"), fast, 100)[0].text
-    same = {"kind": "route", "legs": [leg_to(5050)]}
-    assert "about 7 minutes" in tracker.update(packet(order="O-2"), same, 102)[0].text
+@pytest.mark.parametrize("behaviour, speed, minutes", [
+    ("AWARE", "NORMAL", 8),
+    ("AWARE", "FULL", 8),  # really no faster
+    ("AWARE", "LIMITED", 25),
+    ("SAFE", "NORMAL", 20),
+    ("COMBAT", "NORMAL", 20),
+    ("STEALTH", "NORMAL", 35),
+])
+def test_how_it_moves_changes_the_estimate(behaviour, speed, minutes):
+    words = said_for([leg_to(5050)], behaviour=behaviour, speed_mode=speed)
+    assert f"That's 2 km on foot, about {minutes} minutes." in words
+
+
+def test_asked_how_long_it_says_the_same(tmp_path):
+    trip = {"kind": "route", "legs": [leg_to(5050)]}
+    fields = {"pos": [3050.0, 3050.0], "order": "O-1", "leg": 0, "legs": 1}
+    assert reports.answer(packet(**fields), trip, ["eta"]) == "About 8 minutes to grid 050 030, if unopposed."
+    assert reports.answer(packet(behaviour="SAFE", **fields), trip, ["eta"]) == \
+        "About 20 minutes to grid 050 030, if unopposed."
+
+
+def test_a_long_way_off_isnt_distant(tmp_path):
+    trip = {"kind": "route", "legs": [leg_to(5050)]}
+    assert reports.answer(packet(), trip, ["task"]) == "Moving to grid 050 030, about 2 km out."
+
+
+def test_an_order_that_sets_how_it_moves_is_estimated_by_that(tmp_path):
+    b = wounded_battle(tmp_path, medical={"build_s": 60})
+    b.advance(102)
+    b.runtime.order({"to": "Alpha", "behaviour": "STEALTH", "legs": [{"type": "AID_POST", "at": "040 030"}]})
+    b.advance(104, order="O-0001")
+    assert "That's 1 km on foot, about 17 minutes." in " ".join(said(b))
+
+
+def test_carrying_says_so_in_the_order_itself():
+    assert "A man carrying walks about 100 m a minute, doesn't take cover and can't shoot back" in ORDER_TYPES_HELP
 
 
 def test_appended_legs_are_estimated_too(tmp_path):
@@ -2351,7 +2381,7 @@ def test_appended_legs_are_estimated_too(tmp_path):
     b.advance(102, order="O-0001")
     b.runtime.order({"to": "Alpha", "mode": "append", "legs": [{"type": "MOVE", "at": "070 030"}]})
     b.advance(104, order="O-0002")
-    assert "Copy, then moving to grid 070 030. That's 4 km on foot, about 19 minutes." in said(b)
+    assert "Copy, then moving to grid 070 030. That's 4 km on foot, about 16 minutes." in said(b)
 
 
 def test_boarding_says_how_far_the_vehicle_is(tmp_path):
@@ -2362,7 +2392,7 @@ def test_boarding_says_how_far_the_vehicle_is(tmp_path):
     b.advance(102, order="")
     b.runtime.order({"to": "Alpha", "legs": [{"type": "MOUNT", "vehicle": "V1"}]})
     b.advance(104, order="O-0001")
-    assert "Copy, mounting V1. That's 1 km on foot, about 5 minutes." in said(b)
+    assert "Copy, mounting V1. That's 1 km on foot, about 4 minutes." in said(b)
 
 
 def test_carrying_says_how_long_that_really_is(tmp_path):
@@ -2389,7 +2419,7 @@ def test_medics_say_how_far_off_they_are(tmp_path):
     b.advance(102, casualties=[down_row(x=3050, y=4050)])
     b.runtime.order({"to": "Alpha", "legs": [{"type": "TREAT", "casualties": ["C1"]}]})
     b.advance(104, casualties=[down_row(x=3050, y=4050)], order="O-0001")
-    assert "Copy, treating Sam Reed. That's 1 km on foot to reach them, about 5 minutes." in said(b)
+    assert "Copy, treating Sam Reed. That's 1 km on foot to reach them, about 4 minutes." in said(b)
 
 
 def test_a_post_says_how_long_to_get_there_and_set_up(tmp_path):
@@ -2397,7 +2427,7 @@ def test_a_post_says_how_long_to_get_there_and_set_up(tmp_path):
     b.advance(102)
     b.runtime.order({"to": "Alpha", "legs": [{"type": "AID_POST", "at": "040 030"}]})
     b.advance(104, order="O-0001")
-    assert ("Copy, setting up an aid post at grid 040 030. That's 1 km on foot, about 5 minutes. "
+    assert ("Copy, setting up an aid post at grid 040 030. That's 1 km on foot, about 4 minutes. "
             "Then about a minute to set up.") in said(b)
 
 

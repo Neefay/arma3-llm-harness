@@ -625,6 +625,7 @@ brmh_cmd_fnc_packet = {
 		["rounds", _rounds],
 		["rounds_baseline", _group getVariable ["brmh_cmd_roundsBaseline", _rounds]],
 		["behaviour", behaviour _leader],
+		["speed_mode", speedMode _group],
 		["combat_mode", combatMode _group],
 		["suppression", (_alive apply {
 			getSuppression _x

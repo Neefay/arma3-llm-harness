@@ -768,8 +768,6 @@ class Runtime:
         if route and mode == "mount":
             where = self.vehicles.get(route.get("vehicle"), {}).get("at")
             route["walk_to"] = parse_grid(where, self.world_size, precise=True)[0] if where else None
-        if route and checked["posture"][0]:
-            route["speed"] = checked["posture"][0]
         self.routes[callsign] = route
         self._game_exec(ORDER_CODE, [callsign, order_id, mode, checked["engine_legs"], checked["posture"]])
         suffix = f" (timed, {via})" if via else ""
@@ -792,7 +790,7 @@ class Runtime:
         if mode not in ("carry", "treat", "post") or not packet:
             return ""
         in_combat = self._in_combat(callsign)
-        foot = reports.PACE_ON_FOOT[""]
+        foot = reports.foot_pace(packet, checked["posture"][0], checked["posture"][2])
         leg = (request.get("legs") or [{}])[0]
         known = {entry["id"]: entry for entry in self.casualties.values()}
         named = [known[one]["pos"] for one in leg.get("casualties") or [] if one in known]

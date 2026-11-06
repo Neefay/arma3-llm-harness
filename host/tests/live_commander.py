@@ -614,6 +614,12 @@ def play_casevac(client: Client) -> list[str]:
     assert "C1" in text and "C2" in text, text
     print("STATE two down", alpha_state(), flush=True)
 
+    # The estimate goes by how the squad's really moving, which the order has just set: 1 km at 1 m/s.
+    client.tool("commander_order", to="Angel", legs=[{"type": "MOVE", "at": "020 070"}], behaviour="STEALTH",
+                speed="LIMITED")
+    hear("That's 1 km on foot, about 17 minutes.", 60)
+    client.tool("commander_order", to="Angel", legs=[{"type": "HALT"}], behaviour="AWARE", speed="NORMAL")
+
     # Two healthy men carry them to the truck.
     order("Alpha", {"type": "CARRY", "casualties": ["C1", "C2"], "vehicle": "V1"})
     text = hear("'s loaded.", 200, 2)

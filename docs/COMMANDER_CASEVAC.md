@@ -86,6 +86,22 @@ The headless check passed while the demo failed for its first viewer, for two re
 | The carrier killed or downed | Lets go at once, and the casualty lies there, still alive |
 | The casualty killed | Lets go at once, and the carrier goes back to his squad |
 
+### 2.8 Carrying under fire, and how fast squads move
+
+Three pairs, each a man carrying and a free man the same distance from the enemy, in [spike_bearer_fires.py](../host/tests/spikes/casevac/spike_bearer_fires.py). The enemy appeared 120 m off once the lift was done, and couldn't shoot back. In 42 s the carriers fired **no rounds** and kept walking, at 1.8 m/s. The free men fired about 120 rounds each, apart from one who went down early. Carriers keep their rifles, but don't use them. With the enemy shooting from 100 m at the start ([spike_bearer.py](../host/tests/spikes/casevac/spike_bearer.py)), every carrier was down before he'd got anywhere, as were all the free men. That says the place is deadly, not that carriers get picked out: the free men took more hits. So `CARRY` tells the commander that a man carrying is slow and can't shoot back, not that he's more likely to be hit.
+
+Every order to move now answers with how far and how long, so these are in `reports.py`. In m/s, for a squad of 8 on open ground, from [spike_pace.py](../host/tests/spikes/move_lag/spike_pace.py):
+
+| Behaviour | LIMITED | NORMAL | FULL |
+|---|---|---|---|
+| CARELESS | 1.5 | 2.0 | 1.8 |
+| SAFE | 1.5 | 1.7 | 1.8 |
+| AWARE | 1.4 | 4.1 | 4.1 |
+| COMBAT | 1.1 | 1.6 | 1.3 |
+| STEALTH | 1.0 | 1.0 | 1.3 |
+
+Behaviour matters far more than speed: only AWARE jogs, and `FULL` is no faster than `NORMAL`. These go to the commander too, in the descriptions of `speed` and `behaviour`. Also measured: 1.7 m/s carrying, after about 20 s to lift, 18 to 20 m/s driving, and 1.1 m/s for a whole squad behind a leader hit in the legs. Not measured: speed or behaviour's effect on vehicles, or anything off open ground, so a squad in a town or a wood will take longer than it says.
+
 ## 3. What changed for the harness
 
 | Before | With ACE |

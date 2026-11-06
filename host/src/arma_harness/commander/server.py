@@ -30,8 +30,9 @@ ORDER_TYPES_HELP = (
     "name a seat, or everyone who fits. DISMOUNT: get off one, or all of them. FIRE_MISSION: fire this station's "
     "crewed guns at a grid reference of six or eight figures, and only that: markers and building ids can't be called "
     "in. CHECK_FIRE: stop firing, though rounds in the air still land. Fire orders leave the squad's other orders as "
-    "they are. CARRY: free men pick up casualties and take them to a vehicle or a place. UNLOAD: get casualties off a "
-    "stopped vehicle. TREAT: medics treat casualties where they lie, faster at an aid post or medical vehicle. "
+    "they are. CARRY: free men pick up casualties and take them to a vehicle or a place. A man carrying walks about "
+    "100 m a minute, doesn't take cover and can't shoot back, so he's exposed. UNLOAD: get casualties off a stopped "
+    "vehicle. TREAT: medics treat casualties where they lie, faster at an aid post or medical vehicle. "
     "AID_POST: a medic sets up an aid post. These four leave the rest of the squad's orders as they are. The last six "
     "of the single-place orders run until replaced. Each stands alone in an order, except MOVE, "
     "HOLD, SEARCH and SENTRY, which can be chained.")
@@ -71,10 +72,12 @@ TOOLS = [
      "watch the radio for an acknowledgement.", "inputSchema": {"type": "object", "properties": {
         "to": _STRING, "legs": {"type": "array", "items": _LEG},
         "mode": {"type": "string", "description": "replace (default) or append"},
-        "speed": {"type": "string", "description": "LIMITED, NORMAL or FULL"},
+        "speed": {"type": "string", "description": "LIMITED, NORMAL or FULL. On foot, FULL is no faster than NORMAL"},
         "formation": {"type": "string", "description": "COLUMN, STAG COLUMN, WEDGE, ECH LEFT, ECH RIGHT, VEE, LINE, "
                                                        "FILE or DIAMOND"},
-        "behaviour": {"type": "string", "description": "CARELESS, SAFE, AWARE, COMBAT or STEALTH"},
+        "behaviour": {"type": "string", "description": "CARELESS, SAFE, AWARE, COMBAT or STEALTH. On foot, AWARE goes "
+                                                       "about 250 m a minute, CARELESS, SAFE and COMBAT about 100, and "
+                                                       "STEALTH about 60"},
         "combat_mode": {"type": "string", "description": "BLUE never fire, GREEN hold fire and keep formation, WHITE "
                                                          "hold fire and engage at will, YELLOW fire at will and keep "
                                                          "formation, RED fire at will and engage at will"},

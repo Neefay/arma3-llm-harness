@@ -5,7 +5,7 @@ import time
 from spike_lib import in_fresh_game
 
 SPEEDS = ["LIMITED", "NORMAL", "FULL"]
-BEHAVIOURS = ["SAFE", "AWARE", "COMBAT", "STEALTH"]
+BEHAVIOURS = ["CARELESS", "SAFE", "AWARE", "COMBAT", "STEALTH"]
 
 
 def main():
