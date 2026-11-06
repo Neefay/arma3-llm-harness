@@ -1,7 +1,7 @@
 """A demo of medics carrying casualties, to watch in a game window. No commander: it's only the carry.
 
     host\\.venv\\Scripts\\python.exe host\\tests\\demo_carry.py          a game window, and it waits for you to look
-    host\\.venv\\Scripts\\python.exe host\\tests\\demo_carry.py --check  headless, as a test: fails if a scene goes wrong
+    host\\.venv\\Scripts\\python.exe host\\tests\\demo_carry.py --check  headless: fails if a scene goes wrong
 
 It boots its own game with ACE. Each scene is announced in the window's chat and in this terminal, with who to look for.
 In the spectator, pick the medic from the list on the left, or fly to the grid.
