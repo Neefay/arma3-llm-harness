@@ -274,6 +274,7 @@ class Runtime:
         if self.t0 is None or self.ended:
             return
         tracker = self._tracker(callsign)
+        tracker.note_movement(packet)
         said = tracker.update(packet, self.routes.get(callsign), packet["t"], self.buildings)
         in_combat = tracker.in_combat(packet, packet["t"])
         for report in said:
@@ -490,6 +491,10 @@ class Runtime:
     def briefing(self, wake: Wake | None = None) -> str:
         reason = wake.reason() if wake else "request"
         lines = [f"{format_time(self.rel())} | turn {self.turn} | woke on: {reason}"]
+        if not self.ended:
+            # A long quiet stretch of routine checks drifted away from this once: a real commander has it in mind.
+            left = max(0, round(self.scenario.time_limit_s - self.rel()))
+            lines += ["", f"OBJECTIVE, {left // 60:02d}:{left % 60:02d} left", self.scenario.objective]
         if wake and wake.notices:
             lines += ["", "NOTICE", *wake.notices]
         if wake and wake.timers:

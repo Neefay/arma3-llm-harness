@@ -1,0 +1,19 @@
+# For spike_move_lag.py only. Three squads on empty ground, one at the village, and three in the open facing an enemy.
+name: move_lag
+mission: commander
+time_limit: "15:00"
+ao: { at: "041 041", radius: 400 }
+text: >
+  A spike, not a battle.
+stations:
+  - { callsign: Once, role: x, capabilities: [MOVE, HOLD, POSTURE], at: "020 020", units: 8 }
+  - { callsign: Again, role: x, capabilities: [MOVE, HOLD, POSTURE], at: "024 020", units: 8 }
+  - { callsign: Limp, role: x, capabilities: [MOVE, HOLD, POSTURE], at: "028 020", units: 8 }
+  - { callsign: Cleared, role: x, capabilities: [MOVE, CLEAR, HOLD, POSTURE], at: "041 039", units: 8 }
+  - { callsign: FireOnce, role: x, capabilities: [MOVE, HOLD, POSTURE], at: "060 056", units: 8 }
+  - { callsign: FireAgain, role: x, capabilities: [MOVE, HOLD, POSTURE], at: "064 056", units: 8 }
+  - { callsign: Lone, role: x, capabilities: [MOVE, HOLD, POSTURE], at: "068 056", units: 1 }
+enemies:
+  - { id: East Line, at: "064 059", units: 8, mode: hold }
+debounce: { quiet_s: 3, ceiling_s: 15 }
+mid_turn_messages: hold

@@ -4,6 +4,7 @@ name: motor_march
 mission: commander
 time_limit: "15:00"
 spectator: true
+objective: Both teams on foot at grid 052 044.
 text: >
   Alpha and Bravo are fire teams, with a Hunter parked beside each of them. Drive both teams to grid 052 044, about 2.5 km
   to the north-east, which is believed to be clear, and dismount there. You're done when both teams are on foot at that

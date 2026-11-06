@@ -469,7 +469,7 @@ def play_fire(client: Client) -> list[str]:
     hear("Contact", 40)
     fire(at="0282 0205", rounds=1, observer="Recon")
     text = hear("seen.", 90)
-    assert "of the enemy. 1 round seen." in text or "Splash on the enemy" in text, text[-500:]
+    assert "of the enemy at bearing" in text or "Splash on the enemy at bearing" in text, text[-500:]
 
     # The fourth silent failure: a Scorcher that says it can reach, and doesn't fire.
     fire(to="Anvil", at="040 050", rounds=2)

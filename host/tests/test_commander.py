@@ -1721,7 +1721,7 @@ def test_an_observer_calls_against_the_enemy_it_can_see(tmp_path):
     near, far = contact(3120, 3200), contact(2000, 2000)
     b.advance(115, order="O-0001", contacts=[far, near])
     b.advance(200, order="O-0001", contacts=[])
-    assert "Splash 40 m north, 30 m east of the enemy. 1 round seen." in latest(b)
+    assert "Splash 40 m north, 30 m east of the enemy at bearing 025. 1 round seen." in latest(b)
 
 
 def test_an_observer_can_be_dead_on(tmp_path):
@@ -1843,6 +1843,86 @@ def test_a_march_ends_with_both_teams_on_foot_at_the_grid(tmp_path):
     b = marching(tmp_path)
     truth(b, 110, team("Alpha"), team("Bravo", x=5290, y=4470))
     assert b.runtime.success_reason == "Objective achieved: Alpha and Bravo are on foot at grid 052 044."
+
+
+def test_two_calls_against_different_enemies_say_so(tmp_path):
+    """What misled the first commander to use this: the patrol died, and the next call was from someone else."""
+    b = spotting(tmp_path)
+    b.runtime.order({"to": "Alpha", "legs": [{"type": "FIRE_MISSION", "at": "030 030", "observer": "Alpha"}]})
+    land(b, 110, pos=(3150, 3240), order="O-0001", seen=True)
+    b.advance(115, order="O-0001", contacts=[contact(3120, 3200)])
+    land(b, 130, pos=(3150, 3240), order="O-0001", seen=True)
+    b.advance(135, order="O-0001", contacts=[contact(2950, 3400)])
+    b.advance(200, order="O-0001")  # it's in contact, so its reports take a while
+    said = [words for words in latest(b) if words.startswith("Splash")]
+    assert "of the enemy at bearing 025." in said[0] and "of the enemy at bearing 345." in said[1]
+
+
+def test_every_briefing_says_what_the_objective_is_and_how_long_is_left(tmp_path):
+    b = Battle(tmp_path, objective="Get Alpha to B.", text="A long story about Alpha and how it got here.")
+    b.start()
+    b.advance(100 + 60)
+    text = b.runtime.briefing()
+    assert "OBJECTIVE, 04:00 left\nGet Alpha to B." in text and "long story" not in text
+
+
+def test_the_objective_falls_back_to_the_mission_text(tmp_path):
+    b = Battle(tmp_path)
+    b.start()
+    assert "\nGet Alpha to B.\n" in b.runtime.briefing()
+
+
+def test_no_objective_is_left_once_its_over(tmp_path):
+    b = Battle(tmp_path)
+    b.start()
+    b.runtime._end("Done.")
+    assert "OBJECTIVE" not in b.runtime.briefing()
+
+
+def walking(tracker, t, y, speed=0.0, leader="Sam Reed"):
+    fields = packet(pos=[3050, y], speed=speed, leader=leader)
+    fields["t"] = t
+    tracker.note_movement(fields)
+    return fields
+
+
+def test_a_squad_going_in_stops_and_starts_is_moving_though_paused_right_now():
+    """Alpha walked 400 m like this, saying "stationary" each time, and the commander reissued the order three times."""
+    tracker = Tracker()
+    for t, y in ((100, 4000), (106, 3995), (112, 3990), (118, 3985)):
+        now = walking(tracker, t, y)
+    assert now["under_way"] and reports.answer(now, None, ["position"]) == "Grid 030 030, moving south."
+
+
+def test_soldiers_shuffling_about_are_stationary():
+    tracker = Tracker()
+    for t, y in ((100, 4000), (110, 4006), (120, 3998), (130, 4005)):
+        now = walking(tracker, t, y)
+    assert not now["under_way"] and reports.answer(now, None, ["position"]) == "Grid 030 030, stationary."
+
+
+def test_a_squad_that_has_stopped_soon_says_so():
+    tracker = Tracker()
+    walking(tracker, 100, 4000)
+    walking(tracker, 110, 3950)
+    assert walking(tracker, 120, 3950)["under_way"]
+    assert not walking(tracker, 145, 3950)["under_way"]
+
+
+def test_a_new_leader_elsewhere_isnt_the_squad_moving():
+    tracker = Tracker()
+    walking(tracker, 100, 4000)
+    assert not walking(tracker, 106, 3950, leader="Someone Else")["under_way"]
+
+
+def test_the_trail_survives_a_restart_of_the_host(tmp_path):
+    b = Battle(tmp_path)
+    b.start()
+    b.advance(102, pos=[3050, 3050])
+    b.runtime.save()
+    b.runtime = b.new_runtime()
+    b.advance(106, pos=[3050, 3000], speed=0)
+    assert "moving south" in b.runtime.ask("Alpha", ["position"])["replies"][0]["text"]
 
 
 def in_the_fight(tmp_path) -> Battle:

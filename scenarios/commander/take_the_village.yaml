@@ -5,6 +5,7 @@ mission: commander
 time_limit: "20:00"
 spectator: true
 ao: { at: "041 041", radius: 400 }
+objective: Clear the village around grid 041 041.
 text: >
   Enemy forces of unknown strength hold the village around grid 041 041. Your force is about 500 metres to the south,
   around grid 041 035. Clear the village. You don't know where the enemy is, so find them before you commit.

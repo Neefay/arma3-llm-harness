@@ -31,6 +31,8 @@ EXPLOSIONS_M = 400  # and this far off, just something to mention
 UNDER_FIRE_QUIET_S = 20  # how long shelling has to stop before it's a new burst
 EXPLOSIONS_REPEAT_S = 60
 SPLASH_QUIET_S = 4  # a spotter reports this long after the last round of a burst lands
+MOVING_OVER_S = 30  # a squad in contact goes in stops and starts, so one moment says nothing about whether it's moving
+MOVING_M = 15  # more than soldiers shuffle about in that time
 COMBAT_SUPPRESSION = 0.05  # average of getSuppression across the squad, 0 to 1
 # How long a squad takes to get a report out, by how suppressed it is on average: (below this, seconds).
 REPORT_DELAYS = ((0.1, 5.0), (0.4, 15.0), (math.inf, 30.0))
@@ -182,7 +184,7 @@ def answer(packet: dict, route: dict | None, topics: list[str] | None = None,
     for topic in wanted:
         match topic:
             case "position":
-                moving = packet.get("speed", 0) > 1
+                moving = packet.get("speed", 0) > 1 or packet.get("under_way")
                 motion = f"moving {_COMPASS[round(packet.get('dir', 0) / 45) % 8]}" if moving else "stationary"
                 parts.append(f"Grid {format_grid(packet['grid'])}, {motion}.")
             case "task":
@@ -324,6 +326,21 @@ class Tracker:
     shelled_at: float = -1
     explosions_at: float = -1
     no_view_said: list[str] = field(default_factory=list)
+    trail: list[list] = field(default_factory=list)
+    trail_leader: str = ""
+
+    def note_movement(self, packet: dict) -> None:
+        """Whether it's been getting anywhere lately, and which way, for when it's asked at a moment it's paused."""
+        now, pos = packet["t"], packet.get("pos")
+        if not pos:
+            return
+        if packet.get("leader") != self.trail_leader:  # a new leader is somewhere else, without anyone having moved
+            self.trail, self.trail_leader = [], packet.get("leader") or ""
+        self.trail = [row for row in self.trail if now - row[0] <= MOVING_OVER_S] + [[now, pos[0], pos[1]]]
+        dx, dy = pos[0] - self.trail[0][1], pos[1] - self.trail[0][2]
+        packet["under_way"] = math.hypot(dx, dy) >= MOVING_M
+        if packet["under_way"] and packet.get("speed", 0) <= 1:
+            packet["dir"] = math.degrees(math.atan2(dx, dy)) % 360
 
     def in_combat(self, packet: dict, now: float) -> bool:
         """From what the engine measures: a fresh enemy contact, being suppressed, casualties just now, or shells
@@ -614,8 +631,11 @@ def _splash_words(rows: list[dict], packet: dict) -> str:
     y = sum(row["pos"][1] for row in rows) / len(rows)
     fresh = [c for c in packet.get("contacts") or [] if c["age_s"] <= CONTACT_FRESH_S]
     if fresh:
-        ref = min(fresh, key=lambda c: math.dist(c["pos"], [x, y]))["pos"]
-        name = "the enemy"
+        # Which enemy, or two calls can't be compared. When the first one dies, the next call is about someone else.
+        enemy = min(fresh, key=lambda c: math.dist(c["pos"], [x, y]))
+        ref = enemy["pos"]
+        bearing = spoken_bearing(ref[0] - packet["pos"][0], ref[1] - packet["pos"][1], enemy.get("accuracy_m", 0))
+        name = f"the enemy at {bearing}"
     else:
         ref, name = rows[0]["aim"], "your grid"
     north, east = _offset(y - ref[1]), _offset(x - ref[0])

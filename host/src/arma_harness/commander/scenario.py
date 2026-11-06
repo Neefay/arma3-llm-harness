@@ -32,6 +32,7 @@ class Scenario:
     quiet_s: float = 3.0
     ceiling_s: float = 15.0
     mid_turn_messages: str = HOLD
+    objective: str = ""  # what every briefing reminds the commander of. Falls back to the mission text
 
 
 def load(path: str | Path) -> Scenario:
@@ -80,6 +81,7 @@ def build(raw: dict) -> Scenario:
     return Scenario(
         vehicles=vehicles,
         name=raw["name"], mission=raw["mission"], text=raw["text"].strip(),
+        objective=str(raw.get("objective") or raw["text"]).strip(),
         time_limit_s=parse_time(raw["time_limit"]), stations=stations, side=raw.get("side", "west"),
         markers={m["id"]: m for m in raw.get("markers") or []}, success=raw.get("success") or {}, events=events,
         failure=raw.get("failure") or {}, enemies=enemies, spectator=bool(raw.get("spectator")),
