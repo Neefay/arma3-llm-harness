@@ -181,6 +181,13 @@ def test_the_page_shows_missions_shells_and_a_score_for_them(battle):
     assert aar.render(data).count("fireKey") >= 4
 
 
+def test_a_battle_is_over_even_if_the_session_closed_before_saving_that(battle):
+    """The state file is only saved now and then. A commander whose session closed at the end still won."""
+    (battle / "state.json").write_text(json.dumps({"ended": None, "turn": 3}))
+    data = aar.battle_data(battle)
+    assert data["ended"] == "Objective achieved." and data["score"]["ended"] == "Objective achieved."
+
+
 def test_the_page_holds_this_battle_and_nothing_else(battle):
     data = aar.battle_data(battle)
     assert data["name"] == "Take the village" and data["attempt"] == 2 and data["enemy_total"] == 14
@@ -412,6 +419,7 @@ def test_compare_lines_up_battles_of_one_scenario(battle, tmp_path):
 
 def test_compare_skips_battles_that_never_finished(battle, tmp_path):
     (battle / "state.json").write_text("{}")
+    (battle / "radio_events.jsonl").unlink()
     with pytest.raises(ValueError, match="no finished battle"):
         aar.compare(Home(tmp_path))
 

@@ -51,7 +51,8 @@ def battle_data(folder: Path, commander: dict | None = None) -> dict:
     enemy_ids = [enemy["id"] for enemy in enemies]
     wanted = set(stations) | set(enemy_ids)  # leaves out the observer and any groups left from an earlier battle
 
-    ended_at = next((row["t"] for row in records.read("radio_events") if "mission_end" in row), None)
+    ending = next((row for row in records.read("radio_events") if "mission_end" in row), {})
+    ended_at = ending.get("t")
     cutoff = None if ended_at is None else ended_at + RECORD_AFTER_END_S
 
     def in_battle(row: dict) -> bool:
@@ -75,7 +76,9 @@ def battle_data(folder: Path, commander: dict | None = None) -> dict:
         "name": str(scenario.get("name", folder.parent.name)).replace("_", " ").capitalize(),
         "text": str(scenario.get("text", "")).strip(),
         "run": info.get("run", folder.parent.parent.name), "attempt": info.get("attempt"),
-        "mode": scenario.get("mid_turn_messages"), "ended": state.get("ended") or None, "ended_at": ended_at,
+        "mode": scenario.get("mid_turn_messages"), "ended_at": ended_at,
+        # The state file is only saved now and then, so a session closing at the very end can leave it behind.
+        "ended": state.get("ended") or ending.get("mission_end"),
         "commander": {key: value for key, value in (commander or {}).items() if key != "turns"},
         "duration": max(latest, default=1), "world_size": world_size,
         "buildings": info.get("buildings") or [], "stations": stations, "enemies": enemy_ids,
