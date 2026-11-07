@@ -2524,6 +2524,25 @@ def test_appended_legs_are_estimated_too(tmp_path):
     assert "Copy, then moving to grid 070 030. That's 4 km on foot, about 16 minutes." in said(b)
 
 
+def test_medics_say_theyll_wait_for_a_man_on_a_truck():
+    """Sonnet took "Get them off first" as sorted once he was off, and waited 80 s for a treatment nobody was doing."""
+    rows = [["O-1", "treat", "m7", "Sam Reed", "aboard", "V1", ""]]
+    assert [r.text for r in Tracker()._care(packet(medical=rows))] == [
+        "Sam Reed's on V1, which isn't a medical vehicle. We'll treat them when they're off."]
+
+
+def test_a_squad_already_on_the_truck_doesnt_walk_to_where_it_used_to_be(tmp_path):
+    """Sonnet's squad, sitting in V1, was told 2 km on foot, because that's where the commander's list last had it."""
+    b = wounded_battle(tmp_path)
+    b.runtime.vehicles = {"V1": {"id": "V1", "key": "V1", "name": "Truck", "at": "040 030", "t": None,
+                                 "wrecked": False}}
+    b.scenario.stations["Alpha"]["capabilities"].append("MOUNT")
+    b.advance(102, order="")
+    b.runtime.order({"to": "Alpha", "legs": [{"type": "MOUNT", "vehicle": "V1"}]})
+    b.advance(104, order="O-0001", mounted=[["V1", "driver", "Ann Cole", False]])
+    assert "Copy, mounting V1." in said(b)
+
+
 def test_boarding_says_how_far_the_vehicle_is(tmp_path):
     b = wounded_battle(tmp_path)
     b.runtime.vehicles = {"V1": {"id": "V1", "key": "V1", "name": "Truck", "at": "040 030", "t": None,

@@ -293,7 +293,7 @@ _CARE_WORDS = {
     ("treat", "no medic"): "Unable, no medic here.",
     ("treat", "nobody down"): "Nobody down here.",
     ("treat", "called off"): "Stopped treating {name}.",
-    ("treat", "aboard"): "{name}'s on {detail}, which isn't a medical vehicle. Get them off first.",
+    ("treat", "aboard"): "{name}'s on {detail}, which isn't a medical vehicle. We'll treat them when they're off.",
     ("treat", "can't find"): "Can't find {name}.",
     ("treat", "can't reach"): "Can't get to {name}.",
     ("post", "building"): "Setting up the aid post.",
@@ -520,6 +520,8 @@ class Tracker:
             return ""
         pace, how = pace_of(packet)
         in_combat = self.in_combat(packet, now)
+        if route.get("kind") == "mount" and any(row[0] == route.get("vehicle") for row in packet.get("mounted") or []):
+            return ""  # some of them are on it already, wherever the commander's list last had it
         if route.get("kind") == "mount" and route.get("walk_to"):
             return estimate(math.dist(packet["pos"], route["walk_to"]), foot_pace(packet), "on foot", in_combat)
         if route.get("kind") == "patrol" and route.get("legs"):

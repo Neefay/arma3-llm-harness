@@ -897,6 +897,25 @@ def play_casevac_cases(client: Client) -> list[str]:
     print("STRENGTH", answer, flush=True)
     assert "Not with us" not in answer, answer
 
+    # Told to treat a man still on a truck, the medics wait for him to come off, and then do it.
+    who = knock("Bravo")[0]
+    hear("Listed as C", 40)
+    order("Bravo", {"type": "CARRY", "casualties": [listed(who)], "vehicle": "V1"})
+    hear(f"{who}'s loaded.", 200)
+    order("Medics", {"type": "TREAT", "casualties": [listed(who)]})
+    hear("We'll treat them when they're off.", 30)
+    time.sleep(10)
+    state = in_game(harness, """
+    [count brmh_cmd_treats, {_x getVariable ["brmh_cmd_busy", false]} count units (brmh_cmd_stations get "Medics")]
+    """)
+    print("WAITING", state, flush=True)
+    assert state == [1, 0], state
+    order("Bravo", {"type": "MOVE", "at": "049 062"})
+    hear("Arrived, grid", 120)
+    order("Bravo", {"type": "UNLOAD", "vehicle": "V1"})
+    hear(f"{who}'s off V1.", 30)
+    hear(f"{who}'s back up.", 300)
+
     # Left behind.
     who = knock("Charlie")[0]
     hear("Listed as C", 40)

@@ -7,6 +7,7 @@ text: >
 medical: { field_s: 25, facility_s: 10, build_s: 10 }
 vehicles:
   - { id: V2, class: B_Truck_01_medical_F, at: "052 060" }
+  - { id: V1, class: B_Truck_01_transport_F, at: "049 062" }
 stations:
   - callsign: Bravo
     role: infantry squad, with no medic

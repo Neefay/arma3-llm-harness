@@ -2061,10 +2061,12 @@ brmh_cmd_fnc_treatOrder = {
 			case ([_man] call brmh_cmd_fnc_able): {
 				[_group, _order, "treat", _man, "up"] call brmh_cmd_fnc_careSay;
 			};
+			// He may be coming off right now. UNLOAD and TREAT sent together got one man treated and the other forgotten.
 			case (vehicle _man isNotEqualTo _man and {
 				not ([vehicle _man] call brmh_cmd_fnc_isMedicalVehicle)
 			}): {
 				[_group, _order, "treat", _man, "aboard", (vehicle _man) getVariable ["brmh_cmd_key", ""]] call brmh_cmd_fnc_careSay;
+				_queue pushBack _man;
 			};
 			// Sent to where he was last reported. If he isn't anywhere near it, they won't find him.
 			case (_places isNotEqualTo [] and {
@@ -2078,6 +2080,12 @@ brmh_cmd_fnc_treatOrder = {
 		};
 	} forEach _men;
 	if (_queue isEqualTo []) exitWith {};
+	// Told again about someone it's still waiting on: this order has him now, or he'd get two medics.
+	{
+		if ((_x get "group") isEqualTo _group) then {
+			_x set ["queue", (_x get "queue") - _queue];
+		};
+	} forEach brmh_cmd_treats;
 	brmh_cmd_treats pushBack (createHashMapFromArray [["group", _group], ["order", _order], ["queue", _queue], ["jobs", []]]);
 };
 
@@ -2127,6 +2135,12 @@ brmh_cmd_fnc_stepTreats = {
 				not ([_x] call brmh_cmd_fnc_able)
 			}
 		};
+		private _waiting = _queue select {
+			vehicle _x isNotEqualTo _x and {
+				not ([vehicle _x] call brmh_cmd_fnc_isMedicalVehicle)
+			}
+		};
+		_queue = _queue - _waiting;
 		while {
 			_free isNotEqualTo [] and {
 				_queue isNotEqualTo []
@@ -2144,7 +2158,7 @@ brmh_cmd_fnc_stepTreats = {
 			_jobs pushBack _job;
 			[_group, _order, "treat", _man, "going"] call brmh_cmd_fnc_careSay;
 		};
-		_treat set ["queue", _queue];
+		_treat set ["queue", _queue + _waiting];
 		_treat set ["jobs", _jobs];
 	} forEach brmh_cmd_treats;
 	brmh_cmd_treats = brmh_cmd_treats select {
