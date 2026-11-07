@@ -137,7 +137,7 @@ The commander's list of casualties, with the place each was last reported, is in
 
 ### 4.2 Orders
 
-All four stand alone, need the capability, and leave the rest of the squad's orders as they are. But **the newest order wins**: any later order that moves or stops the squad, or `MOUNT`, calls off its carrying, treating and aid post. Each man stops and goes back to the squad, a casualty stays where he is, and the squad says so: "Put Sam Reed down", "Leaving Sam Reed where they are", "Stopped treating Sam Reed" or "Stopped setting up the aid post". `POSTURE`, fire orders, `DISMOUNT` and appended legs don't call anything off, and neither does an order the game refuses. A man who's being put in a vehicle is a moment from done, so that finishes.
+All four stand alone, need the capability, and leave the rest of the squad's orders as they are. But **the newest order wins**: any later order that moves or stops the squad, or `MOUNT` without a named seat, calls off its carrying, treating and aid post. Each man stops and goes back to the squad, a casualty stays where he is, and the squad says so: "Put Sam Reed down", "Leaving Sam Reed where they are", "Stopped treating Sam Reed" or "Stopped setting up the aid post". `POSTURE`, fire orders, `DISMOUNT` and appended legs don't call anything off, and neither does an order the game refuses. A man who's being put in a vehicle is a moment from done, so that finishes.
 
 `TREAT` for a man on an ordinary vehicle waits until he's off it, and says so, because `UNLOAD` and `TREAT` sent together are a natural pair: it used to refuse him, so whichever man the unloading hadn't reached yet was forgotten.
 

@@ -17,6 +17,7 @@ import threading
 import time
 
 from arma_harness.commander import operator
+from arma_harness.commander import scenario as scenario_mod
 from arma_harness.harness import Harness
 
 THINKING_S = 6  # a stand-in for the LLM's response time, so messages land during its turns
@@ -713,6 +714,78 @@ def play_casevac(client: Client) -> list[str]:
     return log
 
 
+def play_casevac_chained(client: Client) -> list[str]:
+    """The owner's plan again, as whole tasks: one order per job, and nobody woken to give the next step."""
+    harness = Harness()
+    begin(client)
+    finish_turn(client, "Waiting")
+    log: list[str] = []
+    so_far = [""]
+
+    def hear(phrase, timeout=120, times=1):
+        """Two squads talk at once here, so one line can arrive while waiting for another: all of it counts."""
+        deadline = time.time() + timeout
+        while so_far[0].count(phrase) < times:
+            assert time.time() < deadline, f"never heard {phrase!r} {times}x: {so_far[0][-1500:]}"
+            so_far[0] += heard(client, phrase, max(1, deadline - time.time()))
+        return so_far[0]
+
+    def order(to, *legs):
+        return client.tool("commander_order", to=to, legs=list(legs))
+
+    mount_v1, mount_v2 = {"type": "MOUNT", "vehicle": "V1"}, {"type": "MOUNT", "vehicle": "V2"}
+    to_rv, off = {"type": "MOVE", "at": "040 060"}, {"type": "DISMOUNT"}
+
+    # Cancelled partway, and it says what it won't now do.
+    order("Angel", mount_v2, to_rv, off)
+    hear("Copy, mounting V2, then moving to grid 040 060, then getting off.", 30)
+    order("Angel", {"type": "HALT"})
+    hear("Dropping the rest: moving to grid 040 060, then getting off.", 30)
+    boarding = in_game(harness, """
+    private _group = brmh_cmd_stations get "Angel";
+    [count (_group getVariable ["brmh_cmd_mountList", []]), {vehicle _x isNotEqualTo _x} count units _group]
+    """)
+    time.sleep(12)
+    aboard = in_game(harness, """{vehicle _x isNotEqualTo _x} count units (brmh_cmd_stations get "Angel")""")
+    print("HALTED, list and aboard", boarding, "then aboard", aboard, flush=True)
+    assert boarding[0] == 0 and aboard == boarding[1], (boarding, aboard)  # nobody else climbs in
+
+    text = hear("Listed as C", 60, 2)
+    assert "C1" in text and "C2" in text, text
+
+    # Each squad gets its whole job in one order.
+    order("Angel", mount_v2, to_rv, off, {"type": "AID_POST", "at": "040 060"})
+    order("Alpha", {"type": "CARRY", "casualties": ["C1", "C2"], "vehicle": "V1"}, mount_v1, to_rv, off,
+          {"type": "UNLOAD", "vehicle": "V1"}, {"type": "CARRY", "casualties": ["C1", "C2"], "at": "040 060"})
+    text = hear("then getting our casualties off V1", 30)
+    assert "At least" in text, text
+    hear("Aid post up", 300)
+    hear("Now mounting V1.", 300)
+    hear("Now moving to grid 040 060.", 120)
+    hear("'s off V1.", 300, 2)
+    hear("Set ", 200, 2)
+
+    state = in_game(harness, """
+    private _group = brmh_cmd_stations get "Alpha";
+    [{lifeState _x isEqualTo "INCAPACITATED"} count units _group, {vehicle _x isNotEqualTo _x} count units _group,
+     round ((brmh_cmd_vehicles get "V1") distance2D [4050, 6050])]
+    """)
+    print("STATE delivered to the post", state, flush=True)
+    assert state[0] == 2 and state[1] == 0 and state[2] < 150, state
+
+    order("Angel", {"type": "TREAT", "casualties": ["C1", "C2"]})
+    hear("'s back on their feet", 200, 2)
+
+    # And back up the road. All six, on foot, at the objective, is what ends it.
+    order("Alpha", mount_v1, {"type": "MOVE", "at": "070 060"}, off)
+    text = hear("MISSION END", 420)  # a long quiet drive: nothing needs saying until it's there
+    assert "OBJECTIVE COMPLETE" in text, text[-500:]
+    log.append(so_far[0])
+    errors = harness.events(since=0, kinds=["err"]).get("events", [])
+    assert not errors, [str(e.get("text"))[:200] for e in errors[:4]]
+    return log
+
+
 def play_casevac_cases(client: Client) -> list[str]:
     """What the plan doesn't touch: treating in the field, a medical vehicle, nobody to go back to, a leader waking, a
     man left behind, a carry while the squad is on the move, and the things that fail."""
@@ -916,6 +989,20 @@ def play_casevac_cases(client: Client) -> list[str]:
     hear(f"{who}'s off V1.", 30)
     hear(f"{who}'s back up.", 300)
 
+    # A chain can't hang on a man who dies while waiting his turn. The medics are the ones who say so.
+    who = knock("Bravo")[0]
+    hear("Listed as C", 40)
+    one = listed(who)
+    client.tool("commander_order", to="Medics", legs=[{"type": "TREAT", "casualties": [one]},
+                                                      {"type": "MOVE", "at": "052 058"}])
+    in_game(harness, f"""
+    private _him = (units (brmh_cmd_stations get "Bravo")) select {{ name _x isEqualTo "{who}" }};
+    (_him # 0) setDamage 1;
+    true
+    """)
+    text = hear("Now moving to grid 052 058.", 60)  # the two lines come together
+    assert f"{who}'s dead." in text, text[-600:]
+
     # Left behind.
     who = knock("Charlie")[0]
     hear("Listed as C", 40)
@@ -984,6 +1071,9 @@ def run(name: str, scenario: str, mode: str | None, play, watch: bool = False) -
     # LIVE_NO_WATCH=1: nobody's watching, so don't open a game window.
     # LIVE_WATCH=1 opens one to watch a battle that wouldn't usually have one.
     wanted = (watch or os.environ.get("LIVE_WATCH")) and not os.environ.get("LIVE_NO_WATCH")
+    state, needs = harness.state(), scenario_mod.load(scenario).mission
+    if state is not None and state.mission != needs:  # this run's own game, left up by the battle before
+        harness.stop()
     started = operator.start(scenario, mode, harness, watch=bool(wanted))
     print(json.dumps({k: v for k, v in started.items() if k != "launch"}), flush=True)
     client = Client()
@@ -1011,6 +1101,7 @@ def main() -> None:
                ("motor march", "motor_march", "hold", play_motor_march),
                ("casevac plan", "casevac_rv", "hold", play_casevac),
                ("casevac cases", "casevac_cases", "hold", play_casevac_cases),
+               ("casevac chained", "casevac_rv", "hold", play_casevac_chained),
                ("combat: take the village", "take_the_village", "hold", play_village, True)]
     wanted = sys.argv[1:]  # words to match in battle names; none means all of them
     try:

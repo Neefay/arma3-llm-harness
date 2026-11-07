@@ -47,6 +47,11 @@ class Game(Protocol):
     def exec(self, code: str, args: list) -> dict: ...
 
 
+# An order to the whole squad takes over from the rest of a chained order. POSTURE, fire orders, and orders about the
+# wounded leave it running, as they leave everything else.
+CANCELS_A_CHAIN = {"replace", "halt", "mount", "dismount", "chain"}
+
+
 class Runtime:
     def __init__(self, game: Game, scenario: Scenario, records: Records, deliver, world_size: float = 0,
                  clock=time.monotonic, buildings: list[dict] | None = None, vehicles: list[dict] | None = None):
@@ -90,6 +95,7 @@ class Runtime:
                       "confidence": "", "sources": [], "expires": None, "t": None}
             for m in scenario.markers.values()})
         self.routes: dict[str, dict] = saved.get("routes", {})
+        self.chains: dict[str, dict] = saved.get("chains", {})
         self.last_heard: dict[str, float] = saved.get("last_heard", {})
         self.positions: dict[str, dict] = saved.get("positions", {})
         self.events_done: list[int] = saved.get("events_done", [])
@@ -252,7 +258,7 @@ class Runtime:
     def _mission_restarted(self) -> None:
         self.restarted = True
         self.outbox = []
-        self.routes, self.trackers, self.packets = {}, {}, {}
+        self.routes, self.trackers, self.packets, self.chains = {}, {}, {}, {}
         self.wake.timers, self.schedules, self.missed = {}, {}, {}
         self.wake.notice("The mission has restarted. All stations, orders and timers have been reset.")
         self.dirty = True
@@ -283,6 +289,11 @@ class Runtime:
             entry = next((entry for entry in self.casualties.values() if entry["id"] == one), None)
             if entry and entry["squad"] == callsign:
                 entry["state"] = "gone"
+        for one in tracker.located:
+            entry = next((entry for entry in self.casualties.values() if entry["id"] == one), None)
+            if entry:
+                entry.update(said_pos=entry["pos"], said_grid=entry["grid"], said_vehicle=entry["vehicle"],
+                             said_t=packet["t"])
         in_combat = tracker.in_combat(packet, packet["t"])
         for report in said:
             # A squad out of the fight still can't get ahead of what it hasn't finished saying.
@@ -298,6 +309,7 @@ class Runtime:
             self._say(callsign, report.text, report.precedence, report.grid, packet["t"])
         if not in_combat:  # nobody takes stock of abandoned guns in a firefight
             self._sightings(callsign, packet)
+        self._advance_chain(callsign, packet, tracker)
 
     def _in_battle(self, t: float) -> bool:
         """Whether a truth event belongs to this battle's record. A server can outlive its battle, and the game it's
@@ -316,7 +328,7 @@ class Runtime:
             new = entry is None
             if new:
                 entry = self.casualties[key] = {"id": f"C{len(self.casualties) + 1}", "key": key, "name": name,
-                                                "squad": callsign}
+                                                "squad": callsign, "first_t": packet["t"]}
             grid = f"{int(cx / 100):03d} {int(cy / 100):03d}"
             where = self._vehicle_id(vehicle) if aboard else ""
             entry.update(pos=[cx, cy], grid=grid, t=packet["t"], vehicle=where, state="down")
@@ -396,10 +408,13 @@ class Runtime:
             return
         for objective in self.scenario.objectives:
             key = objective["id"]
-            if key in self.objectives_due or key in self.objectives_done:
+            if key in self.objectives_done:
                 continue
             met = self._met(objective["success"], groups, alive)
-            if met:
+            if not met:
+                # Higher command's word is believed over everything, so it has to still be true when it's given.
+                self.objectives_due.pop(key, None)
+            elif key not in self.objectives_due:
                 # True position can get there seconds before the group reports arriving. Let its last words through.
                 self.objectives_due[key] = {"at": self.rel() + SUCCESS_GRACE_S, "met": met}
 
@@ -646,8 +661,14 @@ class Runtime:
         return lines
 
     def _casualty_line(self, entry: dict) -> str:
-        where = f"on {entry['vehicle']}" if entry.get("vehicle") else f"grid {entry['grid']}"
-        return f"{entry['id']}  {entry['name']}  {entry['squad']}'s  {where}  reported {_ago(self.now() - entry['t'])}"
+        """What it's been told. The game's own row moves with him, and printing that would be a live tracker on whoever
+        is carrying him, in a fight or not."""
+        if entry.get("said_vehicle"):
+            where = f"on {entry['said_vehicle']}"
+        else:
+            where = f"grid {entry['said_grid']}" if entry.get("said_grid") else "place not given"
+        told = entry.get("said_t", entry["first_t"])
+        return f"{entry['id']}  {entry['name']}  {entry['squad']}'s  {where}  reported {_ago(self.now() - told)}"
 
     def _vehicle_line(self, vehicle: dict) -> str:
         when = "as briefed" if vehicle.get("t") is None else f"reported {_ago(self.now() - vehicle['t'])}"
@@ -675,7 +696,8 @@ class Runtime:
             "destroyed": self.destroyed, "vehicles": self.vehicles, "fire_orders": self.fire_orders,
             "casualties": self.casualties,
             "objectives_due": self.objectives_due, "objectives_done": self.objectives_done,
-            "next_id": self.next_id, "routes": self.routes, "schedules": self.schedules, "missed": self.missed,
+            "next_id": self.next_id, "routes": self.routes, "chains": self.chains, "schedules": self.schedules,
+            "missed": self.missed,
             "markers": self.markers, "checked": self.checked, "last_checkin": self.last_checkin,
             "last_heard": self.last_heard,
             "positions": self.positions, "events_done": self.events_done, "turn_row": self.turn_row,
@@ -721,7 +743,7 @@ class Runtime:
                               for b in self.buildings],
                 "vehicles": [{"id": v["id"], "type": v["name"], "grid": v["at"]} for v in self.vehicles.values()],
                 "casualties": [{"id": entry["id"], "name": entry["name"], "squad": entry["squad"],
-                                "grid": entry["grid"], "on": entry.get("vehicle") or None}
+                                "grid": entry.get("said_grid") or None, "on": entry.get("said_vehicle") or None}
                                for entry in self.casualties.values() if entry.get("state") == "down"],
                 "ended": self.ended or None,
             }
@@ -746,9 +768,104 @@ class Runtime:
             self.save()
             return {"order": order_id, "sent": True}
 
+    def _validate(self, request: dict) -> dict:
+        return orders_mod.validate(request, self.scenario.stations, self.markers, self.world_size, self.buildings,
+                                   self.vehicles, {entry["id"]: entry for entry in self.casualties.values()})
+
     def _send_order(self, request: dict, via: str = "") -> str:
-        checked = orders_mod.validate(request, self.scenario.stations, self.markers, self.world_size, self.buildings,
-                                      self.vehicles, {entry["id"]: entry for entry in self.casualties.values()})
+        checked = self._validate(request)
+        callsign = checked["to"]
+        dropping = ""
+        previous = self.routes.get(callsign) or {}
+        appending = checked["mode"] == "append" and previous.get("kind") == "route"
+        if appending and previous["legs"] and previous["legs"][-1]["type"] in orders_mod.ENDLESS | {"HOLD"}:
+            raise Invalid(f"{previous['legs'][-1]['type']} runs until replaced, so nothing can be added after it. "
+                          "Send a new order.")
+        # Appending to nothing is a new route, so it takes over like one.
+        mode = "replace" if checked["mode"] == "append" and not appending else checked["mode"]
+        one_man = mode == "mount" and checked["route"].get("seat")  # the rest of the squad carries on
+        if callsign in self.chains and mode in CANCELS_A_CHAIN and not one_man:
+            dropping = ", then ".join(self.chains.pop(callsign)["left"])
+        if checked["mode"] != "chain":
+            return self._issue(checked, request, via, dropping=dropping)
+        steps = [reports.step_words(one) for one in checked["checked"]]
+        first = checked["checked"][0]
+        says = f"Copy, {', then '.join(steps)}.{self._chain_estimate(callsign, checked['checked'])}"
+        order_id = self._issue(first, checked["requests"][0], via, says=says, dropping=dropping)
+        self.chains[callsign] = {"order": order_id, "mode": first["mode"], "seen": False,
+                                 "requests": checked["requests"][1:], "left": steps[1:]}
+        return order_id
+
+    def _advance_chain(self, callsign: str, packet: dict, tracker: Tracker) -> None:
+        """The next step of a chained order, once the one before has really finished. The order's id only tells it the
+        game has got it: a POSTURE or fire order sent meanwhile changes the id, and doesn't end the step."""
+        chain = self.chains.get(callsign)
+        if not chain or self.ended:
+            return
+        chain["seen"] = chain["seen"] or packet.get("order") == chain["order"]
+        if not chain["seen"]:
+            return
+        outcome = reports.step_outcome(chain["mode"], chain["order"], packet, tracker.route_done)
+        if outcome is None:
+            return
+        words = "Stopping there, waiting for orders."
+        if outcome == "done":
+            request = chain["requests"].pop(0)
+            chain["left"].pop(0)
+            try:
+                checked = self._validate(request)
+                chain.update(order=self._issue(checked, request, then=True), mode=checked["mode"], seen=False)
+                words = ""
+            except Invalid as exc:  # it was fine when ordered, but the commander's list has changed since
+                words = f"{exc} Stopping there, waiting for orders."
+        if words:
+            self._say(callsign, words, reports.PRIORITY, None, packet["t"])
+        if words or not chain["requests"]:
+            del self.chains[callsign]
+        self.dirty = True
+
+    def _chain_estimate(self, callsign: str, steps: list[dict]) -> str:
+        """Roughly how long the whole of it takes, for planning. Some steps can't be told in advance, so "at least"."""
+        packet = self.packets.get(callsign)
+        if not packet:
+            return ""
+        pos, riding = packet["pos"], reports.pace_of(packet)[1] == "by vehicle"
+        posture = steps[0]["posture"]
+        foot, total, sure = reports.foot_pace(packet, posture[0], posture[2]), 0.0, not self._in_combat(callsign)
+        aboard = {row[0] for row in packet.get("mounted") or []}
+        for step in steps:
+            mode, route = step["mode"], step.get("route") or {}
+            if mode == "mount":
+                where = self._vehicle_place(route.get("vehicle"))
+                if where and route.get("vehicle") not in aboard:
+                    total += math.dist(pos, where) / foot
+                    pos = where
+                riding = not route.get("seat")
+            elif mode == "dismount":
+                riding = False
+            elif mode in reports._CARE_MODES:
+                sure = False
+                # Unloading happens where they are, which by then needn't be where the commander's list has the truck.
+                if step.get("dest") and mode != "unload":
+                    carrying = mode == "carry"
+                    pace = reports.PACE_CARRYING if carrying else foot
+                    total += math.dist(pos, step["dest"]) / pace + (reports.CARRY_LIFT_S if carrying else 0)
+                    pos = step["dest"]
+            else:
+                for leg in route.get("legs") or []:
+                    if "pos" in leg:
+                        total += math.dist(pos, leg["pos"]) / (reports.PACE_DRIVING if riding else foot)
+                        pos = leg["pos"]
+        if not sure:
+            return f" At least {reports._time_words(max(total, 60)).replace('about ', '')} in all."
+        return f" {reports._sentence(reports._time_words(total))} in all." if total >= 30 else ""
+
+    def _vehicle_place(self, vehicle_id: str | None) -> list[float] | None:
+        where = self.vehicles.get(vehicle_id, {}).get("at")
+        return parse_grid(where, self.world_size, precise=True)[0] if where else None
+
+    def _issue(self, checked: dict, request: dict, via: str = "", says: str = "", then: bool = False,
+               dropping: str = "") -> str:
         order_id = self._id("O")
         callsign = checked["to"]
         previous = self.routes.get(callsign)
@@ -759,8 +876,9 @@ class Runtime:
         elif mode in ("fire", "checkfire", "carry", "unload", "treat", "post"):
             # About the gun, or the wounded, alone: the rest of the squad carries on with whatever it was doing.
             base = previous or {"kind": "posture", "legs": []}
-            words = checked["words"] + self._care_estimate(mode, request, checked, callsign)
-            route = {**base, "keeps_progress": order_id, "acknowledge": words, "keeps_done": True}
+            words = says or checked["words"] + self._care_estimate(mode, request, checked, callsign)
+            route = {**base, "keeps_progress": order_id, "acknowledge": reports.stepped(words, then, dropping),
+                     "keeps_done": True}
         elif mode == "append" and previous and previous.get("kind") == "route":
             words = reports.leg_words(route["legs"])
             route = {"kind": "route", "legs": previous["legs"] + route["legs"], "keeps_progress": order_id,
@@ -768,11 +886,17 @@ class Runtime:
         elif mode == "append":
             mode = "replace"
         if route and mode == "mount":
-            where = self.vehicles.get(route.get("vehicle"), {}).get("at")
-            route["walk_to"] = parse_grid(where, self.world_size, precise=True)[0] if where else None
+            route["walk_to"] = self._vehicle_place(route.get("vehicle"))
+            if route.get("seat") and previous and previous.get("kind") == "route":
+                # One man sent to a seat. The squad's route is still its route, and it still reports on it.
+                words = f"Copy, mounting {route['vehicle']} as {route['seat']}."
+                route = {**previous, "keeps_progress": order_id, "acknowledge": reports.stepped(words, then, dropping),
+                         "keeps_done": True}
+        if route and "keeps_progress" not in route:
+            route.update(says=says, then=then, dropping=dropping)
         self.routes[callsign] = route
         self._game_exec(ORDER_CODE, [callsign, order_id, mode, checked["engine_legs"], checked["posture"]])
-        suffix = f" (timed, {via})" if via else ""
+        suffix = f" (timed, {via})" if via else " (next step)" if then else ""
         self._log_radio("HQ", callsign, f"{order_id}: {_order_words(request)}{suffix}", "order")
         self.records.append("orders", {"id": order_id, "t": round(self.rel(), 1), "request": request, "via": via})
         if mode == "fire":
@@ -795,7 +919,7 @@ class Runtime:
         foot = reports.foot_pace(packet, checked["posture"][0], checked["posture"][2])
         leg = (request.get("legs") or [{}])[0]
         known = {entry["id"]: entry for entry in self.casualties.values()}
-        named = [known[one]["pos"] for one in leg.get("casualties") or [] if one in known]
+        named = [known[one].get("said_pos") or known[one]["pos"] for one in leg.get("casualties") or [] if one in known]
         x, y = packet["pos"]
         nearby = [[row["dx"] + x, row["dy"] + y] for row in packet.get("casualties") or []]
         hurt = named or nearby
@@ -914,6 +1038,7 @@ class Runtime:
                     self._send_order(entry["what"], entry["id"])
                 except Invalid as exc:  # a marker it relied on has since been retired
                     self.records.operator_log(f"{entry['id']} couldn't fire: {exc}")
+                    self.wake.notice(f"Your timed order {entry['id']} couldn't go out: {exc}")
             else:
                 self._timed_ask(entry)
             self._advance(entry)

@@ -2,7 +2,7 @@
 
 **Status:** the [A to B proof of concept](#141-proof-of-concept-one-subordinate-a-to-b) and a [combat scenario](#142-take-the-village) are built. Real commanders have run A to B on Claude Opus 5.5 and a killed group on Claude Haiku 5.5, both in `hold` mode. Haiku has also won the [combat scenario](#142-take-the-village) once, in `hold` mode. Section 12 marks which tools exist. The rest of this document is still the design. Updated 2026-11-05.
 
-**Audience:** developers and agents building or reviewing this feature. Read [ARCHITECTURE.md](ARCHITECTURE.md) first for how the harness itself works.
+**Audience:** developers and agents building or reviewing this feature. Read [ARCHITECTURE.md](ARCHITECTURE.md) first for how the harness itself works. [COMMANDER_MODEL.md](COMMANDER_MODEL.md) gives the abstract model: what kinds of thing exist, and which rules follow from them.
 
 ## Contents
 
@@ -378,6 +378,21 @@ Other endings: unable, superseded, no acknowledgement
 ```
 
 The commander knows only what's been reported, so its view of an order can lag or stay stuck. An unacknowledged order is a useful warning sign, so the harness doesn't resolve it on the commander's behalf.
+
+### 7.1a Whole tasks in one order
+
+An order's legs run in order, each starting when the one before has really finished, so "drive up to that hill and set up a position" is one order: `MOUNT V1, MOVE 054 060, DISMOUNT, OCCUPY B3`. A run of waypoints is one step. The whole order is checked when it's sent, so a mistake in a later step is refused while it can be fixed, and the host sends each step in turn, so the game only ever sees one. See `Runtime._advance_chain`.
+
+| What | How it behaves |
+|---|---|
+| The reply | `Copy, mounting V1, then moving to grid 054 060, then getting off. About 3 minutes in all.` "At least" when a step's length can't be told in advance, such as a carry. Each later step says `Now moving to grid 054 060. That's 2 km by vehicle, about 2 minutes.` |
+| When a step is over | Everyone's aboard or off, the route's finished, or every man named has a result. The squad's own orders about the wounded count, so `CARRY, MOUNT` waits until both men are loaded |
+| A step fails | The squad reports it, adds `Stopping there, waiting for orders.`, and drops the rest. A truck doesn't leave without the men it was waiting for. A man dying or waking doesn't count as failing |
+| Cancelling | A new order that moves or stops the squad, or `MOUNT` without a named seat, `DISMOUNT` or another chain, cancels the rest, and the reply says so: `Halted at grid 052 060. Dropping the rest: moving to grid 054 060, then getting off.` `POSTURE`, fire orders, appended legs and separate orders about the wounded don't |
+| Can't be chained | `HALT`, `POSTURE`, `FIRE_MISSION`, `CHECK_FIRE`. Whether "move up and fire" should chain is left for later |
+| Must go last | `OCCUPY`, `CORDON`, `ATTACK`, `DEFEND`, `PATROL_AREA`, `SWEEP`, `PATROL`, and `HOLD`, because they run until replaced. `SENTRY` can go earlier, since it ends when an enemy appears, and so can `MOVE` with `hold_for` |
+
+A later step is still a squad order, so it can call off a separate `CARRY` sent while the chain was running, as any newer order would.
 
 ### 7.2 Order types
 

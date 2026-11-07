@@ -260,6 +260,9 @@ def _casualty_words(packet: dict) -> str:
     return " ".join(parts)
 
 
+# What tells the commander where a man has ended up: he's where it sent him, or at the vehicle it named.
+_CARE_SAYS_WHERE = {("carry", "carried"), ("carry", "placed"), ("carry", "loaded"), ("carry", "loaded directly"),
+                    ("carry", "stuck"), ("carry", "put down"), ("unload", "off")}
 _CARE_WORDS = {
     ("carry", "carrying"): "Got {name}, on the way.",
     ("carry", "carried"): "Set {name} down.",
@@ -377,6 +380,49 @@ def estimate(metres: float, pace: float, how: str, in_combat: bool = False, extr
     return f" That's {_distance_words(metres)} {how}, {time_words}."
 
 
+# Whether one step of a chained order is over, and whether it worked. A squad that can't do a step stops there: going
+# on would have the truck leave without the men it was meant to wait for.
+_CARE_PENDING = {("carry", "going"), ("carry", "carrying"), ("unload", "going"), ("treat", "queued"),
+                 ("treat", "going"), ("treat", "treating"), ("treat", "aboard"), ("treat", "medic down"),
+                 ("post", "going"), ("post", "building")}
+_CARE_FAILED = {("carry", "wrecked"), ("carry", "no bearer"), ("carry", "can't reach him"), ("carry", "stuck"),
+                ("carry", "couldn't load him"), ("carry", "medic down"), ("carry", "aboard"), ("carry", "already"),
+                ("unload", "stuck"), ("unload", "moving"), ("unload", "nobody there"), ("unload", "wrecked"),
+                ("treat", "no medic"), ("treat", "can't find"), ("treat", "can't reach"), ("post", "no medic"),
+                ("post", "medic down"), ("post", "can't reach")}
+_CARE_MODES = {"carry", "unload", "treat", "post"}
+
+
+def step_outcome(mode: str, order: str, packet: dict, route_done: bool) -> str | None:
+    """"done", "failed", or None while it's still going."""
+    if mode in ("mount", "dismount"):
+        word = (packet.get("mount") or ["", ""])[1]
+        if word in ("on", "off", "none"):
+            return "done"
+        return None if word in ("going", "going off", "") else "failed"
+    if mode in _CARE_MODES:
+        rows = [(row[1], row[4]) for row in packet.get("medical") or [] if row[0] == order]
+        if not rows or any(row in _CARE_PENDING for row in rows):
+            return None
+        return "failed" if any(row in _CARE_FAILED for row in rows) else "done"
+    if packet.get("unable"):
+        return "failed"
+    return "done" if route_done else None
+
+
+def step_words(checked: dict) -> str:
+    """One step as part of a longer order, such as "moving to grid 040 060"."""
+    words = checked.get("words") or _acknowledgement(checked.get("route"), "")
+    return words.removeprefix("Copy, ").removesuffix(".")
+
+
+def stepped(words: str, then: bool, dropping: str) -> str:
+    """A later step isn't a new order, and an order that replaces a chain says what's no longer going to happen."""
+    if then:
+        words = words.replace("Copy, ", "Now ", 1)
+    return f"{words} Dropping the rest: {dropping}." if dropping else words
+
+
 def foot_pace(packet: dict, speed: str = "", behaviour: str = "") -> float:
     """How quickly it walks, as it's set now, or as an order's about to set it."""
     by_speed = PACE_ON_FOOT.get(behaviour or packet.get("behaviour"), PACE_ON_FOOT["AWARE"])
@@ -467,6 +513,7 @@ class Tracker:
     care_said: dict[str, str] = field(default_factory=dict)
     apart: dict[str, dict] = field(default_factory=dict)
     gone: list[str] = field(default_factory=list)  # who the runtime should take off the list after this update
+    located: list[str] = field(default_factory=list)  # casualties whose place the commander has just been told
     trail: list[list] = field(default_factory=list)
     trail_leader: str = ""
 
@@ -535,6 +582,7 @@ class Tracker:
         out, rows = [], {row["id"]: row for row in packet.get("casualties") or []}
         in_combat = self.in_combat(packet, now)
         self.gone = []
+        self.located = []
         for one, row in rows.items():
             away = math.hypot(row["dx"], row["dy"])
             known = self.downs.get(one)
@@ -542,6 +590,8 @@ class Tracker:
                 where = "" if in_combat or row["vehicle"] else f", grid {row['grid']}"
                 said = f"{row['name']}'s down{where}." if row["own"] else f"Found {row['name']} down{where}."
                 out.append(Report(PRIORITY, f"{said} Listed as {one}."))
+                if where:
+                    self.located.append(one)
                 known = {"name": row["name"], "left": False}
             if known is None:
                 continue
@@ -557,11 +607,13 @@ class Tracker:
         up = packet.get("up") or []
         for one in [one for one in self.downs if one not in rows]:
             known = self.downs.pop(one)
-            self.gone.append(one)
             if one in up:
+                self.gone.append(one)
                 out.append(Report(ROUTINE, self._back_up(known["name"], packet, now)))
             elif known.get("near"):
+                self.gone.append(one)
                 out.append(Report(PRIORITY, f"{known['name']}'s dead."))
+            # Otherwise nobody near him knows, so the commander doesn't either: he stays on its list as he was.
         return out
 
     def _back_up(self, name: str, packet: dict, now: float) -> str:
@@ -604,6 +656,8 @@ class Tracker:
             if self.care_said.get(key) == state:
                 continue
             self.care_said[key] = state
+            if (kind, state) in _CARE_SAYS_WHERE:
+                self.located.append(one)
             words = _CARE_WORDS.get((kind, state))
             if words:
                 bad = state not in ("carrying", "carried", "loaded", "treating", "up", "off", "building")
@@ -722,7 +776,9 @@ class Tracker:
                 out.append(Report(ROUTINE, said))
             else:
                 self.leg, self.on_station, self.route_done, self.checked = 0, [], False, []
-                words = _acknowledgement(route, grid) + _who_stays(packet, route) + self._how_long(packet, route, now)
+                words = (route or {}).get("says") or (
+                    _acknowledgement(route, grid) + _who_stays(packet, route) + self._how_long(packet, route, now))
+                words = stepped(words, bool((route or {}).get("then")), (route or {}).get("dropping", ""))
                 out.append(Report(ROUTINE, words, grid if _is_stop(route) else None))
         if not route or self.route_done or route.get("kind") != "route":
             return out

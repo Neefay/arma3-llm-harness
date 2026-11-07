@@ -397,6 +397,22 @@ brmh_cmd_fnc_startMount = {
 	_group setVariable ["brmh_cmd_mount", [_key, "going", _kind, []]];
 };
 
+// Those still on their way to a seat stop. Anyone already in it stays there.
+brmh_cmd_fnc_stopMount = {
+	params ["_group"];
+	private _vehicle = _group getVariable ["brmh_cmd_mountVehicle", objNull];
+	{
+		if (alive (_x # 0) and {
+			vehicle (_x # 0) isNotEqualTo _vehicle
+		}) then {
+			unassignVehicle (_x # 0);
+			[_x # 0] orderGetIn false;
+		};
+	} forEach (_group getVariable ["brmh_cmd_mountList", []]);
+	_group setVariable ["brmh_cmd_mountList", []];
+	_group setVariable ["brmh_cmd_mount", []];
+};
+
 brmh_cmd_fnc_stepMount = {
 	params ["_group"];
 	private _list = _group getVariable ["brmh_cmd_mountList", []];
@@ -479,7 +495,7 @@ brmh_cmd_fnc_getOff = {
 
 brmh_cmd_fnc_startDismount = {
 	params ["_group", "_key"];
-	_group setVariable ["brmh_cmd_mountList", []];
+	[_group] call brmh_cmd_fnc_stopMount;
 	private _men = (units _group) select {
 		[_x] call brmh_cmd_fnc_able and {
 			vehicle _x isNotEqualTo _x
@@ -1012,12 +1028,17 @@ brmh_cmd_fnc_order = {
 			_group setVariable ["brmh_cmd_releaseUntil", time + 150];
 		};
 	};
+	// One man sent to a named seat leaves the squad's orders alone. Otherwise, it's where the whole squad is going now.
 	if (_mode isEqualTo "mount") exitWith {
-		[_group] call brmh_cmd_fnc_callOffCare;
+		if ((_legs # 0 # 1) isEqualTo "") then {
+			[_group] call brmh_cmd_fnc_callOffCare;
+			[_group] call brmh_cmd_fnc_clearRoute;
+		};
 		[_group, _legs # 0 # 0, _legs # 0 # 1] call brmh_cmd_fnc_startMount;
 		true
 	};
 	if (_mode isEqualTo "dismount") exitWith {
+		[_group] call brmh_cmd_fnc_clearRoute;
 		[_group, _legs # 0 # 0] call brmh_cmd_fnc_startDismount;
 		true
 	};
@@ -1037,6 +1058,7 @@ brmh_cmd_fnc_order = {
 		true
 	};
 	if (_mode isEqualTo "halt") exitWith {
+		[_group] call brmh_cmd_fnc_stopMount;
 		[_group] call brmh_cmd_fnc_clearRoute;
 		// Clearing waypoints doesn't stop a walking group, and doFollow and doMove don't either. doStop does.
 		doStop (units _group);
@@ -1969,6 +1991,7 @@ brmh_cmd_fnc_unloadOrder = {
 	};
 	{
 		if (_x in _aboard) then {
+			[_group, _order, "unload", _x, "going", _key] call brmh_cmd_fnc_careSay;
 			[_x] call ace_common_fnc_unloadPerson;
 			[{
 				params ["_man", "_group", "_order", "_key"];
@@ -2075,6 +2098,7 @@ brmh_cmd_fnc_treatOrder = {
 				[_group, _order, "treat", _man, "can't find"] call brmh_cmd_fnc_careSay;
 			};
 			default {
+				[_group, _order, "treat", _man, "queued"] call brmh_cmd_fnc_careSay;
 				_queue pushBack _man;
 			};
 		};
@@ -2130,10 +2154,27 @@ brmh_cmd_fnc_stepTreats = {
 				not (_x getVariable ["brmh_cmd_busy", false])
 			}
 		};
+		// Nobody's left waiting without a word: the commander, or a chained order, is relying on hearing how each ends.
 		_queue = _queue select {
-			alive _x and {
+			private _still = alive _x and {
 				not ([_x] call brmh_cmd_fnc_able)
-			}
+			};
+			if (not _still) then {
+				[_group, _order, "treat", _x, ["he died", "up"] select (alive _x)] call brmh_cmd_fnc_careSay;
+			};
+			_still
+		};
+		if (_queue isNotEqualTo [] and {
+			((units _group) findIf {
+				[_x] call brmh_cmd_fnc_able and {
+					[_x] call brmh_cmd_fnc_isMedic
+				}
+			}) < 0
+		}) then {
+			{
+				[_group, _order, "treat", _x, "no medic"] call brmh_cmd_fnc_careSay;
+			} forEach _queue;
+			_queue = [];
 		};
 		private _waiting = _queue select {
 			vehicle _x isNotEqualTo _x and {

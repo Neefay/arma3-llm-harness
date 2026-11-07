@@ -14,7 +14,16 @@ from arma_harness.commander.orders import Invalid
 from arma_harness.commander.records import Records
 from arma_harness.commander.reports import Tracker
 from arma_harness.commander.runtime import Runtime
-from arma_harness.commander.server import DOCTRINE, EARLIER_BATTLE, NO_BATTLE, ORDER_TYPES_HELP, TOOL_NAMES, Server
+from arma_harness.commander.server import (
+    DOCTRINE,
+    EARLIER_BATTLE,
+    LEGS_HELP,
+    NO_BATTLE,
+    ORDER_TYPES_HELP,
+    TOOL_NAMES,
+    TOOLS,
+    Server,
+)
 from arma_harness.commander.wake import DELIVER, HOLD, WakeLogic
 from arma_harness.config import REPO_ROOT, Home
 from arma_harness.harness import HarnessError
@@ -507,8 +516,7 @@ def test_clear_works_from_numbered_buildings():
         wide(legs=[{"type": "CLEAR", "at": ["B9"]}])
     with pytest.raises(Invalid, match="at most 300"):
         wide(legs=[{"type": "CLEAR", "at": "B", "radius": 900}])
-    with pytest.raises(Invalid, match="only leg"):
-        wide(legs=[{"type": "CLEAR", "at": "B"}, {"type": "MOVE", "at": "B"}])
+    assert wide(legs=[{"type": "CLEAR", "at": "B"}, {"type": "MOVE", "at": "B"}])["mode"] == "chain"
 
 
 def test_buildings_can_be_used_as_places_in_any_order():
@@ -521,7 +529,7 @@ def test_buildings_can_be_used_as_places_in_any_order():
     sweep = wide(legs=[{"type": "SWEEP", "at": "B", "radius": 200}])
     assert sweep["engine_legs"][0][:3] == ["SWEEP", [3450.0, 3050.0], 200]
     assert wide(legs=[{"type": "DEFEND", "at": "B"}])["route"]["legs"][0]["radius"] == 100
-    with pytest.raises(Invalid, match="only leg"):
+    with pytest.raises(Invalid, match="runs until replaced"):
         wide(legs=[{"type": "ATTACK", "at": "B"}, {"type": "MOVE", "at": "B"}])
 
 
@@ -878,7 +886,7 @@ def test_schedules_are_cancelled_and_validated_up_front(tmp_path):
     assert b.runtime.unschedule(wake["id"]) == {"cancelled": True} and not b.runtime.wake.timers
 
 
-def test_timed_order_whose_marker_was_retired_only_troubles_the_operator(tmp_path):
+def test_timed_order_whose_marker_was_retired_isnt_sent(tmp_path):
     b = Battle(tmp_path)
     b.start()
     b.runtime.mark({"id": "Farm", "at": "036 030"})
@@ -1334,10 +1342,7 @@ def test_bad_mount_orders_are_refused(leg, words):
         boarding(**leg)
 
 
-def test_mount_stands_alone_and_needs_the_capability():
-    with pytest.raises(Invalid, match="only leg"):
-        both = [{"type": "MOUNT", "vehicle": "V1"}, {"type": "MOVE", "at": "034 030"}]
-        orders.validate({"to": "Alpha", "legs": both}, BOARDING, MARKERS, 8192, BUILDINGS, LIST)
+def test_mount_needs_the_capability():
     with pytest.raises(Invalid, match="can't do MOUNT"):
         one = [{"type": "MOUNT", "vehicle": "V1"}]
         orders.validate({"to": "Alpha", "legs": one}, STATIONS, MARKERS, 8192, [], LIST)
@@ -1873,6 +1878,17 @@ def test_a_team_at_the_grid_counts_a_man_down_there_unless_it_has_to_be_on_foot(
     assert met(b) == ["Alpha is at grid 034 030"]
 
 
+def test_higher_command_looks_again_before_saying_so(tmp_path):
+    """A man going down in the seconds before the word was given still got "all six on foot"."""
+    b = marching(tmp_path)
+    truth(b, 110, team("Alpha"), team("Bravo"))
+    assert met(b) == ["Alpha and Bravo are on foot at grid 052 044"]
+    truth(b, 115, team("Alpha"), {**team("Bravo"), "down": [[5250, 4450]]})
+    assert met(b) == []
+    b.advance(125)
+    assert not b.runtime.ended
+
+
 def test_a_march_ends_with_both_teams_on_foot_at_the_grid(tmp_path):
     b = marching(tmp_path)
     truth(b, 110, team("Alpha"), team("Bravo", x=5290, y=4470))
@@ -2149,12 +2165,9 @@ def test_unload_treat_and_post():
     assert post["words"] == "Copy, setting up an aid post at grid 041 041."
 
 
-def test_they_need_the_capability_and_stand_alone():
+def test_they_need_the_capability():
     with pytest.raises(Invalid, match="can't do CARRY"):
         care(to="Bravo", vehicle="V1")
-    with pytest.raises(Invalid, match="only leg"):
-        orders.validate({"to": "Alpha", "legs": [{"type": "TREAT"}, {"type": "MOVE", "at": "041 041"}]},
-                        CARERS, MARKERS, 8192, [], CARE_LIST, HURT)
 
 
 def down_row(key="m7", name="Sam Reed", x=3080, y=3050, vehicle="", aboard=False, own=True, handled=""):
@@ -2588,6 +2601,314 @@ def test_a_post_says_how_long_to_get_there_and_set_up(tmp_path):
     b.advance(104, order="O-0001")
     assert ("Copy, setting up an aid post at grid 040 030. That's 1 km on foot, about 4 minutes. "
             "Then about a minute to set up.") in said(b)
+
+
+# -- whole tasks in one order -----------------------------------------------------------------------------
+
+def chained(tmp_path, **raw) -> Battle:
+    capabilities = ["MOVE", "HOLD", "HALT", "POSTURE", "MOUNT", "DISMOUNT", "CARRY", "UNLOAD", "TREAT", "DEFEND",
+                    "FIRE_MISSION", "SENTRY", "PATROL"]
+    b = Battle(tmp_path, stations=[{"callsign": "Alpha", "role": "x", "capabilities": capabilities, "at": "030 030"}],
+               **raw)
+    b.runtime.vehicles = {"V1": {"id": "V1", "key": "V1", "name": "Truck", "at": "031 030", "t": None,
+                                 "wrecked": False}}
+    b.start()
+    b.runtime.end_turn("x", messages_only=True)
+    b.advance(101, order="")
+    return b
+
+
+def sent(b) -> list[str]:
+    return [row["request"]["legs"][0]["type"] for row in b.records.read("orders")]
+
+
+MOUNT, DISMOUNT = {"type": "MOUNT", "vehicle": "V1"}, {"type": "DISMOUNT"}
+DRIVE = {"type": "MOVE", "at": "050 030"}
+RIDING = [["V1", "cargo", "Sam Reed", False]]
+
+
+def test_a_chain_sends_only_its_first_step_and_says_the_whole_of_it(tmp_path):
+    b = chained(tmp_path)
+    b.runtime.order({"to": "Alpha", "legs": [MOUNT, DRIVE, DISMOUNT]})
+    assert sent(b) == ["MOUNT"]
+    b.advance(102, order="O-0001", mount=["V1", "going", "", []])
+    assert "Copy, mounting V1, then moving to grid 050 030, then getting off. About 2 minutes in all." in said(b)
+    assert sent(b) == ["MOUNT"]
+
+
+def test_each_step_starts_when_the_last_has_really_finished(tmp_path):
+    b = chained(tmp_path)
+    b.runtime.order({"to": "Alpha", "legs": [MOUNT, DRIVE, DISMOUNT]})
+    b.advance(102, order="O-0001", mount=["V1", "going", "", []])
+    b.advance(104, order="O-0001", mount=["V1", "on", "", ["Sam Reed"]], mounted=RIDING, leader="Sam Reed")
+    assert sent(b) == ["MOUNT", "MOVE"]
+    b.advance(106, order="O-0002", mounted=RIDING, leader="Sam Reed", leg=0, legs=1)
+    assert "Now moving to grid 050 030. That's 2 km by vehicle, about 2 minutes." in said(b)
+    assert sent(b) == ["MOUNT", "MOVE"]  # it's on its way, not there
+    b.advance(108, order="O-0002", mounted=RIDING, leader="Sam Reed", leg=1, legs=1, pos=[5050, 3050], grid="050030")
+    assert sent(b) == ["MOUNT", "MOVE", "DISMOUNT"]
+    b.advance(110, order="O-0003", mounted=RIDING, leader="Sam Reed", mount=["V1", "going off", "", []])
+    assert "Now getting off." in said(b)
+    assert b.runtime.chains == {}
+
+
+def test_a_chain_is_finished_with_after_its_last_step_is_sent(tmp_path):
+    b = chained(tmp_path)
+    b.runtime.order({"to": "Alpha", "legs": [MOUNT, DRIVE]})
+    b.advance(102, order="O-0001", mount=["V1", "on", "", ["Sam Reed"]], mounted=RIDING, leader="Sam Reed")
+    assert sent(b) == ["MOUNT", "MOVE"]
+    assert b.runtime.chains == {}
+
+
+def test_the_total_counts_unloading_where_they_are_not_where_the_truck_was(tmp_path):
+    """It came to "At least 35 minutes": back to the truck's old grid on foot, then a 2 km carry from there."""
+    b = chained(tmp_path)
+    b.advance(102, casualties=[down_row()])
+    b.runtime.order({"to": "Alpha", "legs": [{"type": "CARRY", "casualties": ["C1"], "vehicle": "V1"}, MOUNT, DRIVE,
+                                             DISMOUNT, {"type": "UNLOAD", "vehicle": "V1"},
+                                             {"type": "CARRY", "casualties": ["C1"], "at": "050 030"}]})
+    b.advance(104, casualties=[down_row()], order="O-0001")
+    assert any("At least 3 minutes in all." in line for line in said(b)), said(b)
+
+
+def test_the_list_doesnt_follow_a_man_being_carried(tmp_path):
+    """Every packet used to rewrite his grid, so the briefing tracked his carriers live, even in a fight."""
+    b = wounded_battle(tmp_path)
+    b.advance(102, casualties=[down_row(x=3050, y=3050)])
+    assert "C1  Sam Reed  Alpha's  grid 030 030" in b.runtime.briefing()
+    b.advance(104, casualties=[down_row(x=4550, y=3050, handled="carried")], pos=[4550, 3050])
+    assert "grid 045 030" not in b.runtime.briefing()
+    assert "C1  Sam Reed  Alpha's  grid 030 030" in b.runtime.briefing()
+    assert b.runtime.mission()["casualties"][0]["grid"] == "030 030"
+
+
+def test_how_long_since_a_report_is_since_someone_said_something(tmp_path):
+    b = wounded_battle(tmp_path)
+    b.advance(102, casualties=[down_row(x=3050, y=3050)])
+    b.advance(160, casualties=[down_row(x=3050, y=3050)])
+    assert "reported 58 s ago" in b.runtime.briefing() or "reported a minute ago" in b.runtime.briefing()
+
+
+def test_setting_him_down_tells_the_commander_where_he_is(tmp_path):
+    b = wounded_battle(tmp_path)
+    b.advance(102, casualties=[down_row(x=3050, y=3050)])
+    b.advance(104, casualties=[down_row(x=4550, y=3050)], medical=[["O-1", "carry", "m7", "Sam Reed", "carried", ""]])
+    assert "C1  Sam Reed  Alpha's  grid 045 030" in b.runtime.briefing()
+
+
+def test_going_down_in_a_fight_puts_no_grid_on_the_list(tmp_path):
+    b = wounded_battle(tmp_path)
+    b.advance(102, casualties=[down_row(x=3050, y=3050)], suppression=0.5, contacts=[contact()])
+    assert "Sam Reed  Alpha's  place not given" in b.runtime.briefing()
+    assert b.runtime.mission()["casualties"][0]["grid"] is None
+
+
+def test_a_man_left_behind_who_dies_stays_on_the_list(tmp_path):
+    """His vanishing from it was the commander being told something nobody near him could know."""
+    b = wounded_battle(tmp_path)
+    b.advance(102, casualties=[down_row(x=3050, y=3050)])
+    b.advance(104, casualties=[down_row(x=3050, y=3050)], pos=[6050, 3050])
+    b.advance(106, casualties=[], pos=[6050, 3050])
+    assert "Sam Reed's dead." not in said(b)
+    assert "C1  Sam Reed" in b.runtime.briefing()
+
+
+def test_a_timed_order_that_cant_go_out_says_so(tmp_path):
+    b = Battle(tmp_path, markers=[{"id": "O1", "kind": "objective", "at": "034 030"}])
+    b.start()
+    b.runtime.schedule({"order": {"to": "Alpha", "legs": [{"type": "MOVE", "at": "O1"}]}}, after="0:05")
+    b.runtime.unmark("O1")
+    b.runtime.end_turn("x")
+    b.advance(110)
+    told = [text for text, _ in b.wakes] + list(b.runtime.wake.notices)
+    assert "couldn't go out" in " ".join(told), told
+
+
+def test_appending_to_nothing_takes_over_from_a_chain(tmp_path):
+    """The chain's next step would otherwise have overridden the newer order."""
+    b = chained(tmp_path)
+    b.runtime.order({"to": "Alpha", "legs": [MOUNT, DRIVE]})
+    b.advance(102, order="O-0001", mount=["V1", "going", "", []])
+    b.runtime.order({"to": "Alpha", "mode": "append", "legs": [{"type": "MOVE", "at": "034 030"}]})
+    b.advance(104, order="O-0002", mount=["V1", "on", "", ["Sam Reed"]])
+    assert sent(b) == ["MOUNT", "MOVE"] and b.records.read("orders")[1]["request"]["legs"][0]["at"] == "034 030"
+    assert b.runtime.chains == {}
+
+
+def test_nothing_can_be_appended_after_what_never_ends(tmp_path):
+    b = chained(tmp_path)
+    b.runtime.order({"to": "Alpha", "legs": [{"type": "HOLD", "at": "034 030"}]})
+    with pytest.raises(Invalid, match="HOLD runs until replaced"):
+        b.runtime.order({"to": "Alpha", "mode": "append", "legs": [{"type": "MOVE", "at": "036 030"}]})
+
+
+def test_one_man_sent_to_a_seat_leaves_the_chain_running(tmp_path):
+    b = chained(tmp_path)
+    b.runtime.order({"to": "Alpha", "legs": [DRIVE, DISMOUNT]})
+    b.runtime.order({"to": "Alpha", "legs": [{"type": "MOUNT", "vehicle": "V1", "seat": "gunner"}]})
+    assert "Alpha" in b.runtime.chains
+
+
+def test_one_man_sent_to_a_seat_leaves_the_squads_route_and_its_reports(tmp_path):
+    b = chained(tmp_path)
+    b.runtime.order({"to": "Alpha", "legs": [DRIVE]})
+    b.advance(102, order="O-0001", leg=0, legs=1)
+    b.runtime.order({"to": "Alpha", "legs": [{"type": "MOUNT", "vehicle": "V1", "seat": "gunner"}]})
+    b.advance(104, order="O-0002", leg=0, legs=1)
+    assert "Copy, mounting V1 as gunner." in said(b)
+    b.advance(106, order="O-0002", leg=1, legs=1, pos=[5050, 3050], grid="050030")
+    assert "Arrived, grid 050 030." in said(b)
+
+
+def test_a_step_that_fails_stops_the_rest_and_says_so(tmp_path):
+    b = chained(tmp_path)
+    b.runtime.order({"to": "Alpha", "legs": [MOUNT, DRIVE, DISMOUNT]})
+    b.advance(102, order="O-0001", mount=["V1", "wrecked", "", []])
+    assert "V1 is wrecked. Not mounting." in said(b) and "Stopping there, waiting for orders." in said(b)
+    assert sent(b) == ["MOUNT"] and b.runtime.chains == {}
+
+
+@pytest.mark.parametrize("cancel, words", [
+    ({"legs": [{"type": "HALT"}]}, "Halted at grid"),
+    ({"legs": [{"type": "MOVE", "at": "034 030"}]}, "Copy, moving to grid 034 030."),
+    ({"legs": [DRIVE, DISMOUNT]}, "Copy, moving to grid 050 030, then getting off."),
+])
+def test_a_new_squad_order_cancels_the_rest_and_says_what_it_dropped(tmp_path, cancel, words):
+    b = chained(tmp_path)
+    b.runtime.order({"to": "Alpha", "legs": [MOUNT, DRIVE, DISMOUNT]})
+    b.advance(102, order="O-0001", mount=["V1", "going", "", []])
+    b.runtime.order({"to": "Alpha", **cancel})
+    b.advance(104, order="O-0002", mount=["V1", "on", "", ["Sam Reed"]])
+    line = next(line for line in said(b) if words in line)
+    assert "Dropping the rest: moving to grid 050 030, then getting off." in line
+    assert sent(b)[2:] == []  # nothing more than the two orders
+
+
+def test_posture_and_fire_leave_a_chain_running(tmp_path):
+    b = chained(tmp_path)
+    b.runtime.order({"to": "Alpha", "legs": [MOUNT, DRIVE, DISMOUNT]})
+    b.advance(102, order="O-0001", mount=["V1", "going", "", []])
+    b.runtime.order({"to": "Alpha", "legs": [{"type": "POSTURE"}], "behaviour": "SAFE"})
+    b.advance(104, order="O-0002", mount=["V1", "going", "", []])
+    assert "Alpha" in b.runtime.chains
+    b.advance(106, order="O-0002", mount=["V1", "on", "", ["Sam Reed"]], mounted=RIDING, leader="Sam Reed")
+    assert sent(b) == ["MOUNT", "POSTURE", "MOVE"]
+
+
+def test_an_order_about_the_wounded_is_a_step_and_waits_for_every_man(tmp_path):
+    b = chained(tmp_path)
+    down = [down_row(key="m7", name="Sam Reed", x=3080, y=3050), down_row(key="m8", name="Ann Cole", x=3090, y=3050)]
+    b.advance(102, casualties=down)
+    b.runtime.order({"to": "Alpha", "legs": [{"type": "CARRY", "casualties": ["C1", "C2"], "vehicle": "V1"}, MOUNT]})
+    assert sent(b) == ["CARRY"]
+    b.advance(104, casualties=down, order="O-0001", medical=[["O-0001", "carry", "m7", "Sam Reed", "going", ""],
+                                                             ["O-0001", "carry", "m8", "Ann Cole", "going", ""]])
+    assert any(line.startswith("Copy, carrying Sam Reed and Ann Cole to V1, then mounting V1. At least") for line in
+               said(b))
+    b.advance(106, casualties=down, order="O-0001", medical=[["O-0001", "carry", "m7", "Sam Reed", "loaded", ""],
+                                                             ["O-0001", "carry", "m8", "Ann Cole", "carrying", ""]])
+    assert sent(b) == ["CARRY"]
+    b.advance(108, casualties=down, order="O-0001", medical=[["O-0001", "carry", "m7", "Sam Reed", "loaded", ""],
+                                                             ["O-0001", "carry", "m8", "Ann Cole", "loaded", ""]])
+    assert sent(b) == ["CARRY", "MOUNT"]
+
+
+def test_a_carry_that_fails_stops_the_chain(tmp_path):
+    b = chained(tmp_path)
+    b.advance(102, casualties=[down_row()])
+    b.runtime.order({"to": "Alpha", "legs": [{"type": "CARRY", "casualties": ["C1"], "vehicle": "V1"}, MOUNT, DRIVE]})
+    b.advance(104, order="O-0001", medical=[["O-0001", "carry", "m7", "Sam Reed", "no bearer", ""]])
+    assert sent(b) == ["CARRY"] and "Stopping there, waiting for orders." in said(b)
+
+
+@pytest.mark.parametrize("mode, rows, outcome", [
+    ("treat", [["O", "treat", "a", "A", "queued", "", ""]], None),
+    ("treat", [["O", "treat", "a", "A", "aboard", "V1", ""]], None),  # they wait for him
+    ("treat", [["O", "treat", "a", "A", "up", "", ""], ["O", "treat", "b", "B", "queued", "", ""]], None),
+    ("treat", [["O", "treat", "a", "A", "up", "", ""], ["O", "treat", "b", "B", "he died", "", ""]], "done"),
+    ("treat", [["O", "treat", "", "", "no medic", "", ""]], "failed"),
+    ("unload", [["O", "unload", "a", "A", "going", "V1", ""]], None),
+    ("unload", [["O", "unload", "a", "A", "off", "V1", ""]], "done"),
+    ("unload", [["O", "unload", "", "", "nobody there", "V1", ""]], "failed"),
+    ("post", [["O", "post", "post", "", "building", "", ""]], None),
+    ("post", [["O", "post", "post", "", "up", "A1", "040 060"]], "done"),
+    ("carry", [["Other", "carry", "a", "A", "loaded", "", ""]], None),  # another order's
+    ("carry", [], None),
+])
+def test_when_a_step_about_the_wounded_is_over(mode, rows, outcome):
+    assert reports.step_outcome(mode, "O", {"medical": rows}, False) == outcome
+
+
+def test_a_chain_survives_a_restart(tmp_path):
+    b = chained(tmp_path)
+    b.runtime.order({"to": "Alpha", "legs": [MOUNT, DRIVE, DISMOUNT]})
+    b.runtime.save()
+    assert b.records.load_state()["chains"]["Alpha"]["left"] == ["moving to grid 050 030", "getting off"]
+
+
+CHAINERS = {"Alpha": {"capabilities": ["MOVE", "HOLD", "SENTRY", "SEARCH", "MOUNT", "DISMOUNT", "DEFEND", "OCCUPY",
+                                       "CARRY", "HALT", "POSTURE", "FIRE_MISSION", "PATROL"], "at": "030 030"}}
+
+
+def chain_check(*legs, **fields):
+    return orders.validate({"to": "Alpha", "legs": list(legs), **fields}, CHAINERS, MARKERS, 8192, BUILDINGS, LIST)
+
+
+def test_waypoints_in_a_row_are_one_step():
+    checked = chain_check(MOUNT, {"type": "MOVE", "at": "034 030"}, {"type": "MOVE", "at": "036 030"}, DISMOUNT)
+    assert [one["mode"] for one in checked["checked"]] == ["mount", "replace", "dismount"]
+    assert len(checked["checked"][1]["route"]["legs"]) == 2
+
+
+def test_a_plain_route_is_still_not_a_chain():
+    assert chain_check({"type": "MOVE", "at": "034 030"}, {"type": "HOLD"})["mode"] == "replace"
+
+
+@pytest.mark.parametrize("kind", ["DEFEND", "PATROL"])
+def test_what_runs_until_replaced_has_to_go_last(kind):
+    with pytest.raises(Invalid, match=f"{kind} runs until replaced, so nothing can follow it.*Put it last"):
+        chain_check({"type": kind, "at": ["034 030", "036 030"] if kind == "PATROL" else "034 030"}, MOUNT)
+    assert chain_check(MOUNT, {"type": "DEFEND", "at": "034 030"})["mode"] == "chain"
+
+
+@pytest.mark.parametrize("after", [DISMOUNT, {"type": "MOVE", "at": "036 030"}])
+def test_hold_can_only_go_last_and_says_how_to_wait_instead(after):
+    with pytest.raises(Invalid, match="use MOVE with hold_for"):
+        chain_check({"type": "HOLD", "at": "034 030"}, after)
+
+
+def test_hold_partway_along_a_trip_is_refused_too():
+    """Only the last leg of each step used to be looked at, so this would have hung at the HOLD for good."""
+    with pytest.raises(Invalid, match="use MOVE with hold_for"):
+        chain_check({"type": "HOLD", "at": "034 030"}, {"type": "MOVE", "at": "036 030"}, DISMOUNT)
+
+
+def test_hold_after_getting_off_means_there():
+    checked = chain_check({"type": "MOVE", "at": "034 030"}, DISMOUNT, {"type": "HOLD"})
+    assert checked["checked"][2]["route"]["legs"][0]["grid"] == "034 030"
+
+
+def test_a_mistake_in_a_later_step_is_refused_at_once():
+    with pytest.raises(Invalid, match="needs a vehicle from your list"):
+        chain_check(MOUNT, DRIVE, {"type": "DISMOUNT", "vehicle": "V9"})
+
+
+def test_fire_orders_go_alone():
+    with pytest.raises(Invalid, match="FIRE_MISSION must be the only leg"):
+        chain_check(MOUNT, {"type": "FIRE_MISSION", "at": "041 041"})
+
+
+def test_a_chain_cant_be_appended():
+    with pytest.raises(Invalid, match="Only MOVE, HOLD, SEARCH and SENTRY can be appended"):
+        chain_check(MOUNT, DRIVE, mode="append")
+
+
+def test_the_commander_is_told_to_give_whole_tasks():
+    assert "Give whole tasks, not single steps" in DOCTRINE and "Dropping" not in LEGS_HELP
+    assert "Each leg starts when the one before has finished" in LEGS_HELP
+    assert "Each stands alone" not in ORDER_TYPES_HELP
+    order_tool = next(tool for tool in TOOLS if tool["name"] == "commander_order")
+    assert order_tool["inputSchema"]["properties"]["legs"]["description"] == LEGS_HELP
 
 
 def in_the_fight(tmp_path) -> Battle:

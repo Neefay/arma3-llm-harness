@@ -19,6 +19,8 @@ MAX_RADIUS_M = 300
 ORDER_TYPES = set(LEG_TYPES) | SINGLE_LEG | {"PATROL", "HALT", "POSTURE", "MOUNT", "DISMOUNT", "FIRE_MISSION",
                                              "CHECK_FIRE", "CARRY", "UNLOAD", "TREAT", "AID_POST"}
 CARE_ORDERS = {"CARRY": "carry", "UNLOAD": "unload", "TREAT": "treat", "AID_POST": "post"}
+STANDS_ALONE = {"HALT", "POSTURE", "FIRE_MISSION", "CHECK_FIRE"}
+ENDLESS = {"OCCUPY", "CORDON", "ATTACK", "DEFEND", "PATROL_AREA", "SWEEP", "PATROL"}  # nothing could ever follow these
 AMMO = {"HE", "SMOKE"}
 MAX_FIRE_ROUNDS = 32
 MAX_FIRE_RADIUS_M = 150
@@ -116,8 +118,15 @@ def validate(request: dict, stations: dict[str, dict], markers: dict[str, dict],
         if kind not in stations[to]["capabilities"]:
             raise Invalid(f"{to} can't do {kind}. See commander_roster.")
         types.append(kind)
-    if ("HALT" in types or "POSTURE" in types) and len(types) > 1:
-        raise Invalid("HALT and POSTURE must be the only leg in an order.")
+    alone = STANDS_ALONE & set(types)
+    if alone and len(types) > 1:
+        raise Invalid(f"{sorted(alone)[0]} must be the only leg in an order.")
+    if "HOLD" in types[:-1]:
+        raise Invalid("HOLD runs until replaced, so nothing can follow it in the same order. Put it last, or use MOVE "
+                      "with hold_for to wait somewhere first.")
+    steps = _steps(legs, types)
+    if len(steps) > 1:
+        return _chain(request, steps, mode, posture, stations, markers, world_size, buildings, vehicles, casualties)
     if types[0] == "HALT":
         return {"to": to, "mode": "halt", "engine_legs": [], "posture": posture, "route": {"kind": "halt", "legs": []}}
     if types[0] == "POSTURE":
@@ -131,8 +140,6 @@ def validate(request: dict, stations: dict[str, dict], markers: dict[str, dict],
     if CARE_ORDERS.keys() & set(types):
         return _care(to, legs, types, posture, markers, buildings, world_size, vehicles or {}, casualties or {})
     single = SINGLE_LEG & set(types)
-    if single and len(types) > 1:
-        raise Invalid(f"{sorted(single)[0]} must be the only leg in an order. Move there first, or schedule it.")
     known = {building["id"]: building for building in buildings or []}
     if single:
         return _single_leg(to, legs[0], types[0], posture, {**markers, **known}, world_size, known)
@@ -152,6 +159,45 @@ def validate(request: dict, stations: dict[str, dict], markers: dict[str, dict],
             "route": {"kind": "route", "legs": route_legs}}
 
 
+def _steps(legs: list[dict], types: list[str]) -> list[list[dict]]:
+    """What a squad does one after another. A run of waypoints is one trip, and anything else is a step of its own."""
+    steps: list[list[dict]] = []
+    previous = ""
+    for leg, kind in zip(legs, types, strict=True):
+        if kind in LEG_TYPES and previous in LEG_TYPES:
+            steps[-1].append(leg)
+        else:
+            steps.append([leg])
+        previous = kind
+    return steps
+
+
+def _chain(request, steps, mode, posture, stations, markers, world_size, buildings, vehicles, casualties) -> dict:
+    """A whole task in one order. It's all checked now, so a mistake in a later step is refused while it can be fixed.
+    Each step is sent when the one before has finished: see Runtime._advance_chain."""
+    if mode == "append":
+        raise Invalid("Only MOVE, HOLD, SEARCH and SENTRY can be appended. To do more, send the whole task as one "
+                      "order.")
+    for step in steps[:-1]:
+        kind = str(step[-1]["type"]).upper()
+        if kind in ENDLESS:
+            raise Invalid(f"{kind} runs until replaced, so nothing can follow it in the same order. Put it last.")
+    settings = {key: request[key] for key in ("to", "speed", "formation", "behaviour", "combat_mode", "intent")
+                if key in request}
+    requests, last_at = [], None
+    for step in steps:
+        legs = [dict(leg) for leg in step]
+        # "Drive there, get off, and hold": there's where it got off.
+        if str(legs[0]["type"]).upper() in ("HOLD", "SENTRY") and not legs[0].get("at") and last_at:
+            legs[0]["at"] = last_at
+        for leg in legs:
+            last_at = leg["at"] if isinstance(leg.get("at"), str) else last_at
+        requests.append({**settings, "legs": legs})
+    checked = [validate(one, stations, markers, world_size, buildings, vehicles, casualties) for one in requests]
+    return {"to": request["to"], "mode": "chain", "requests": requests, "checked": checked, "posture": posture,
+            "engine_legs": [], "route": None}
+
+
 def _vehicle_place(vehicle: dict, world_size: float) -> list[float] | None:
     """Where the commander believes it is, which is what a squad's estimate has to go by."""
     return parse_grid(vehicle["at"], world_size)[0] if vehicle.get("at") else None
@@ -160,8 +206,6 @@ def _vehicle_place(vehicle: dict, world_size: float) -> list[float] | None:
 def _care(to, legs, types, posture, markers, buildings, world_size, vehicles, casualties) -> dict:
     """Orders about the wounded. They concern those doing the job: the rest of the squad carries on as it was. Each man
     is found from where he was last reported to be, so an old report can send them to the wrong place."""
-    if len(types) > 1:
-        raise Invalid(f"{types[0]} must be the only leg in an order.")
     kind, leg = types[0], legs[0]
     ids = leg.get("casualties") or []
     if not isinstance(ids, list):
@@ -169,7 +213,7 @@ def _care(to, legs, types, posture, markers, buildings, world_size, vehicles, ca
     unknown = [one for one in ids if one not in casualties]
     if unknown:
         raise Invalid(f"casualties must be from your list, and these aren't: {unknown}.")
-    who = [[casualties[one]["key"], casualties[one]["pos"]] for one in ids]
+    who = [[casualties[one]["key"], casualties[one].get("said_pos") or casualties[one]["pos"]] for one in ids]
     names = " and ".join(casualties[one]["name"] for one in ids) or "our casualties"
     places = {**markers, **{building["id"]: building for building in buildings or []}}
     base = {"to": to, "mode": CARE_ORDERS[kind], "posture": posture, "route": None}
@@ -200,8 +244,6 @@ def _care(to, legs, types, posture, markers, buildings, world_size, vehicles, ca
 def _fire(to, legs, types, posture, stations, world_size, vehicles) -> dict:
     """Fire orders only concern the guns. A radio operator can't call fire on a token like B3 or a marker, so the place
     has to be a grid reference, which the commander works out for itself."""
-    if len(types) > 1:
-        raise Invalid(f"{types[0]} must be the only leg in an order.")
     leg = legs[0]
     guns = leg.get("guns") or []
     unknown = [gun for gun in guns if gun not in vehicles]
@@ -238,8 +280,6 @@ def _fire(to, legs, types, posture, stations, world_size, vehicles) -> dict:
 
 def _boarding(to, legs, types, posture, vehicles) -> dict:
     """Getting on and off goes by the commander's own list of vehicles, so a refusal gives nothing away."""
-    if len(types) > 1:
-        raise Invalid(f"{types[0]} must be the only leg in an order.")
     kind, vehicle_id, seat = types[0], legs[0].get("vehicle"), str(legs[0].get("seat") or "").lower()
     if seat and not SEATS.match(seat):
         raise Invalid(f"Bad seat {seat!r}: use driver, gunner, commander, cargo or turret:0.")
@@ -304,8 +344,6 @@ def _clear(to, at, radius, posture, places, world_size, known) -> dict:
 
 
 def _patrol(to, legs, types, posture, markers, world_size) -> dict:
-    if len(types) > 1:
-        raise Invalid("PATROL must be the only leg in an order. Pass its grids as a list in at.")
     points = legs[0].get("at")
     if not isinstance(points, list) or len(points) < 2:
         raise Invalid("PATROL needs a list of at least 2 grids in at.")

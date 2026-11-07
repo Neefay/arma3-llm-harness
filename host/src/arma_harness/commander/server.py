@@ -38,7 +38,14 @@ ORDER_TYPES_HELP = (
     "newest order wins: a later order that moves or stops the squad, or MOUNT, calls off its carrying, treating and "
     "aid post, and casualties stay where they are. To do both, order the squad first and these second. A new CARRY "
     "for a man already being carried takes him to the new place. The last six of the single-place orders run until "
-    "replaced. Each stands alone in an order, except MOVE, HOLD, SEARCH and SENTRY, which can be chained.")
+    "replaced.")
+LEGS_HELP = (
+    "What the squad does, in order. Each leg starts when the one before has finished, so one order can be a whole "
+    "task, such as MOUNT, MOVE, DISMOUNT, OCCUPY or CARRY, MOUNT, MOVE, DISMOUNT, UNLOAD. Prefer this to sending steps "
+    "one at a time: the reply gives the total time, and you don't have to wake for each step, while a separate order "
+    "sent too soon replaces what the squad was doing. If a step fails, the squad says so and waits for you. HALT, "
+    "POSTURE, FIRE_MISSION and CHECK_FIRE go alone. HOLD and the orders that run until replaced can only go last: use "
+    "MOVE with hold_for to wait somewhere on the way.")
 _STRING = {"type": "string"}
 _LEG = {
     "type": "object",
@@ -73,8 +80,9 @@ TOOLS = [
      "It holds no live strength or status.", "inputSchema": {"type": "object", "properties": {}}},
     {"name": "commander_order", "description": "Send an order to one station. The result only confirms it was sent: "
      "watch the radio for an acknowledgement.", "inputSchema": {"type": "object", "properties": {
-        "to": _STRING, "legs": {"type": "array", "items": _LEG},
-        "mode": {"type": "string", "description": "replace (default) or append"},
+        "to": _STRING, "legs": {"type": "array", "items": _LEG, "description": LEGS_HELP},
+        "mode": {"type": "string", "description": "replace (default) or append, which adds MOVE, HOLD, SEARCH or "
+                                                  "SENTRY legs to the end of the squad's route"},
         "speed": {"type": "string", "description": "LIMITED, NORMAL or FULL. On foot, FULL is no faster than NORMAL"},
         "formation": {"type": "string", "description": "COLUMN, STAG COLUMN, WEDGE, ECH LEFT, ECH RIGHT, VEE, LINE, "
                                                        "FILE or DIAMOND"},
