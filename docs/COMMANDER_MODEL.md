@@ -439,14 +439,14 @@ Every task, and a good deal else, is carried out by a state machine. None of the
 | Carry | `"state"` in a hashmap | going, fetching, lifting, carrying, working, loading, done | Yes: each state has a timeout or a give-up |
 | Treat job | `"state"`, plus a queue | queued, going, working, then up or released | Yes, since the queue was fixed this week |
 | Aid post | `"state"` | going, building, then up or given up | Yes |
-| Fire mission | `"state"` | firing, holding, then done, out, can't lay, gunner, destroyed, stopped | Probably. See conflict 3 |
+| Fire mission | `"state"` | firing, holding, then done, out, can't lay, gunner, destroyed, stopped | Yes |
 | Boarding | `brmh_cmd_mount` `[vehicle, word, …]` and a list | going, then on, taken, unreachable, wrecked, nobody | Yes, with a deadline |
-| Getting off | The same variable | going off, off, none | **No deadline.** A man who can't get out leaves it at "going off" for good |
+| Getting off | The same variable | going off, off, none, stuck | Yes, since a 30 s deadline was added |
 | Clearing | Whether `clearQueue` exists, plus `clearLeft` and per-man deadlines | idle, between buildings, in a building, done | Yes, while anyone's able |
 | Placing | `placed` as -1, 0 or 1 | idle, walking to spots, in position | Yes, with a deadline |
 | CBA task | `task` flag, `releaseUntil` | running, being released | Released by the next order |
 | A man's custody | `brmh_cmd_handled` on the casualty | free, carried, treated | Cleared by every finish and release |
-| A man's availability | `brmh_cmd_busy` on the soldier | free, busy | **This is the claims rule, as a lock.** Not every machine respects it |
+| A man's availability | `brmh_cmd_busy` on the soldier | free, busy | **This is the claims rule, as a lock.** Every machine respects it now |
 
 **Host side:**
 
@@ -465,14 +465,323 @@ Every task, and a good deal else, is carried out by a state machine. None of the
 
 **What the hunt found.** Each of these comes from two machines touching the same thing without agreeing, and every one is predicted by the claims rule in [section 8.3](#83-claims-the-one-rule-behind-newest-wins). That's a better test of the model than anything else on this page.
 
-| # | Conflict | Effect | Status |
+| # | Conflict | Effect | Fixed, and checked live |
 |---|---|---|---|
-| 1 | Clearing, placing and CBA tasks never check `busy`. Clearing hands every able man a building position each step, and placing `doStop`s them all | `CARRY` during a `CLEAR` sends the carrier off to a room. During an `OCCUPY`, he's stopped where he stands. The rule says a detail sent after a squad order keeps its men | Confirmed in the code. Not seen live, because no test does it, and it's exactly what a village fight would do |
-| 2 | A treat job starting on a man doesn't check whether he's being carried, and sets his custody to "treated" over the top | `TREAT` for a man, then another squad's `CARRY` of him before a medic's free: the medic chases a man being carried away | Confirmed in the code |
-| 3 | The fire mission's "is there a gunner" asks `alive`, and an unconscious gunner under ACE is alive and still in the seat | The gun never fires, and the mission ends after 15 s as "can't lay", which says the gun can't reach. The truth is that its gunner's down | Confirmed that it asks `alive`. What the engine then does is inferred |
-| 4 | Getting off has no deadline | A chain waiting on `DISMOUNT` would wait for good, silently, if anyone can't get out | Inferred. Nobody's seen it happen |
+| 1 | Clearing, placing and CBA tasks never check `busy`. Clearing hands every able man a building position each step, and placing `doStop`s them all | `CARRY` during a `CLEAR` sends the carrier off to a room. During an `OCCUPY`, he's stopped where he stands. The rule says a detail sent after a squad order keeps its men | Clearing and placing now leave men on a job alone, and a job turns its worker's pathing back on, since `DEFEND` turns it off at his post. [casevac_village](../scenarios/commander/casevac_village.yaml): a carry out of a `CLEAR` with nobody given another room, and a carry out of a `DEFEND` that arrives. `CORDON` shares the code with `OCCUPY`, and isn't run live |
+| 2 | A treat job starting on a man doesn't check whether he's being carried, and sets his custody to "treated" over the top | `TREAT` for a man, then another squad's `CARRY` of him before a medic's free: the medic chases a man being carried away | A man being carried now waits his turn, as one on a truck does. In the same battle, the medics treated two men, waited for the third to be set down, then treated him |
+| 3 | The fire mission's "is there a gunner" asks `alive`, and an unconscious gunner under ACE is alive and still in the seat | The gun never fires, and the mission ends after 15 s as "can't lay", which says the gun can't reach. The truth is that its gunner's down | It asks whether he's able now. [fire_check](../scenarios/commander/fire_check.yaml): "3 of 8 fired, no gunner on V1" mid-mission, and "Unable, no gunner on V1" for the next |
+| 4 | Getting off has no deadline | A chain waiting on `DISMOUNT` would wait for good, silently, if anyone can't get out | 30 s, then "Can't get Owen King off the vehicle", which a chain treats as a failed step. [vehicles_check](../scenarios/commander/vehicles_check.yaml), with a man held in his seat |
 
 Conflicts 1 and 3 are the same mistake as the false win: a machine asking a question about a man that only one of the sets in [section 5.1](#51-a-members-condition) can answer, and asking a different one. A declared machine would have had to say which.
+
+### 8.7 Charts
+
+Each machine as it is in the code. Where a state is a string in the code, the chart names it with exactly that string, as `state "going off" as going_off`, and [test_machine_charts.py](../host/tests/test_machine_charts.py) fails if the code and the chart disagree about which ones exist. Names without quotes are states the code holds some other way: a list a man is on, a flag, or a variable being there at all. Those are drawn as faithfully, and nothing checks them.
+
+#### Game side
+
+<!-- machine: carry -->
+```mermaid
+stateDiagram-v2
+  state "going" as going
+  state "fetching" as fetching
+  state "lifting" as lifting
+  state "carrying" as carrying
+  state "working" as working
+  state "loading" as loading
+  state "done" as done
+  [*] --> going: CARRY, a free man each
+  going --> going: next place to try
+  going --> lifting: beside him, or stalled within 8 m
+  going --> fetching: as close as he can get, within 35 m, or out of places within 60 m
+  going --> done: out of places, and over 60 m away
+  fetching --> lifting: after 8 s, and he's brought over
+  lifting --> carrying: after 9 s
+  carrying --> loading: at the vehicle
+  carrying --> done: at the place, "carried"
+  carrying --> working: stalled for 8 s within 60 m
+  carrying --> done: stalled further off, "stuck"
+  working --> loading: after 8 s, a vehicle
+  working --> done: after 8 s, put at the place
+  loading --> done: aboard, or not after 5 s
+  done --> [*]
+  note right of done
+    From any state but loading: the carrier down, the man dead or awake,
+    or a squad order calling it off, "left" or "put down".
+  end note
+```
+
+<!-- machine: treat -->
+```mermaid
+stateDiagram-v2
+  state "going" as going
+  state "working" as working
+  [*] --> queued: TREAT, one row per man
+  queued --> waiting: on an ordinary vehicle, or being carried
+  waiting --> queued: off, or set down
+  queued --> going: a medic is free
+  queued --> [*]: dead or awake, said. No able medic left, "no medic"
+  going --> going: next place to try
+  going --> working: beside him, or fetched within 35 or 60 m
+  going --> [*]: can't reach him
+  going --> queued: medic down
+  working --> queued: medic down
+  working --> [*]: up after the time it takes, or woke by himself
+  note right of working
+    From going or working: he dies, or a squad order calls it off.
+  end note
+```
+
+<!-- machine: post -->
+```mermaid
+stateDiagram-v2
+  state "going" as going
+  state "building" as building
+  [*] --> going: AID_POST, one medic
+  going --> building: within 8 m, or stopped within 40 m
+  going --> [*]: stopped further off, "can't reach"
+  building --> [*]: after the build time, a tent and A1
+  note right of building
+    From either: the medic down, or a squad order calling it off.
+  end note
+```
+
+<!-- machine: fire -->
+```mermaid
+stateDiagram-v2
+  state "unable" as unable
+  state "firing" as firing
+  state "holding" as holding
+  state "done" as done
+  state "out" as out
+  state "cantlay" as cantlay
+  state "gunner" as gunner
+  state "destroyed" as destroyed
+  state "stopped" as stopped
+  state "checked" as checked
+  [*] --> unable: no gun, no gunner, no ammo, out of range, destroyed
+  [*] --> firing: FIRE_MISSION, one per gun
+  firing --> holding: no shot for 10 s, still told to fire
+  holding --> firing: a shot
+  firing --> done: every round fired
+  firing --> out: none of that ammo left
+  firing --> cantlay: ready, and no shot for 15 s
+  firing --> gunner: the gunner dead or down
+  firing --> destroyed: the gun destroyed
+  firing --> stopped: CHECK_FIRE
+  holding --> stopped: CHECK_FIRE
+  [*] --> checked: CHECK_FIRE's own row, saying what's still in the air
+```
+
+<!-- machine: boarding -->
+```mermaid
+stateDiagram-v2
+  state "going" as going
+  state "on" as on
+  state "taken" as taken
+  state "nobody" as nobody
+  state "noseat" as noseat
+  state "unreachable" as unreachable
+  state "wrecked" as wrecked
+  state "none" as none
+  state "going off" as going_off
+  state "off" as off
+  state "stuck" as stuck
+  [*] --> going: MOUNT
+  [*] --> wrecked: the vehicle's gone
+  [*] --> noseat: no seat of that kind
+  [*] --> taken: no free seat
+  [*] --> nobody: nobody free to send
+  going --> on: everyone sent is aboard
+  going --> taken: someone's in his seat
+  going --> nobody: none of them made it
+  going --> unreachable: past the deadline
+  going --> wrecked: the vehicle destroyed
+  going --> cleared: HALT or DISMOUNT
+  [*] --> going_off: DISMOUNT, someone aboard
+  [*] --> none: DISMOUNT, nobody aboard
+  going_off --> off: all out
+  going_off --> stuck: anyone still in after 30 s
+```
+
+<!-- machine: clearing -->
+```mermaid
+stateDiagram-v2
+  [*] --> between: CLEAR, a queue of buildings
+  between --> inside: next building, its positions handed out
+  between --> between: a ruin, noted and skipped
+  inside --> inside: each free man takes the next position, 45 s for each
+  inside --> between: no positions left and nobody still walking
+  between --> finished: queue empty, everyone follows the leader
+  finished --> [*]
+  note right of inside
+    Men on a job aren't given positions. Any new squad order ends it.
+  end note
+```
+
+<!-- machine: placing -->
+```mermaid
+stateDiagram-v2
+  [*] --> walking: OCCUPY or CORDON, placed = 0
+  walking --> placed: everyone free is there, or 90 s, placed = 1
+  placed --> [*]: the next squad order, placed = -1
+```
+
+<!-- machine: cba-task -->
+```mermaid
+stateDiagram-v2
+  [*] --> running: ATTACK, DEFEND, PATROL_AREA or SWEEP
+  running --> releasing: the next order, pathing back on, AWARE, NORMAL
+  releasing --> [*]: 150 s on, after re-enabling pathing at every step
+```
+
+<!-- machine: custody -->
+```mermaid
+stateDiagram-v2
+  [*] --> free
+  free --> carried: a carry starts
+  carried --> free: it ends, however
+  free --> treated: a medic starts on him
+  treated --> free: it ends, however
+  note right of carried
+    A carry is refused for a man being treated, "already being moved".
+    A treatment waits for a man being carried.
+  end note
+```
+
+<!-- machine: busy -->
+```mermaid
+stateDiagram-v2
+  [*] --> free
+  free --> busy: picked for a carry, a treatment or a post
+  busy --> free: the job ends, he goes down, or a squad order calls it off
+  note right of busy
+    Boarding, clearing, placing and orders that follow the leader all leave him alone.
+  end note
+```
+
+#### Host side
+
+<!-- machine: battle -->
+```mermaid
+stateDiagram-v2
+  [*] --> not_ready: commander start
+  not_ready --> ready: the first word from the game
+  ready --> running: commander_mission starts the clock
+  running --> ended: every objective, the time limit, or every station lost
+  running --> restarted: the mission starts again
+  ended --> [*]
+  restarted --> [*]: nothing re-enrols the stations
+  note right of running
+    Over any of these: "game lost", after 15 s out of reach, until it's back.
+  end note
+```
+
+<!-- machine: attention -->
+```mermaid
+stateDiagram-v2
+  [*] --> waiting
+  waiting --> debouncing: a message
+  debouncing --> in_turn: 3 s quiet, 15 s at most, or a notice
+  waiting --> in_turn: a timer due, or a notice
+  in_turn --> waiting: commander_end_turn, with a timer or messages_only
+  in_turn --> waiting: hold mode, 20 s with no tool used, "assumed over"
+```
+
+<!-- machine: chain -->
+```mermaid
+stateDiagram-v2
+  [*] --> sent: the whole order checked, its first step sent
+  sent --> seen: a report carries the step's order id
+  seen --> sent: the step's done, the next one sent
+  seen --> [*]: the step failed, "Stopping there, waiting for orders."
+  seen --> [*]: the last step sent
+  sent --> [*]: a squad order replaces it, "Dropping the rest"
+  seen --> [*]: a squad order replaces it, "Dropping the rest"
+```
+
+<!-- machine: objective -->
+```mermaid
+stateDiagram-v2
+  [*] --> not_met
+  not_met --> met: true on the last sample
+  met --> not_met: false again before it's given
+  met --> confirmed: 10 s on, "OBJECTIVE COMPLETE"
+  confirmed --> [*]
+```
+
+<!-- machine: order -->
+```mermaid
+stateDiagram-v2
+  [*] --> acknowledged: a new order id in a report
+  acknowledged --> under_way
+  under_way --> under_way: passing a grid
+  under_way --> arrived: the last leg done, "Arrived"
+  under_way --> on_station: HOLD or SENTRY within reach, "On station"
+  under_way --> in_position: OCCUPY or CORDON placed
+  under_way --> on_objective: a CBA task within its radius
+  under_way --> finished: CLEAR done
+  under_way --> stuck: under 20 m in 2 minutes, said every 3 minutes
+  stuck --> under_way: moving again
+  acknowledged --> unable: open water
+  note right of acknowledged
+    POSTURE, appended legs and orders about the wounded or the guns keep the route's progress.
+  end note
+```
+
+<!-- machine: contact -->
+```mermaid
+stateDiagram-v2
+  [*] --> none
+  none --> in_contact: a fresh contact, Flash
+  in_contact --> in_contact: groups change, 90 s apart, Priority
+  in_contact --> none: nothing fresh for 120 s, "Lost contact"
+```
+
+<!-- machine: casualty-list -->
+```mermaid
+stateDiagram-v2
+  [*] --> listed: "down", with a grid only out of a fight
+  listed --> listed: set down, loaded or unloaded, and so located again
+  listed --> gone: back on their feet, or dead where his squad could see
+  gone --> listed: down again, the same id
+  note right of listed
+    Dead or moved out of anyone's sight, he stays as he was last reported.
+  end note
+```
+
+<!-- machine: apart -->
+```mermaid
+stateDiagram-v2
+  [*] --> with_squad
+  with_squad --> apart: over 100 m from the leader, on foot, not on a job
+  apart --> reported: 30 s apart, "away from the squad"
+  apart --> with_squad: within 50 m again
+  reported --> with_squad: within 50 m, "back with the squad"
+  apart --> [*]: down, or aboard
+  reported --> [*]: down, or aboard
+```
+
+<!-- machine: outbox -->
+```mermaid
+stateDiagram-v2
+  [*] --> said: calm, and nothing waiting before it
+  [*] --> held: in a fight, or behind something still waiting
+  held --> said: its delay is up
+  held --> [*]: the mission ends or restarts
+```
+
+<!-- machine: server -->
+```mermaid
+stateDiagram-v2
+  [*] --> none
+  none --> none: no battle set up yet, "try again in a minute"
+  none --> loaded: the battle commander start set up
+  loaded --> replaced: a new battle set up, or stopped
+  replaced --> [*]: tools say so, and the loop stops
+```
+
+Smaller machines that aren't charted: stuck reports, which are part of the order chart, ammunition bands, which only ever get worse, limps, and the check-in that stays quiet when nothing's changed.
 
 ## 9. Time and attention
 

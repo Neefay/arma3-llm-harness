@@ -405,7 +405,7 @@ A later step is still a squad order, so it can call off a separate `CARRY` sent 
 | `PATROL` | `MOVE` + `CYCLE` | Repeats a route until told otherwise | 2+ grids | Each lap, optional | First |
 | `HALT` | Clears waypoints, then `doStop` | Stops where it is | None | Halted | First |
 | `MOUNT` | `moveIn` when close | Boards a known vehicle, in a named seat or wherever fits | Vehicle id | On V1 as gunner | Fire support |
-| `DISMOUNT` | Gets out | Leaves one vehicle, or all of them | None | Off V1 | Fire support |
+| `DISMOUNT` | Gets out | Leaves one vehicle, or all of them | None | Off V1, or after 30 s, "Can't get Owen King off V1" | Fire support |
 | `FIRE_MISSION` | `doArtilleryFire` from a real gun | Fires its crewed guns. The squad's other orders carry on | Grid of 6 or 8 figures, only | Shot, then rounds complete | Fire support |
 | `CHECK_FIRE` | `doStop` on the gun | Stops firing. What's in the air still lands | None | Rounds still in the air | Fire support |
 | `CARRY` | A hidden dummy walks, with the bearer attached | Free men carry casualties to a vehicle or a place | Casualties, and where to | Loaded, or set down | CASEVAC |

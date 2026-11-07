@@ -345,6 +345,27 @@ def play_vehicles(client: Client) -> list[str]:
     text = heard(client, f"{kept} checked", 240)
     assert f"{gone} is a ruin" in text or f"{gone} is destroyed" in text, text[-800:]
     assert f"{gone} checked" not in text, "a ruin was reported as checked"
+
+    # A man who can't get off is said to be stuck, where getting off used to wait on him for good.
+    client.tool("commander_order", to="Hammer", legs=[{"type": "MOUNT", "vehicle": "V1", "seat": "gunner"}])
+    text += heard(client, "on V1 as gunner", 120)
+    in_game(harness, """
+    private _gun = brmh_cmd_vehicles get "V1";
+    [{
+        params ["_args", "_handle"];
+        _args params ["_man", "_gun", "_until"];
+        if (time > _until) exitWith {
+            [_handle] call CBA_fnc_removePerFrameHandler;
+        };
+        if (vehicle _man isEqualTo _man) then {
+            _man moveInGunner _gun;
+        };
+    }, 0, [gunner _gun, _gun, time + 50]] call CBA_fnc_addPerFrameHandler;
+    true
+    """)
+    client.tool("commander_order", to="Hammer", legs=[{"type": "DISMOUNT"}])
+    text += heard(client, "Can't get", 60)
+    assert "off the vehicle." in text, text[-500:]
     return [text]
 
 
@@ -482,9 +503,18 @@ def play_fire(client: Client) -> list[str]:
     fire(to="Anvil", at="040 050", rounds=2)
     text = hear("Unable, can't lay on that target.", 60)
 
-    # A dead gunner.
+    # A gunner who's down isn't a gunner, though he's alive and still in his seat. Mid-mission, then from the start.
+    fire(at="028 020", rounds=8, guns=["V1"])
+    hear("Shot,", 60)
+    in_game(harness, 'gunner (brmh_cmd_vehicles get "V1") setUnconscious true; true')
+    text = hear("fired, no gunner on V1.", 40)
+    assert "Gunner down on V1" in text, text[-500:]
+    fire(at="028 020", rounds=1, guns=["V1"])
+    hear("Unable, no gunner on V1.", 30)
+
+    # And dead. "Gunner down" was said when he went down, and isn't said twice.
     in_game(harness, 'gunner (brmh_cmd_vehicles get "V1") setDamage 1; true')
-    hear("Gunner down on V1", 30)
+    time.sleep(5)
     fire(at="028 020", rounds=1)
     hear("Unable, no gun crewed.", 30)
     fire(at="028 020", rounds=1, guns=["V1"])
@@ -784,6 +814,98 @@ def play_casevac_chained(client: Client) -> list[str]:
     errors = harness.events(since=0, kinds=["err"]).get("events", [])
     assert not errors, [str(e.get("text"))[:200] for e in errors[:4]]
     return log
+
+
+def play_casevac_village(client: Client) -> list[str]:
+    """Carrying and treating while squads are busy among buildings. Each scene is somewhere two of the game's machines
+    once disagreed about who a man belonged to."""
+    harness = Harness()
+    brief = begin(client)
+    finish_turn(client, "Waiting")
+    so_far = [""]
+
+    def hear(phrase, timeout=120, times=1):
+        deadline = time.time() + timeout
+        while so_far[0].count(phrase) < times:
+            assert time.time() < deadline, f"never heard {phrase!r} {times}x: {so_far[0][-1500:]}"
+            so_far[0] += heard(client, phrase, max(1, deadline - time.time()))
+        return so_far[0]
+
+    def order(to, *legs):
+        return client.tool("commander_order", to=to, legs=list(legs))
+
+    def knock(callsign):
+        return in_game(harness, f"""
+        private _group = brmh_cmd_stations get "{callsign}";
+        private _men = ((units _group) - [leader _group]) select {{
+            lifeState _x isNotEqualTo "INCAPACITATED" and {{ not (_x getVariable ["brmh_cmd_busy", false]) }}
+        }};
+        [_men # 0, true, 0, false] call ace_medical_fnc_setUnconscious;
+        name (_men # 0)
+        """)
+
+    def listed(name):
+        return next(row["id"] for row in client.tool("commander_mission")["casualties"] if row["name"] == name)
+
+    def carriers_rooms():
+        """Each carrier's deadline for the room he was last given. It may be left over from before he was picked."""
+        return dict(in_game(harness, """
+        ((units (brmh_cmd_stations get "Alpha")) select { _x getVariable ["brmh_cmd_busy", false] }) apply {
+            [name _x, _x getVariable ["brmh_cmd_clearBy", 0]]
+        }
+        """))
+
+    # Clearing hands every man a room, and used to hand one to a man carrying someone too.
+    biggest = sorted(brief["buildings"], key=lambda b: -b["positions"])[:2]
+    order("Alpha", {"type": "CLEAR", "at": [b["id"] for b in biggest]})
+    hear("Copy, checking", 30)
+    time.sleep(8)
+    who = knock("Alpha")
+    hear(f"{who}'s down", 40)
+    order("Alpha", {"type": "CARRY", "casualties": [listed(who)], "at": "038 038"})
+    hear(f"Copy, carrying {who}", 40)
+    before = carriers_rooms()
+    assert before, "nobody's carrying"
+    for _ in range(8):
+        time.sleep(4)
+        now = carriers_rooms()
+        sent = [name for name, by in now.items() if name in before and by != before[name]]
+        assert sent == [], f"carriers handed another room to clear: {sent}"
+    hear(f"Set {who} down.", 300)
+
+    # DEFEND switches off each man's pathing as he reaches his post, which used to leave a carrier unable to walk.
+    order("Alpha", {"type": "DEFEND", "at": "040 041", "radius": 80})
+    hear("Copy, defending", 30)
+    time.sleep(60)
+    who = knock("Alpha")
+    hear(f"{who}'s down", 40)
+    order("Alpha", {"type": "CARRY", "casualties": [listed(who)], "at": "038 038"})
+    text = hear(f"Set {who} down.", 300)
+    assert f"Can't get to {who}" not in text, text[-600:]
+
+    # Treating and carrying the same man: the medics wait until he's set down, rather than chase him.
+    third = knock("Bravo")
+    hear(f"{third}'s down", 40)
+    ids = [row["id"] for row in client.tool("commander_mission")["casualties"]]
+    order("Medics", {"type": "TREAT", "casualties": ids})
+    order("Bravo", {"type": "CARRY", "casualties": [listed(third)], "at": "039 038"})
+    for _ in range(15):
+        time.sleep(4)
+        chased = in_game(harness, """
+        private _carried = brmh_cmd_carries apply { _x get "casualty" };
+        private _chased = [];
+        {
+            {
+                if ((_x get "casualty") in _carried) then { _chased pushBack name (_x get "casualty") };
+            } forEach (_x get "jobs");
+        } forEach brmh_cmd_treats;
+        _chased
+        """)
+        assert chased == [], f"medics treating a man being carried: {chased}"
+    hear("'s back up.", 400, len(ids))
+    errors = harness.events(since=0, kinds=["err"]).get("events", [])
+    assert not errors, [str(e.get("text"))[:200] for e in errors[:4]]
+    return [so_far[0]]
 
 
 def play_casevac_cases(client: Client) -> list[str]:
@@ -1102,6 +1224,7 @@ def main() -> None:
                ("casevac plan", "casevac_rv", "hold", play_casevac),
                ("casevac cases", "casevac_cases", "hold", play_casevac_cases),
                ("casevac chained", "casevac_rv", "hold", play_casevac_chained),
+               ("casevac village", "casevac_village", "hold", play_casevac_village),
                ("combat: take the village", "take_the_village", "hold", play_village, True)]
     wanted = sys.argv[1:]  # words to match in battle names; none means all of them
     try:

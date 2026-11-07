@@ -2821,6 +2821,13 @@ def test_a_carry_that_fails_stops_the_chain(tmp_path):
     assert sent(b) == ["CARRY"] and "Stopping there, waiting for orders." in said(b)
 
 
+def test_men_who_cant_get_off_are_named_and_stop_a_chain():
+    status = ["V1", "stuck", "", ["Sam Reed"]]
+    assert reports._boarding_words(status) == "Can't get Sam Reed off V1."
+    assert reports.step_outcome("dismount", "O", {"mount": status}, False) == "failed"
+    assert reports.step_outcome("dismount", "O", {"mount": ["V1", "going off", "", []]}, False) is None
+
+
 @pytest.mark.parametrize("mode, rows, outcome", [
     ("treat", [["O", "treat", "a", "A", "queued", "", ""]], None),
     ("treat", [["O", "treat", "a", "A", "aboard", "V1", ""]], None),  # they wait for him

@@ -1,0 +1,29 @@
+# Carrying and treating while squads are busy among buildings: clearing, holding a perimeter, being treated. Each scene
+# is a place two of the game's machines once disagreed. Used by host/tests/live_commander.py. There is no enemy.
+name: casevac_village
+mission: commander_ace
+time_limit: "40:00"
+spectator: true
+text: >
+  A check of carrying and treating among buildings. There is no enemy.
+medical: { field_s: 25, facility_s: 10, build_s: 10, wake_chance: 0 }
+ao: { at: "041 041", radius: 400 }
+stations:
+  - callsign: Alpha
+    role: infantry squad
+    capabilities: [MOVE, HOLD, CLEAR, DEFEND, CARRY, HALT, POSTURE]
+    at: "039 039"
+    units: 8
+  - callsign: Bravo
+    role: infantry team
+    capabilities: [MOVE, HOLD, CARRY, HALT]
+    at: "038 040"
+    units: 4
+  - callsign: Medics
+    role: medical team
+    capabilities: [MOVE, HOLD, TREAT, HALT]
+    at: "038 039"
+    units: 3
+    medics: 2
+debounce: { quiet_s: 3, ceiling_s: 15 }
+mid_turn_messages: hold

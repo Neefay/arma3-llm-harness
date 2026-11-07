@@ -912,6 +912,7 @@ def _boarding_words(status: list) -> str | None:
         "on": f"{who} on {vehicle}{place}." + (f" {spare} didn't fit." if spare else ""),
         "none": "Nobody's on a vehicle.",
         "off": f"Off {vehicle}.",
+        "stuck": f"Can't get {who} off {vehicle}.",
     }
     return said.get(word)
 

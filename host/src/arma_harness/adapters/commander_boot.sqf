@@ -512,6 +512,7 @@ brmh_cmd_fnc_startDismount = {
 	_group setVariable ["brmh_cmd_mount", [_key, ["none", "going off"] select (_men isNotEqualTo []), "", _men apply {
 		name _x
 	}]];
+	_group setVariable ["brmh_cmd_dismountBy", time + 30];
 };
 
 brmh_cmd_fnc_stepDismount = {
@@ -527,8 +528,15 @@ brmh_cmd_fnc_stepDismount = {
 			}
 		}
 	};
-	if (_still isEqualTo []) then {
+	if (_still isEqualTo []) exitWith {
 		_status set [1, "off"];
+	};
+	// Something's keeping them in. Waiting on it for good would leave a chained order hanging, with nobody saying why.
+	if (time > (_group getVariable ["brmh_cmd_dismountBy", 0])) then {
+		_status set [1, "stuck"];
+		_status set [3, _still apply {
+			name _x
+		}];
 	};
 };
 
@@ -761,7 +769,7 @@ brmh_cmd_fnc_stepClearing = {
 	{
 		private _soldier = _x;
 		[_soldier] call brmh_cmd_fnc_noticeNearby;
-		// A position can be unreachable, so nobody waits for one for long.
+		// A position can be unreachable, so nobody waits for one for long. Men on a job aren't sent to one.
 		if (time < (_soldier getVariable ["brmh_cmd_clearBy", 0]) and {
 			not unitReady _soldier
 		}) then {
@@ -774,7 +782,9 @@ brmh_cmd_fnc_stepClearing = {
 			};
 		};
 	} forEach ((units _group) select {
-		[_x] call brmh_cmd_fnc_able
+		[_x] call brmh_cmd_fnc_able and {
+			not (_x getVariable ["brmh_cmd_busy", false])
+		}
 	});
 	if (_spots isEqualTo [] and {
 		_busy isEqualTo 0
@@ -825,14 +835,18 @@ brmh_cmd_fnc_startPlacing = {
 			_x doMove (_spots # (_forEachIndex mod _count));
 		};
 	} forEach ((units _group) select {
-		[_x] call brmh_cmd_fnc_able
+		[_x] call brmh_cmd_fnc_able and {
+			not (_x getVariable ["brmh_cmd_busy", false])
+		}
 	});
 };
 
 brmh_cmd_fnc_stepPlacing = {
 	params ["_group"];
 	private _soldiers = (units _group) select {
-		[_x] call brmh_cmd_fnc_able
+		[_x] call brmh_cmd_fnc_able and {
+			not (_x getVariable ["brmh_cmd_busy", false])
+		}
 	};
 	private _waiting = {
 		not unitReady _x
@@ -1424,6 +1438,8 @@ brmh_cmd_fnc_startCarry = {
 		_x forceSpeed -1;
 	} forEach [_medic, _casualty];
 	_medic setVariable ["brmh_cmd_busy", true];
+	// DEFEND turns off a soldier's pathing when he reaches his post, and a job has to be able to walk.
+	_medic enableAI "PATH";
 	_casualty setVariable ["brmh_cmd_handled", "carried"];
 	[_carry] call brmh_cmd_fnc_carryApproach;
 	brmh_cmd_carries pushBack _carry;
@@ -2176,9 +2192,12 @@ brmh_cmd_fnc_stepTreats = {
 			} forEach _queue;
 			_queue = [];
 		};
+		// On an ordinary vehicle, or on somebody's shoulder: either way, not yet.
 		private _waiting = _queue select {
-			vehicle _x isNotEqualTo _x and {
+			(vehicle _x isNotEqualTo _x and {
 				not ([vehicle _x] call brmh_cmd_fnc_isMedicalVehicle)
+			}) or {
+				(_x getVariable ["brmh_cmd_handled", ""]) isEqualTo "carried"
 			}
 		};
 		_queue = _queue - _waiting;
@@ -2191,6 +2210,7 @@ brmh_cmd_fnc_stepTreats = {
 			private _man = _queue deleteAt 0;
 			private _job = createHashMapFromArray [["medic", _medic], ["casualty", _man], ["state", "going"], ["tries", 0], ["last", getPosATL _medic], ["moved", time], ["ordered", time], ["since", time]];
 			_medic setVariable ["brmh_cmd_busy", true];
+			_medic enableAI "PATH";
 			_man setVariable ["brmh_cmd_handled", "treated"];
 			if (vehicle _medic isNotEqualTo _medic) then {
 				[_medic] call brmh_cmd_fnc_getOff;
@@ -2400,6 +2420,7 @@ brmh_cmd_fnc_postOrder = {
 	};
 	private _medic = _medics # 0;
 	_medic setVariable ["brmh_cmd_busy", true];
+	_medic enableAI "PATH";
 	if (vehicle _medic isNotEqualTo _medic) then {
 		[_medic] call brmh_cmd_fnc_getOff;
 	};
@@ -2505,7 +2526,7 @@ brmh_cmd_fnc_startFire = {
 			continue;
 		};
 		if (isNull _crew or {
-			not alive _crew
+			not ([_crew] call brmh_cmd_fnc_able)
 		} or {
 			group _crew isNotEqualTo _group
 		}) then {
@@ -2560,8 +2581,9 @@ brmh_cmd_fnc_stepFire = {
 			case (not alive _gun): {
 				_finish = "destroyed";
 			};
+			// Down under ACE, he's alive and still in the seat, and the gun just doesn't fire.
 			case (isNull _crew or {
-				not alive _crew
+				not ([_crew] call brmh_cmd_fnc_able)
 			}): {
 				_finish = "gunner";
 			};
