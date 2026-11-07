@@ -428,6 +428,52 @@ The important property is that **only `Silent` may end a task without speech**. 
 
 `Moot` and `Failed` are different on purpose. "Sam Reed's dead" ends the carry, and the truck should still go. "Nobody free to carry Sam Reed" means it shouldn't.
 
+### 8.6 The machines underneath
+
+Every task, and a good deal else, is carried out by a state machine. None of them is declared as one. Each is a string field, a set of flags, or a variable whose presence means something, stepped by a timer. This is the list, from a hunt through the code on 2026-11-07.
+
+**Game side, per squad or per job:**
+
+| Machine | Held as | States | Every path ends? |
+|---|---|---|---|
+| Carry | `"state"` in a hashmap | going, fetching, lifting, carrying, working, loading, done | Yes: each state has a timeout or a give-up |
+| Treat job | `"state"`, plus a queue | queued, going, working, then up or released | Yes, since the queue was fixed this week |
+| Aid post | `"state"` | going, building, then up or given up | Yes |
+| Fire mission | `"state"` | firing, holding, then done, out, can't lay, gunner, destroyed, stopped | Probably. See conflict 3 |
+| Boarding | `brmh_cmd_mount` `[vehicle, word, …]` and a list | going, then on, taken, unreachable, wrecked, nobody | Yes, with a deadline |
+| Getting off | The same variable | going off, off, none | **No deadline.** A man who can't get out leaves it at "going off" for good |
+| Clearing | Whether `clearQueue` exists, plus `clearLeft` and per-man deadlines | idle, between buildings, in a building, done | Yes, while anyone's able |
+| Placing | `placed` as -1, 0 or 1 | idle, walking to spots, in position | Yes, with a deadline |
+| CBA task | `task` flag, `releaseUntil` | running, being released | Released by the next order |
+| A man's custody | `brmh_cmd_handled` on the casualty | free, carried, treated | Cleared by every finish and release |
+| A man's availability | `brmh_cmd_busy` on the soldier | free, busy | **This is the claims rule, as a lock.** Not every machine respects it |
+
+**Host side:**
+
+| Machine | Held as | States |
+|---|---|---|
+| The battle | `mission_t`, `t0`, `ended`, `restarted`, `game_lost_since` | not ready, ready, running, ended, plus "game lost" over any of them. A restart is in practice an end: nothing re-enrols the stations |
+| The commander's attention | `WakeLogic` | waiting, debouncing, in a turn, turn assumed over |
+| A chain | `chains[callsign]` | sent, seen by the game, next step, failed, finished |
+| An objective | `objectives_due`, `objectives_done` | not met, met and waiting out the grace period, confirmed. Since this week, "met" can go back to "not met" |
+| A squad's order | `Tracker` fields `order`, `leg`, `route_done`, `on_station` | acknowledged, under way, passing, arrived or on station, done |
+| Contact | `contact_active`, `contact_seen`, `contact_said` | none, in contact, lost |
+| A casualty on the list | Its entry's `state` and `said_*` fields | listed, located again, gone |
+| A man apart | `Tracker.apart` | with the squad, apart, reported apart, back |
+| Speech in a fight | The outbox | said now, or held until its delay is up |
+| The server's battle | `Server.runtime` | none yet, loaded, replaced |
+
+**What the hunt found.** Each of these comes from two machines touching the same thing without agreeing, and every one is predicted by the claims rule in [section 8.3](#83-claims-the-one-rule-behind-newest-wins). That's a better test of the model than anything else on this page.
+
+| # | Conflict | Effect | Status |
+|---|---|---|---|
+| 1 | Clearing, placing and CBA tasks never check `busy`. Clearing hands every able man a building position each step, and placing `doStop`s them all | `CARRY` during a `CLEAR` sends the carrier off to a room. During an `OCCUPY`, he's stopped where he stands. The rule says a detail sent after a squad order keeps its men | Confirmed in the code. Not seen live, because no test does it, and it's exactly what a village fight would do |
+| 2 | A treat job starting on a man doesn't check whether he's being carried, and sets his custody to "treated" over the top | `TREAT` for a man, then another squad's `CARRY` of him before a medic's free: the medic chases a man being carried away | Confirmed in the code |
+| 3 | The fire mission's "is there a gunner" asks `alive`, and an unconscious gunner under ACE is alive and still in the seat | The gun never fires, and the mission ends after 15 s as "can't lay", which says the gun can't reach. The truth is that its gunner's down | Confirmed that it asks `alive`. What the engine then does is inferred |
+| 4 | Getting off has no deadline | A chain waiting on `DISMOUNT` would wait for good, silently, if anyone can't get out | Inferred. Nobody's seen it happen |
+
+Conflicts 1 and 3 are the same mistake as the false win: a machine asking a question about a man that only one of the sets in [section 5.1](#51-a-members-condition) can answer, and asking a different one. A declared machine would have had to say which.
+
 ## 9. Time and attention
 
 ```text
@@ -566,7 +612,8 @@ Nothing here needs doing for the model to be useful as a way of thinking. In ord
 3. **Named strength sets.** `able`, `living`, `free`, `present`, replacing `alive`. Mostly a rename, and it removes invariant 4 as something to remember.
 4. **Claims as real code.** A single function deciding what a new order calls off, in place of `CANCELS_A_CHAIN` plus the branches in `brmh_cmd_fnc_order`. Only worth it if decision 1 in [section 13](#13-where-the-code-and-the-model-disagree) goes the rule's way, or when another lane arrives.
 5. **`Rule` as the one trigger mechanism.** Worth doing only when event triggers are wanted, since it's what they'd be built on.
-6. **A property test of the fog,** in place of today's specific leak tests: for any two truths with the same `Knowledge`, everything the commander receives is identical. It's the strongest statement of the central promise, and invariant 1 made executable.
+6. **Declared state machines.** One small runner, with each machine written as states, the events that move it, a deadline for every state that waits, and what's said on leaving, in place of the hand-written ones in [section 8.6](#86-the-machines-underneath). It would make "no deadline" impossible to write by accident, and every check of a man would have to say which set it means. A big change for the game side, so only once the conflicts there are fixed and the machines have stopped changing shape.
+7. **A property test of the fog,** in place of today's specific leak tests: for any two truths with the same `Knowledge`, everything the commander receives is identical. It's the strongest statement of the central promise, and invariant 1 made executable.
 
 I'd do 1 and 2 whatever else happens, and I haven't started any of them.
 
