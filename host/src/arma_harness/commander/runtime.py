@@ -20,6 +20,7 @@ from .orders import Invalid, format_time, parse_grid, parse_time
 from .records import Records
 from .reports import Tracker, format_grid
 from .scenario import Scenario
+from .terrain import Terrain, place_kind
 from .wake import Wake, WakeLogic
 
 PACKET_FRESH_S = 6
@@ -65,10 +66,12 @@ CANCELS_A_CHAIN = {"replace", "halt", "mount", "dismount", "chain"}
 
 class Runtime:
     def __init__(self, game: Game, scenario: Scenario, records: Records, deliver, world_size: float = 0,
-                 clock=time.monotonic, buildings: list[dict] | None = None, vehicles: list[dict] | None = None):
+                 clock=time.monotonic, buildings: list[dict] | None = None, vehicles: list[dict] | None = None,
+                 terrain: Terrain | None = None):
         self.game, self.scenario, self.records, self.deliver = game, scenario, records, deliver
         self.world_size = world_size
         self.buildings = buildings or []
+        self.terrain = terrain  # the ground, as the commander's paper map shows it; None on a world without one
         self.wall = clock
         self.lock = threading.RLock()
         self.mission_t: float | None = None
@@ -752,6 +755,7 @@ class Runtime:
                 "buildings": [{"id": b["id"], "type": b["name"], "grid": b["at"], "positions": b["positions"]}
                               for b in self.buildings],
                 "vehicles": [{"id": v["id"], "type": v["name"], "grid": v["at"]} for v in self.vehicles.values()],
+                **({"places": self.places()} if self.terrain else {}),
                 "casualties": [{"id": entry["id"], "name": entry["name"], "squad": entry["squad"],
                                 "grid": entry.get("said_grid") or None, "on": entry.get("said_vehicle") or None}
                                for entry in self.casualties.values() if entry.get("state") == "down"],
@@ -1196,10 +1200,38 @@ class Runtime:
                          for callsign, place_ in self.positions.items()}
             caption = (f"{format_time(self.rel())}. Your beliefs and last reports, not live. Green: buildings checked. "
                        f"Grid lines every {100 if size <= 800 else 500 if size <= 3000 else 1000} m.")
+            if self.terrain:
+                caption += " Contours every " + ("10" if size <= 800 else "20") + " m."
             png = map_mod.render(place, size, self.buildings, list(self.markers.values()), positions, self.checked,
-                                 caption, self.destroyed, list(self.vehicles.values()))
+                                 caption, self.destroyed, list(self.vehicles.values()), self.terrain)
             self._used()
             return {"png": png, "text": caption}
+
+    def ground(self, at, to=None) -> dict:
+        """What the map says about the ground at a place, or whether the ground lies between two. The map is common
+        knowledge, so this reads nothing from the game."""
+        with self.lock:
+            self._require_started()
+            if not self.terrain:
+                raise Invalid("Your map has no terrain on it here.")
+            known = {**self.markers, **{building["id"]: building for building in self.buildings}}
+            a, a_grid = orders_mod.resolve_place(at, known, self.world_size)
+            if to in (None, ""):
+                text = self.terrain.describe(*a, a_grid)
+            else:
+                b, b_grid = orders_mod.resolve_place(to, known, self.world_size)
+                text = self.terrain.sight_words(tuple(a), a_grid, tuple(b), b_grid, _spoken_grid)
+            self._used()
+            return {"text": text}
+
+    def places(self) -> list[dict]:
+        """The named places on the commander's map, nearest the area of operations first."""
+        if not self.terrain:
+            return []
+        ao = self.scenario.ao
+        centre = parse_grid(ao["at"], self.world_size)[0] if ao else [self.world_size / 2] * 2
+        rows = sorted(self.terrain.places, key=lambda row: math.dist(centre, row[2:4]))
+        return [{"name": name, "kind": place_kind(kind), "grid": _spoken_grid(x, y)} for name, kind, x, y in rows]
 
     def brief(self) -> dict:
         with self.lock:
@@ -1237,6 +1269,10 @@ def _schedule_words(kind: str, what) -> str:
         return f"{what.get('to')}: {_order_words(what)}"
     topics = ", ".join(what.get("topics") or []) or "SITREP"
     return f"{what.get('to')}: {topics}"
+
+
+def _spoken_grid(x: float, y: float) -> str:
+    return f"{int(x // 100):03d} {int(y // 100):03d}"
 
 
 def _ago(seconds: float) -> str:

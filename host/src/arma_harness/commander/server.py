@@ -128,13 +128,21 @@ TOOLS = [
     {"name": "commander_end_turn", "description": "End your turn, with a short note. Refused when no wake is set, "
      "unless messages_only is true, which means you'll wake only for incoming messages.", "inputSchema": {
         "type": "object", "properties": {"note": _STRING, "messages_only": {"type": "boolean"}}}},
-    {"name": "commander_map", "description": "A picture of your map: buildings with their ids, your markers and each "
-     "station's last reported position. It shows your beliefs and last reports, not the live battle. Use it for "
+    {"name": "commander_map", "description": "A picture of your map: the ground where the world has it (contours, "
+     "woods, water, roads, named places), buildings with their ids, your markers and each station's last reported "
+     "position. It shows your beliefs and last reports, not the live battle. Use it for "
      "geometry, such as routes and cordons. Your markers are already listed in every briefing as text.",
      "inputSchema": {
         "type": "object", "properties": {"center": {"type": "string", "description": "Grid, marker or building id. "
                                                                                     "Default: the whole area"},
                                          "radius": {"type": "number", "description": "Metres, 50 to 5000"}}}},
+    {"name": "commander_ground", "description": "What your map says about the ground: at one place, its height, "
+     "slope, cover, nearest road, buildings and named place; with `to`, whether the lie of the ground hides one place "
+     "from the other. From the map alone: trees and buildings aren't counted, and nothing here comes from the battle.",
+     "inputSchema": {"type": "object", "properties": {
+         "at": {"type": "string", "description": "Grid, marker or building id"},
+         "to": {"type": "string", "description": "Optional. A second grid, marker or building id, for line of sight"}},
+         "required": ["at"]}},
     {"name": "commander_brief", "description": "The current briefing, for catching up after losing track or resuming "
      "a session.", "inputSchema": {"type": "object", "properties": {}}},
     {"name": "commander_notes", "description": "Replace your notes, included in every briefing. Keep your plan and "
@@ -218,6 +226,8 @@ class Server:
                 return runtime.unschedule(args.get("id", ""))
             case "commander_end_turn":
                 return runtime.end_turn(args.get("note", ""), bool(args.get("messages_only")))
+            case "commander_ground":
+                return runtime.ground(args.get("at"), args.get("to"))
             case "commander_brief":
                 return runtime.brief()
             case "commander_notes":

@@ -39,6 +39,7 @@ Stratum ::= Truth | Knowledge(Station) | Belief | Record
 - **S2.** `speak` reads only the station's `Knowledge`, its own orders, and handles (section 5).
 - **S3.** Nothing in `Record` reaches `Belief`.
 - **S4.** The result of issuing an order is independent of `Truth`.
+- **S5.** `Ground` (the world's terrain: heights, water, woods, roads, its own structures and named places) is in every stratum from the start. Nothing a scenario places is `Ground`.
 
 ## 3. Agents
 

@@ -16,6 +16,7 @@ from . import scenario as scenario_mod
 from .orders import format_time, parse_grid
 from .records import Records
 from .runtime import Runtime
+from .terrain import Terrain
 
 SERVER_NAME = "commander"
 # ToolSearch loads the commander's own tools. A deny rule can't remove advisor, but it can't reach game data.
@@ -80,8 +81,8 @@ def start(path: str, mode: str | None = None, harness: Harness | None = None, wa
     if state is None:
         h.start(mission=scenario.mission)
         state = h.state()
-    world = _result(h.exec("[worldSize, mapGridPosition [3450, 3050, 0]]", "server", timeout=10))
-    world_size, sample = world
+    world = _result(h.exec("[worldSize, mapGridPosition [3450, 3050, 0], worldName]", "server", timeout=10))
+    world_size, sample, world_name = world
     if sample != "034030":
         raise HarnessError(f"this world's grid isn't a plain 100 m grid ({sample!r}), which isn't supported yet")
     _result(h.exec(load_sqf("commander_boot.sqf"), "server", timeout=20, strip=False))
@@ -101,6 +102,7 @@ def start(path: str, mode: str | None = None, harness: Harness | None = None, wa
         if "wake_chance" in scenario.medical:
             code = 'missionNamespace setVariable ["ace_medical_spontaneousWakeUpChance", _this # 0, true]; true'
             _result(h.exec(code, "server", timeout=10, args=[scenario.medical["wake_chance"]]))
+    terrain = _sample_terrain(h, scenario, world_size) if world_name != "VR" else None
     _spawn_enemies(h, scenario, world_size)
     buildings = _list_buildings(h, scenario, world_size)
     _result(h.exec("brmh_cmd_buildings = createHashMapFromArray _this; true", "server", timeout=10,
@@ -118,8 +120,13 @@ def start(path: str, mode: str | None = None, harness: Harness | None = None, wa
     (records_folder.parent / "battle.json").write_text(json.dumps(
         {"scenario": raw, "buildings": buildings, "vehicles": vehicles, "world_size": world_size, "run": state.run_id,
          "attempt": attempt}, indent=2), encoding="utf-8")
+    terrain_file = None
+    if terrain:
+        terrain_file = records_folder.parent / "terrain.json"
+        terrain_file.write_text(json.dumps(terrain.to_dict()), encoding="utf-8")
     current = {"run": state.run_id, "attempt": attempt, "folder": str(records_folder), "scenario": raw,
-               "world_size": world_size, "buildings": buildings, "vehicles": vehicles}
+               "world_size": world_size, "buildings": buildings, "vehicles": vehicles,
+               "terrain": str(terrain_file) if terrain_file else None}
     _current_file(h.home).write_text(json.dumps(current, indent=2), encoding="utf-8")
     workspace = write_workspace(h.home)
     observer = None
@@ -129,6 +136,30 @@ def start(path: str, mode: str | None = None, harness: Harness | None = None, wa
             "attempt": attempt,
             "records": str(records_folder), "workspace": str(workspace), "launch": launch_command(workspace),
             "then": 'Accept the prompts, then type: start'}
+
+
+def _sample_terrain(h: Harness, scenario: scenario_mod.Scenario, world_size: float) -> Terrain:
+    """The ground under the battle and a margin around it: the commander's paper map. Only the world's own terrain,
+    so it can be read before anything is placed, and nothing placed shows up on it."""
+    centre, radius = terrain_window(scenario, world_size)
+    step = 25 if radius <= 1000 else 50 if radius <= 2000 else 100
+    raw = _result(h.exec("_this call brmh_cmd_fnc_terrain", "server", timeout=90, args=[centre, radius, step]))
+    return Terrain.from_game(raw)
+
+
+def terrain_window(scenario: scenario_mod.Scenario, world_size: float) -> tuple[list[float], float]:
+    """Centred on the area of operations, or the stations, and big enough for everything in the scenario."""
+    points = [parse_grid(station["at"], world_size)[0] for station in scenario.stations.values()]
+    points += [parse_grid(enemy["at"], world_size)[0] for enemy in scenario.enemies]
+    points += [parse_grid(vehicle["at"], world_size)[0] for vehicle in scenario.vehicles]
+    if scenario.ao:
+        centre = parse_grid(scenario.ao["at"], world_size)[0]
+        reach = scenario.ao["radius"]
+    else:
+        centre = [sum(p[0] for p in points) / len(points), sum(p[1] for p in points) / len(points)]
+        reach = 0
+    reach = max([reach, *(max(abs(p[0] - centre[0]), abs(p[1] - centre[1])) for p in points)])
+    return centre, float(min(3000, max(800, round(reach + 700, -2))))
 
 
 def _list_buildings(h: Harness, scenario: scenario_mod.Scenario, world_size: float) -> list[dict]:
@@ -229,7 +260,13 @@ def load_current(deliver) -> Runtime:
     current = json.loads(file.read_text(encoding="utf-8"))
     return Runtime(HarnessGame(h), scenario_mod.build(current["scenario"]), Records(Path(current["folder"])), deliver,
                    world_size=current["world_size"], buildings=current.get("buildings"),
-                   vehicles=current.get("vehicles"))
+                   vehicles=current.get("vehicles"), terrain=_load_terrain(current.get("terrain")))
+
+
+def _load_terrain(path: str | None) -> Terrain | None:
+    if not path or not Path(path).exists():
+        return None
+    return Terrain.load(json.loads(Path(path).read_text(encoding="utf-8")))
 
 
 def is_current(runtime: Runtime, home: Home | None = None) -> bool:

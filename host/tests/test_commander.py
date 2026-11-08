@@ -3101,7 +3101,7 @@ def test_state_survives_a_server_restart(tmp_path):
 def test_tool_list_is_exactly_the_allowlist():
     allowed = {"commander_mission", "commander_roster", "commander_order", "commander_ask", "commander_schedule",
                "commander_unschedule", "commander_end_turn", "commander_brief", "commander_notes", "commander_log",
-               "commander_mark", "commander_unmark", "commander_map"}
+               "commander_mark", "commander_unmark", "commander_map", "commander_ground"}
     assert allowed == TOOL_NAMES
 
 

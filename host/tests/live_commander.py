@@ -1205,6 +1205,52 @@ def play_village(client: Client) -> list[str]:
     return seen
 
 
+def play_stratis(client: Client) -> list[str]:
+    """Real ground: the map's terrain, named places and the ground tool, then the same fight as the village, uphill."""
+    harness = Harness()
+    brief = begin(client)
+    places = {place["name"]: place for place in brief.get("places", [])}
+    print("    places:", [(name, place["grid"]) for name, place in places.items()], flush=True)
+    assert places["Camp Maxwell"]["grid"] == "032 029" and places["Agios Ioannis"]["grid"] == "030 021", places
+    assert brief["buildings"], "no numbered buildings at Camp Maxwell"
+    camp = client.tool("commander_ground", at="O1")["text"]
+    start = client.tool("commander_ground", at="030 021")["text"]
+    view = client.tool("commander_ground", at="030 021", to="O1")["text"]
+    print(f"    ground at O1: {camp}", f"at the start: {start}", f"sight: {view}", sep="\n    ", flush=True)
+    assert "Camp Maxwell" in camp and "Agios Ioannis" in start and "Trees and buildings" in view
+    save_map(client, "stratis_start")
+    save_map(client, "stratis_wide", radius=1500)
+    save_map(client, "stratis_camp", center="O1", radius=250)
+    client.tool("commander_order", to="Recon", legs=[{"type": "MOVE", "at": "031 026"}], behaviour="STEALTH")
+    for callsign in ("Alpha", "Bravo"):
+        client.tool("commander_schedule", after="0:30", do={"order": {
+            "to": callsign, "legs": [{"type": "SEARCH", "at": "O1", "radius": 150}], "speed": "FULL"}})
+    client.tool("commander_schedule", every="2:00", do={"wake": "Regular check"})
+    finish_turn(client, "Recon forward, the squads at 0:30")
+    seen, clearing, deadline = [], set(), time.time() + 30 * 60
+    while time.time() < deadline:
+        wake = next_wake(client, 300)
+        seen.append(wake["content"])
+        if "MISSION END" in wake["content"]:
+            finish_turn(client, "Over")
+            break
+        if len(seen) == 8:
+            snap(harness, "stratis mid battle")
+        for callsign in ("Alpha", "Bravo"):
+            if callsign not in clearing and (f"{callsign}: Finished searching" in wake["content"]
+                                             or f"{callsign}: Not making progress" in wake["content"]):
+                clearing.add(callsign)
+                client.tool("commander_order", to=callsign, legs=[{"type": "CLEAR", "at": "O1", "radius": 150}])
+                print(f"    {callsign} ordered to clear", flush=True)
+        finish_turn(client, "Read the traffic")
+    save_map(client, "stratis_end")
+    text = chr(10).join(seen)
+    assert "Contact," in text, "no contact report in the whole battle"
+    gridded = [line for line in text.splitlines() if "Contact" in line and "grid" in line.lower()]
+    assert not gridded, f"contact reports stating a grid: {gridded[:3]}"
+    return seen
+
+
 def run(name: str, scenario: str, mode: str | None, play, watch: bool = False) -> None:
     print(f"\n========== {name} ==========", flush=True)
     harness = Harness()
@@ -1243,7 +1289,8 @@ def main() -> None:
                ("casevac cases", "casevac_cases", "hold", play_casevac_cases),
                ("casevac chained", "casevac_rv", "hold", play_casevac_chained),
                ("casevac village", "casevac_village", "hold", play_casevac_village),
-               ("combat: take the village", "take_the_village", "hold", play_village, True)]
+               ("combat: take the village", "take_the_village", "hold", play_village, True),
+               ("stratis: Camp Maxwell", "stratis_maxwell", "hold", play_stratis)]
     wanted = sys.argv[1:]  # words to match in battle names; none means all of them
     try:
         for battle in battles:
