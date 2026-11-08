@@ -172,7 +172,7 @@ Realisation  =  the engine mechanism; non-normative
 |---|---|---|---|---|
 | `MOVE` | Course | Finite | All | Waypoint |
 | `SEARCH` | Course | Finite | All | Waypoint |
-| `CLEAR` | Course | Finite | All | Scripted |
+| `CLEAR` | Course | Finite | All | Clearing |
 | `MOUNT` | Course, or Detail with a seat | Finite | On foot, or one | Scripted |
 | `DISMOUNT` | Course | Finite | Aboard | Scripted |
 | `SENTRY` | Course | Triggered | All | Waypoint |

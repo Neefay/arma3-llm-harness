@@ -9,6 +9,8 @@ import math
 import random
 from dataclasses import dataclass, field
 
+from .orders import SINGLE_LEG, kinds
+
 FLASH, PRIORITY, ROUTINE = "flash", "priority", "routine"
 
 _COMPASS = ["north", "north-east", "east", "south-east", "south", "south-west", "west", "north-west"]
@@ -56,9 +58,9 @@ PACE_CARRYING = 1.7
 PACE_LIMPING = 1.1
 CARRY_LIFT_S = 20
 ESTIMATE_FROM_M = 100  # nearer than this, there's nothing worth saying
-PLACING_ORDERS = {"OCCUPY", "CORDON"}
-TASK_ORDERS = {"ATTACK", "DEFEND", "PATROL_AREA", "SWEEP"}  # CBA tasks: they run until replaced, with no end to report
-SINGLE_LEG_ORDERS = {"CLEAR"} | PLACING_ORDERS | TASK_ORDERS
+PLACING_ORDERS = kinds(realisation="Placing")
+TASK_ORDERS = kinds(realisation="CBA")  # CBA tasks: they run until replaced, with no end to report
+SINGLE_LEG_ORDERS = SINGLE_LEG
 LEG_VERBS = {"HOLD": "holding at", "SENTRY": "watching at", "SEARCH": "searching around", "OCCUPY": "occupying",
              "CORDON": "setting a cordon around", "ATTACK": "attacking", "DEFEND": "defending",
              "PATROL_AREA": "patrolling around", "SWEEP": "sweeping around"}

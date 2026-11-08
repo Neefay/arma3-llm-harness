@@ -87,11 +87,19 @@ def test_every_machine_in_the_list_has_a_chart():
 # -- the order table in section 7.2 --------------------------------------------------------------------------------
 
 def order_table() -> dict[str, dict[str, str]]:
-    """Each order's lane, ending and realisation, as the model's table gives them."""
+    """Each order's lane, ending, claims and realisation, as the model's table gives them."""
     section = MODEL[MODEL.index("<!-- order-table -->"):MODEL.index("### 7.3")]
-    rows = re.findall(r"^\| `(\w+)` \| ([^|]+) \| ([^|]+) \| [^|]+ \| ([^|]+) \|$", section, flags=re.M)
-    return {name: {"lane": lane.split(",")[0].strip(), "ending": ending.strip(), "real": real.strip()}
-            for name, lane, ending, real in rows}
+    rows = re.findall(r"^\| `(\w+)` \| ([^|]+) \| ([^|]+) \| ([^|]+) \| ([^|]+) \|$", section, flags=re.M)
+    return {name: {"lane": lane.split(",")[0].strip(), "ending": ending.strip(), "claims": claims.strip(),
+                   "real": real.strip()}
+            for name, lane, ending, claims, real in rows}
+
+
+def test_the_code_has_the_models_order_table():
+    """The code's ORDER_TABLE is the single source of the order-type sets, and has to say what the model does."""
+    in_code = {name: {"lane": kind.lane, "ending": kind.ending, "claims": kind.claims, "real": kind.realisation}
+               for name, kind in orders.ORDER_TABLE.items()}
+    assert in_code == order_table()
 
 
 def where(**want) -> set[str]:
@@ -104,13 +112,14 @@ def test_the_table_has_every_order_type_once():
 
 
 @pytest.mark.parametrize("name, in_the_code, from_the_table", [
-    ("ENDLESS", lambda: orders.ENDLESS, lambda: where(ending="Standing") - {"HOLD"}),
+    ("ENDLESS", lambda: orders.ENDLESS, lambda: where(ending="Standing")),
     ("STANDS_ALONE", lambda: orders.STANDS_ALONE, lambda: where(ending="Instant")),
     ("CARE_ORDERS", lambda: set(orders.CARE_ORDERS), lambda: where(lane="Detail")),
     ("PLACING_ORDERS", lambda: reports.PLACING_ORDERS, lambda: where(real="Placing")),
     ("TASK_ORDERS", lambda: reports.TASK_ORDERS, lambda: where(real="CBA")),
     ("LEG_TYPES", lambda: set(orders.LEG_TYPES), lambda: where(real="Waypoint") - {"PATROL"}),
-    ("SINGLE_LEG", lambda: orders.SINGLE_LEG, lambda: where(real="Placing") | where(real="CBA") | {"CLEAR"}),
+    ("SINGLE_LEG", lambda: orders.SINGLE_LEG,
+     lambda: where(real="Clearing") | where(real="Placing") | where(real="CBA")),
     ("SINGLE_LEG_ORDERS", lambda: reports.SINGLE_LEG_ORDERS, lambda: orders.SINGLE_LEG),
 ])
 def test_each_set_in_the_code_is_the_table_seen_one_way(name, in_the_code, from_the_table):

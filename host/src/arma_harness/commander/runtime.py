@@ -778,7 +778,7 @@ class Runtime:
         dropping = ""
         previous = self.routes.get(callsign) or {}
         appending = checked["mode"] == "append" and previous.get("kind") == "route"
-        if appending and previous["legs"] and previous["legs"][-1]["type"] in orders_mod.ENDLESS | {"HOLD"}:
+        if appending and previous["legs"] and previous["legs"][-1]["type"] in orders_mod.ENDLESS:
             raise Invalid(f"{previous['legs'][-1]['type']} runs until replaced, so nothing can be added after it. "
                           "Send a new order.")
         # Appending to nothing is a new route, so it takes over like one.

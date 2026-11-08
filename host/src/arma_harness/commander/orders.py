@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import math
 import re
+from dataclasses import dataclass
 
 _GRID = re.compile(r"^\s*(\d{3})\s?(\d{3})\s*$")
 _FINE_GRID = re.compile(r"^\s*(\d{4})\s?(\d{4})\s*$")
@@ -12,15 +13,61 @@ SPEEDS = {"LIMITED", "NORMAL", "FULL"}
 FORMATIONS = {"COLUMN", "STAG COLUMN", "WEDGE", "ECH LEFT", "ECH RIGHT", "VEE", "LINE", "FILE", "DIAMOND"}
 BEHAVIOURS = {"CARELESS", "SAFE", "AWARE", "COMBAT", "STEALTH"}
 COMBAT_MODES = {"BLUE", "GREEN", "WHITE", "YELLOW", "RED"}
-LEG_TYPES = {"MOVE": "MOVE", "HOLD": "HOLD", "SEARCH": "SAD", "SENTRY": "SENTRY"}
-SINGLE_LEG = {"CLEAR", "OCCUPY", "CORDON", "ATTACK", "DEFEND", "PATROL_AREA", "SWEEP"}
+
+
+@dataclass(frozen=True)
+class OrderType:
+    """An order type's place in the model: see docs/COMMANDER_MODEL.md, section 7, which this table must match."""
+    lane: str  # Course, Detail, Guns or Settings
+    ending: str  # Finite, Triggered, Standing or Instant
+    claims: str  # the members it takes
+    realisation: str  # how the engine does it: Waypoint, Clearing, Placing, CBA, Scripted or Engine
+    mode: str = ""  # for a Detail, how the game side names it
+
+
+# Every order type, once. The sets below are this table seen from different angles.
+ORDER_TABLE: dict[str, OrderType] = {
+    "MOVE": OrderType("Course", "Finite", "All", "Waypoint"),
+    "SEARCH": OrderType("Course", "Finite", "All", "Waypoint"),
+    "CLEAR": OrderType("Course", "Finite", "All", "Clearing"),
+    "MOUNT": OrderType("Course", "Finite", "On foot, or one", "Scripted"),
+    "DISMOUNT": OrderType("Course", "Finite", "Aboard", "Scripted"),
+    "SENTRY": OrderType("Course", "Triggered", "All", "Waypoint"),
+    "HOLD": OrderType("Course", "Standing", "All", "Waypoint"),
+    "PATROL": OrderType("Course", "Standing", "All", "Waypoint"),
+    "OCCUPY": OrderType("Course", "Standing", "All", "Placing"),
+    "CORDON": OrderType("Course", "Standing", "All", "Placing"),
+    "ATTACK": OrderType("Course", "Standing", "All", "CBA"),
+    "DEFEND": OrderType("Course", "Standing", "All", "CBA"),
+    "PATROL_AREA": OrderType("Course", "Standing", "All", "CBA"),
+    "SWEEP": OrderType("Course", "Standing", "All", "CBA"),
+    "HALT": OrderType("Course", "Instant", "All", "Engine"),
+    "CARRY": OrderType("Detail", "Finite", "Free, one per casualty", "Scripted", "carry"),
+    "TREAT": OrderType("Detail", "Finite", "Medics", "Scripted", "treat"),
+    "AID_POST": OrderType("Detail", "Finite", "A medic", "Scripted", "post"),
+    "UNLOAD": OrderType("Detail", "Finite", "None", "Scripted", "unload"),
+    "FIRE_MISSION": OrderType("Guns", "Finite", "Crew", "Engine"),
+    "CHECK_FIRE": OrderType("Guns", "Instant", "Crew", "Engine"),
+    "POSTURE": OrderType("Settings", "Instant", "None", "Engine"),
+}
+
+
+def kinds(**want: str) -> set[str]:
+    """The order types whose properties match, such as kinds(ending="Standing")."""
+    return {name for name, kind in ORDER_TABLE.items()
+            if all(getattr(kind, key) == value for key, value in want.items())}
+
+
+_ENGINE_WAYPOINT = {"SEARCH": "SAD"}  # where the engine's waypoint type has another name
+# A trip's legs. A patrol is a whole route of its own, so it isn't one.
+LEG_TYPES = {name: _ENGINE_WAYPOINT.get(name, name) for name in kinds(realisation="Waypoint") - {"PATROL"}}
+SINGLE_LEG = kinds(realisation="Clearing") | kinds(realisation="Placing") | kinds(realisation="CBA")
 DEFAULT_RADIUS_M = {"CLEAR": 100, "CORDON": 30, "ATTACK": 80, "DEFEND": 100, "PATROL_AREA": 150, "SWEEP": 120}
 MAX_RADIUS_M = 300
-ORDER_TYPES = set(LEG_TYPES) | SINGLE_LEG | {"PATROL", "HALT", "POSTURE", "MOUNT", "DISMOUNT", "FIRE_MISSION",
-                                             "CHECK_FIRE", "CARRY", "UNLOAD", "TREAT", "AID_POST"}
-CARE_ORDERS = {"CARRY": "carry", "UNLOAD": "unload", "TREAT": "treat", "AID_POST": "post"}
-STANDS_ALONE = {"HALT", "POSTURE", "CHECK_FIRE"}  # done on receipt, so there's nothing for a next step to follow
-ENDLESS = {"OCCUPY", "CORDON", "ATTACK", "DEFEND", "PATROL_AREA", "SWEEP", "PATROL"}  # nothing could ever follow these
+ORDER_TYPES = set(ORDER_TABLE)
+CARE_ORDERS = {name: ORDER_TABLE[name].mode for name in kinds(lane="Detail")}
+STANDS_ALONE = kinds(ending="Instant")  # done on receipt, so there's nothing for a next step to follow
+ENDLESS = kinds(ending="Standing")  # they run until replaced, so nothing could ever follow them
 AMMO = {"HE", "SMOKE"}
 MAX_FIRE_ROUNDS = 32
 MAX_FIRE_RADIUS_M = 150
