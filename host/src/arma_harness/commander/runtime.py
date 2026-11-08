@@ -47,6 +47,17 @@ class Game(Protocol):
     def exec(self, code: str, args: list) -> dict: ...
 
 
+# Each station's report, as the game's brmh_cmd_fnc_packet builds it. A field left off this list never reaches anything
+# that reads it, with no error, so test_packet_fields.py checks it against the game's code.
+PACKET_FIELDS = (
+    "callsign", "pos", "grid", "dir", "speed", "alive", "wounded", "baseline", "leader", "rounds", "rounds_baseline",
+    "behaviour", "speed_mode", "spread", "combat_mode", "order", "unable", "leg", "legs", "clearing", "cleared",
+    "placed", "contacts", "suppression", "ruined", "seen_vehicles", "seen_ruins", "mounted", "mount", "missions",
+    "gun_ammo", "limping", "casualties", "up", "medical")
+PACKET_HOST_FIELDS = ("t", "under_way")  # added here, after the game's report arrives
+# Each group in the truth record, as brmh_cmd_fnc_truth builds it. Only the review and the objectives read it.
+TRUTH_GROUP_FIELDS = ("group", "side", "alive", "down", "mounted", "limping", "leader_limping", "units", "pos")
+
 # An order to the whole squad takes over from the rest of a chained order. POSTURE, fire orders, and orders about the
 # wounded leave it running, as they leave everything else.
 CANCELS_A_CHAIN = {"replace", "halt", "mount", "dismount", "chain"}
@@ -267,11 +278,7 @@ class Runtime:
         callsign = event.get("callsign")
         if callsign not in self.scenario.stations:
             return
-        packet = {key: event.get(key) for key in (
-            "callsign", "pos", "grid", "dir", "speed", "alive", "wounded", "baseline", "leader", "rounds",
-            "rounds_baseline", "behaviour", "speed_mode", "spread", "combat_mode", "order", "unable", "leg", "legs",
-            "clearing", "cleared", "placed", "contacts", "suppression", "ruined", "seen_vehicles", "seen_ruins",
-            "mounted", "mount", "missions", "gun_ammo", "limping", "casualties", "up", "medical")}
+        packet = {key: event.get(key) for key in PACKET_FIELDS}
         packet["missions"] = [[self._vehicle_id(row[0]), *row[1:]] for row in packet.get("missions") or []]
         packet["gun_ammo"] = [[self._vehicle_id(row[0]), *row[1:]] for row in packet.get("gun_ammo") or []]
         packet["mounted"] = [[self._vehicle_id(row[0]), *row[1:]] for row in packet.get("mounted") or []]
