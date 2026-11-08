@@ -35,7 +35,23 @@ def functions(pattern: str) -> str:
     return "\n".join(found)
 
 
+def declaration(machine: str) -> str | None:
+    """A machine declared for brmh_cmd_fnc_newMachine, as brmh_cmd_<machine>Machine, if it has been converted."""
+    match = re.search(rf"^brmh_cmd_{machine}Machine = \[\n(.*?)^\];", SQF, flags=re.M | re.S)
+    return match[1] if match else None
+
+
+STATE_LINE = r'^\t\t\["(\w[\w ]*)", \[$'  # a state's own line in a declaration, two tabs in
+
+
+def declared_states(body: str) -> list[str]:
+    return re.findall(STATE_LINE, body, flags=re.M)
+
+
 def in_code(machine: str) -> set[str]:
+    body = declaration(machine)
+    if body is not None:
+        return set(declared_states(body))
     pattern, setters = MACHINES[machine]
     body = functions(pattern)
     states = set()
@@ -124,3 +140,16 @@ def test_the_table_has_every_order_type_once():
 ])
 def test_each_set_in_the_code_is_the_table_seen_one_way(name, in_the_code, from_the_table):
     assert set(in_the_code()) == set(from_the_table()), name
+
+
+def test_every_declared_machine_waits_with_a_deadline_and_ends_aloud():
+    """What brmh_cmd_fnc_machineProblems checks in the game, checked here too, so it fails before anyone plays."""
+    declared = re.findall(r"^brmh_cmd_(\w+)Machine = \[\n(.*?)^\];", SQF, flags=re.M | re.S)
+    assert declared, "no declared machines found"
+    for machine, body in declared:
+        states = re.split(STATE_LINE.replace("(", "(?:"), body, flags=re.M)[1:]
+        assert len(states) == len(declared_states(body)) > 0, machine
+        for name, state in zip(declared_states(body), states, strict=True):
+            assert '["DEADLINE", [' in state, f"{machine}: {name} waits with no deadline"
+        silent_endings = re.findall(r'\}, "", ""\]', body)
+        assert not silent_endings, f"{machine} can end without a word"

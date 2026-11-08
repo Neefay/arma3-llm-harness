@@ -1777,21 +1777,13 @@ brmh_cmd_fnc_callOffCare = {
 			_treat set ["queue", []];
 		};
 	} forEach brmh_cmd_treats;
+	{
+		if ((_x get "GROUP") isEqualTo _group) then {
+			_x call ["#END", ["called off"]];
+		};
+	} forEach brmh_cmd_builds;
 	brmh_cmd_builds = brmh_cmd_builds select {
-		private _build = _x;
-		if ((_build get "group") isEqualTo _group) then {
-			private _medic = _build get "medic";
-			[_group, _build get "order", "post", "post", "called off"] call brmh_cmd_fnc_careSay;
-			_medic setVariable ["brmh_cmd_busy", nil];
-			if ([_medic] call brmh_cmd_fnc_able) then {
-				_medic enableAI "ANIM";
-				[_medic, "AmovPknlMstpSrasWrflDnon"] call brmh_cmd_fnc_carryPose;
-				_medic doFollow leader _group;
-			};
-			false
-		} else {
-			true
-		}
+		(_x get "STATE") isNotEqualTo ""
 	};
 };
 
@@ -2402,6 +2394,222 @@ brmh_cmd_fnc_treated = {
 };
 
 /*
+	NAME: brmh_cmd_fnc_newMachine
+	DESCRIPTION: A declared state machine, stepped by its owner. The declaration names every state, and on creation it's
+		checked for the two faults that hand-written machines kept having: a state that waits with no deadline, and a way
+		to end that says nothing. Either is logged as an error. See docs/COMMANDER_MODEL.md, the appendix.
+	PARAMETERS:
+		0 - Declaration (ARRAY): [KEY, value] pairs:
+			KIND     - what the radio calls the job, as brmh_cmd_fnc_careSay takes it (STRING)
+			INITIAL  - the state it starts in (STRING)
+			ALWAYS   - transitions checked in every state, before the state's own (ARRAY)
+			STATES   - [[name, [["ON", transitions], ["DEADLINE", [seconds or {seconds}, action, next, word]]]], ...]
+			RELEASE  - run once, however it ends (CODE)
+			A transition is [guard, action, next state, word]. Guards and actions get the machine as _this, and an
+			action may return the detail its word needs. A next state of "" ends the machine, and has to have a word.
+		1 - Data: [KEY, value] pairs, such as GROUP, ORDER, SUBJECT and whatever its code reads (ARRAY)
+	USAGE:
+		private _job = [brmh_cmd_postMachine, [["GROUP", _group], ["ORDER", _order], ["SUBJECT", "post"]]] call brmh_cmd_fnc_newMachine;
+		brmh_cmd_builds = brmh_cmd_builds select { _x call ["#STEP", []] };
+		_job call ["#END", ["called off"]];
+	RETURNS: The machine (HASHMAP object). #STEP returns whether it's still running
+	ENVIRONMENT: Server, unscheduled
+*/
+brmh_cmd_fnc_newMachine = {
+	params [["_declaration", [], [[]]], ["_data", [], [[]]]];
+	private _MachineDeclaration = [
+		["#type", "CommanderMachine"],
+		["#create", {
+			params ["_declaration", "_data"];
+			private _spec = createHashMapFromArray _declaration;
+			private _states = createHashMap;
+			{
+				_states set [_x # 0, createHashMapFromArray (_x # 1)];
+			} forEach (_spec getOrDefault ["STATES", []]);
+			_spec set ["STATES", _states];
+			{
+				diag_log format ["[Commander] Error: machine %1: %2", _spec getOrDefault ["KIND", "?"], _x];
+			} forEach ([_spec] call brmh_cmd_fnc_machineProblems);
+			_self set ["SPEC", _spec];
+			{
+				_self set [_x # 0, _x # 1];
+			} forEach _data;
+			_self set ["STATE", _spec get "INITIAL"];
+			_self set ["SINCE", time];
+		}],
+		["#STEP", {
+			private _spec = _self get "SPEC";
+			private _state = _self get "STATE";
+			if (_state isEqualTo "") exitWith {
+				false
+			};
+			private _here = (_spec get "STATES") get _state;
+			private _transitions = (_spec getOrDefault ["ALWAYS", []]) + (_here getOrDefault ["ON", []]);
+			private _taken = _transitions findIf {
+				_self call (_x # 0)
+			};
+			if (_taken >= 0) then {
+				_self call ["#GO", _transitions # _taken];
+			} else {
+				(_here get "DEADLINE") params ["_after", "_action", "_next", "_word"];
+				private _limit = if (_after isEqualType {}) then {
+					_self call _after
+				} else {
+					_after
+				};
+				if ((time - (_self get "SINCE")) >= _limit) then {
+					_self call ["#GO", [{
+						true
+					}, _action, _next, _word]];
+				};
+			};
+			(_self get "STATE") isNotEqualTo ""
+		}],
+		["#GO", {
+			params ["", "_action", "_next", "_word"];
+			private _detail = _self call _action;
+			if (isNil "_detail") then {
+				_detail = "";
+			};
+			if (_word isNotEqualTo "") then {
+				[_self get "GROUP", _self get "ORDER", (_self get "SPEC") get "KIND", _self get "SUBJECT", _word, _detail] call brmh_cmd_fnc_careSay;
+			};
+			_self set ["STATE", _next];
+			_self set ["SINCE", time];
+			if (_next isEqualTo "") then {
+				_self call ((_self get "SPEC") getOrDefault ["RELEASE", {}]);
+			};
+		}],
+		// Called off from outside, such as by a squad order taking its men back.
+		["#END", {
+			params [["_word", "called off", [""]]];
+			if ((_self get "STATE") isNotEqualTo "") then {
+				_self call ["#GO", [{
+					true
+				}, {}, "", _word]];
+			};
+		}]
+	];
+	createHashMapObject [_MachineDeclaration, [_declaration, _data]]
+};
+
+// What's wrong with a declaration, as plain sentences: a state with no deadline, an ending with no word, a state that
+// isn't declared. Empty when it's sound.
+brmh_cmd_fnc_machineProblems = {
+	params ["_spec"];
+	private _states = _spec get "STATES";
+	private _problems = [];
+	if (not ((_spec getOrDefault ["INITIAL", ""]) in _states)) then {
+		_problems pushBack "its initial state isn't declared";
+	};
+	private _check = {
+		params ["_where", "_transition"];
+		_transition params ["", "", ["_next", ""], ["_word", ""]];
+		if (_next isEqualTo "" and {
+			_word isEqualTo ""
+		}) then {
+			_problems pushBack format ["%1 can end without a word", _where];
+		};
+		if (_next isNotEqualTo "" and {
+			not (_next in _states)
+		}) then {
+			_problems pushBack format ["%1 goes to %2, which isn't declared", _where, _next];
+		};
+	};
+	{
+		["ALWAYS", _x] call _check;
+	} forEach (_spec getOrDefault ["ALWAYS", []]);
+	{
+		private _name = _x;
+		if (not ("DEADLINE" in _y)) then {
+			_problems pushBack format ["%1 waits with no deadline", _name];
+		} else {
+			[_name + " at its deadline", _y get "DEADLINE"] call _check;
+		};
+		{
+			[_name, _x] call _check;
+		} forEach (_y getOrDefault ["ON", []]);
+	} forEach _states;
+	_problems
+};
+
+// The aid post: a medic walks to the place, then builds. Its states are the words the radio uses for them.
+brmh_cmd_postMachine = [
+	["KIND", "post"],
+	["INITIAL", "going"],
+	["ALWAYS", [
+		[{
+			not ([_this get "MEDIC"] call brmh_cmd_fnc_able)
+		}, {}, "", "medic down"]
+	]],
+	["STATES", [
+		["going", [
+			["ON", [
+				[{
+					private _away = (_this get "MEDIC") distance2D (_this get "AT");
+					_away <= 8 or {
+						[_this] call brmh_cmd_fnc_postStopped and {
+							_away <= 40
+						}
+					}
+				}, {
+					private _medic = _this get "MEDIC";
+					doStop _medic;
+					_medic disableAI "ANIM";
+					[_medic, "AinvPknlMstpSlayWrflDnon_medicOther"] call brmh_cmd_fnc_carryPose;
+				}, "building", "building"],
+				[{
+					[_this] call brmh_cmd_fnc_postStopped
+				}, {}, "", "can't reach"]
+			]],
+			// It used to wait for good on a medic who never stopped walking and never got there.
+			["DEADLINE", [300, {}, "", "can't reach"]]
+		]],
+		["building", [
+			["DEADLINE", [{
+				brmh_cmd_careTimes get "build_s"
+			}, {
+				[_this] call brmh_cmd_fnc_postBuilt
+			}, "", "up"]]
+		]]
+	]],
+	["RELEASE", {
+		private _medic = _this get "MEDIC";
+		_medic setVariable ["brmh_cmd_busy", nil];
+		if ([_medic] call brmh_cmd_fnc_able) then {
+			_medic enableAI "ANIM";
+			[_medic, "AmovPknlMstpSrasWrflDnon"] call brmh_cmd_fnc_carryPose;
+			_medic doFollow leader group _medic;
+		};
+	}]
+];
+
+// The medic has stopped, short of the place or at it.
+brmh_cmd_fnc_postStopped = {
+	params ["_machine"];
+	unitReady (_machine get "MEDIC") and {
+		(time - (_machine get "ORDERED")) >= 3
+	}
+};
+
+// A real tent, which the engine can't damage: AI drivers don't avoid one, and a truck leaving a rendezvous flattened it
+// through any damage handler. Shells hurt it by brmh_cmd_fnc_shellOnPosts. Returns what "up" says: its id and grid.
+brmh_cmd_fnc_postBuilt = {
+	params ["_machine"];
+	private _medic = _machine get "MEDIC";
+	private _tent = createVehicle ["Land_MedicalTent_01_MTP_closed_F", _medic getPos [8, getDir _medic], [], 6, "NONE"];
+	brmh_cmd_postCount = (missionNamespace getVariable ["brmh_cmd_postCount", 0]) + 1;
+	private _key = format ["P%1", brmh_cmd_postCount];
+	_tent setVariable ["brmh_cmd_key", _key];
+	_tent setVariable ["ace_medical_isMedicalFacility", true, true];
+	_tent allowDamage false;
+	brmh_cmd_vehicles set [_key, _tent];
+	brmh_cmd_posts pushBack _tent;
+	(_machine get "GROUP") setVariable ["brmh_cmd_post", _tent];
+	[_key, mapGridPosition _tent]
+};
+
+/*
 	NAME: brmh_cmd_fnc_postOrder
 	DESCRIPTION: A medic goes to a place and sets up an aid post, a real tent that can be destroyed. One per station.
 	PARAMETERS:
@@ -2432,71 +2640,13 @@ brmh_cmd_fnc_postOrder = {
 		[_medic] call brmh_cmd_fnc_getOff;
 	};
 	_medic doMove _at;
-	brmh_cmd_builds pushBack (createHashMapFromArray [["group", _group], ["order", _order], ["medic", _medic], ["at", _at], ["state", "going"], ["since", time], ["ordered", time]]);
+	brmh_cmd_builds pushBack ([brmh_cmd_postMachine, [["GROUP", _group], ["ORDER", _order], ["SUBJECT", "post"], ["MEDIC", _medic], ["AT", _at], ["ORDERED", time]]] call brmh_cmd_fnc_newMachine);
 	[_group, _order, "post", "post", "going"] call brmh_cmd_fnc_careSay;
 };
 
 brmh_cmd_fnc_stepBuilds = {
 	brmh_cmd_builds = brmh_cmd_builds select {
-		private _build = _x;
-		private _group = _build get "group";
-		private _order = _build get "order";
-		private _medic = _build get "medic";
-		private _keep = true;
-		switch (true) do {
-			case (not ([_medic] call brmh_cmd_fnc_able)): {
-				[_group, _order, "post", "post", "medic down"] call brmh_cmd_fnc_careSay;
-				_medic setVariable ["brmh_cmd_busy", nil];
-				_keep = false;
-			};
-			case ((_build get "state") isEqualTo "going"): {
-				private _away = _medic distance2D (_build get "at");
-				if (_away <= 8 or {
-					unitReady _medic and {
-						(time - (_build get "ordered")) >= 3
-					} and {
-						_away <= 40
-					}
-				}) then {
-					doStop _medic;
-					_medic disableAI "ANIM";
-					[_medic, "AinvPknlMstpSlayWrflDnon_medicOther"] call brmh_cmd_fnc_carryPose;
-					_build set ["state", "building"];
-					_build set ["since", time];
-					[_group, _order, "post", "post", "building"] call brmh_cmd_fnc_careSay;
-				} else {
-					if (unitReady _medic and {
-						(time - (_build get "ordered")) >= 3
-					}) then {
-						_medic setVariable ["brmh_cmd_busy", nil];
-						[_group, _order, "post", "post", "can't reach"] call brmh_cmd_fnc_careSay;
-						_keep = false;
-					};
-				};
-			};
-			default {
-				if ((time - (_build get "since")) >= (brmh_cmd_careTimes get "build_s")) then {
-					private _tent = createVehicle ["Land_MedicalTent_01_MTP_closed_F", _medic getPos [8, getDir _medic], [], 6, "NONE"];
-					brmh_cmd_postCount = (missionNamespace getVariable ["brmh_cmd_postCount", 0]) + 1;
-					private _key = format ["P%1", brmh_cmd_postCount];
-					_tent setVariable ["brmh_cmd_key", _key];
-					_tent setVariable ["ace_medical_isMedicalFacility", true, true];
-					// AI drivers don't avoid a tent, and a truck leaving a rendezvous flattened it, through any damage handler. So
-					// the engine can't hurt it at all, and shells do by brmh_cmd_fnc_shellOnPosts. Bullets don't.
-					_tent allowDamage false;
-					brmh_cmd_vehicles set [_key, _tent];
-					brmh_cmd_posts pushBack _tent;
-					_group setVariable ["brmh_cmd_post", _tent];
-					_medic setVariable ["brmh_cmd_busy", nil];
-					_medic enableAI "ANIM";
-					[_medic, "AmovPknlMstpSrasWrflDnon"] call brmh_cmd_fnc_carryPose;
-					_medic doFollow leader group _medic;
-					[_group, _order, "post", "post", "up", [_key, mapGridPosition _tent]] call brmh_cmd_fnc_careSay;
-					_keep = false;
-				};
-			};
-		};
-		_keep
+		_x call ["#STEP", []]
 	};
 };
 

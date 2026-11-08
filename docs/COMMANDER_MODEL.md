@@ -339,7 +339,7 @@ stateDiagram-v2
   state "building" as building
   [*] --> going: AID_POST
   going --> building: arrived
-  going --> [*]: unreachable
+  going --> [*]: unreachable, or 5 min
   building --> [*]: built
 ```
 
