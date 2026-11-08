@@ -31,6 +31,12 @@ MOVED_M = 100
 _ACTIONS = {"order", "ask", "schedule", "unschedule", "mark", "unmark", "notes"}
 
 
+def _able(group: dict) -> int:
+    """How many of a group could act. Truth records from before the rename call it "alive", and reviews still read
+    those. The review's own output keeps "alive", which its viewer reads."""
+    return group.get("able", group.get("alive", 0))
+
+
 def reported_position(text: str) -> str | None:
     """The sender's own position in a radio message, if it gave one. "Moving to grid 041 034" isn't one."""
     found = _POSITION.findall(text)
@@ -98,7 +104,7 @@ def battle_data(folder: Path, commander: dict | None = None) -> dict:
 def scorecard(data: dict) -> dict:
     """The measures for comparing battles. The last two say how wrong the commander's picture of the battle was."""
     frames = data["frames"]
-    left = {group["group"]: group["alive"] for group in frames[-1]["groups"]} if frames else {}
+    left = {group["group"]: _able(group) for group in frames[-1]["groups"]} if frames else {}
     friendly_total = sum(station["units"] for station in data["stations"].values())
     return {
         "ended": data["ended"] or "Didn't finish", "duration_s": round(data["ended_at"] or data["duration"]),
@@ -128,7 +134,7 @@ def _position_error(data: dict) -> int | None:
                 break
             heard[row["from"]] = row["pos"]
         errors += [math.dist(heard[group["group"]], group["pos"][:2]) for group in frame["groups"]
-                   if group["group"] in heard and group["alive"] and group["pos"]]
+                   if group["group"] in heard and _able(group) and group["pos"]]
     return round(sum(errors) / len(errors)) if errors else None
 
 
@@ -240,7 +246,7 @@ def _outside_battle(kill: dict, truth: list[dict], wanted: set[str]) -> bool:
 
 def _group(group: dict) -> dict:
     pos = group.get("pos") or []
-    return {"group": group["group"], "alive": group.get("alive", 0), "pos": pos,
+    return {"group": group["group"], "alive": _able(group), "pos": pos,
             "units": [unit[:2] for unit in group.get("units") or ([pos] if pos else [])]}
 
 

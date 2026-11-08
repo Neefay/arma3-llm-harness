@@ -50,13 +50,13 @@ class Game(Protocol):
 # Each station's report, as the game's brmh_cmd_fnc_packet builds it. A field left off this list never reaches anything
 # that reads it, with no error, so test_packet_fields.py checks it against the game's code.
 PACKET_FIELDS = (
-    "callsign", "pos", "grid", "dir", "speed", "alive", "wounded", "baseline", "leader", "rounds", "rounds_baseline",
+    "callsign", "pos", "grid", "dir", "speed", "able", "wounded", "baseline", "leader", "rounds", "rounds_baseline",
     "behaviour", "speed_mode", "spread", "combat_mode", "order", "unable", "leg", "legs", "clearing", "cleared",
     "placed", "contacts", "suppression", "ruined", "seen_vehicles", "seen_ruins", "mounted", "mount", "missions",
     "gun_ammo", "limping", "casualties", "up", "medical")
 PACKET_HOST_FIELDS = ("t", "under_way")  # added here, after the game's report arrives
 # Each group in the truth record, as brmh_cmd_fnc_truth builds it. Only the review and the objectives read it.
-TRUTH_GROUP_FIELDS = ("group", "side", "alive", "down", "mounted", "limping", "leader_limping", "units", "pos")
+TRUTH_GROUP_FIELDS = ("group", "side", "able", "down", "mounted", "limping", "leader_limping", "units", "pos")
 
 # An order to the whole squad takes over from the rest of a chained order. POSTURE, fire orders, and orders about the
 # wounded leave it running, as they leave everything else.
@@ -111,7 +111,10 @@ class Runtime:
         self.positions: dict[str, dict] = saved.get("positions", {})
         self.events_done: list[int] = saved.get("events_done", [])
         self.turn_row: dict | None = saved.get("turn_row")
-        self.trackers = {k: Tracker(**v) for k, v in saved.get("trackers", {}).items()}
+        # A battle saved by an older version may have fields that have since been renamed: start those afresh.
+        known = Tracker.__dataclass_fields__
+        self.trackers = {k: Tracker(**{field: value for field, value in v.items() if field in known})
+                         for k, v in saved.get("trackers", {}).items()}
         if "wake" in saved:
             self.wake = WakeLogic(**saved["wake"])
         else:
@@ -408,16 +411,16 @@ class Runtime:
 
     def _judge(self, groups: list[dict]) -> None:
         """The harness alone decides how a battle ends. The commander only hears the result."""
-        alive = {group.get("group"): group.get("alive", 0) for group in groups}
+        able = {group.get("group"): group.get("able", 0) for group in groups}
         if self.scenario.failure.get("all_stations_lost") and all(
-                alive.get(callsign, 1) == 0 for callsign in self.scenario.stations):
+                able.get(callsign, 1) == 0 for callsign in self.scenario.stations):
             self._end("All stations have been lost.")
             return
         for objective in self.scenario.objectives:
             key = objective["id"]
             if key in self.objectives_done:
                 continue
-            met = self._met(objective["success"], groups, alive)
+            met = self._met(objective["success"], groups, able)
             if not met:
                 # Higher command's word is believed over everything, so it has to still be true when it's given.
                 self.objectives_due.pop(key, None)
@@ -425,11 +428,11 @@ class Runtime:
                 # True position can get there seconds before the group reports arriving. Let its last words through.
                 self.objectives_due[key] = {"at": self.rel() + SUCCESS_GRACE_S, "met": met}
 
-    def _met(self, success: dict, groups: list[dict], alive: dict) -> str | None:
+    def _met(self, success: dict, groups: list[dict], able: dict) -> str | None:
         """What's been achieved, if this objective's condition holds now."""
         if success.get("enemy_cleared"):
             enemies = self.scenario.enemies
-            if enemies and all(alive.get(enemy["id"], 1) == 0 for enemy in enemies):
+            if enemies and all(able.get(enemy["id"], 1) == 0 for enemy in enemies):
                 return "the enemy has been cleared"
         elif "stations" in success:
             target, spoken = parse_grid(success["of"], self.world_size)
@@ -438,7 +441,7 @@ class Runtime:
                 """Every living man, because a leader getting there isn't a team getting there. "units" only has the men
                 on their feet, and one who's down is still alive and still one of them, wherever he's lying."""
                 down = group.get("down") or []
-                return bool(group.get("alive")) and all(
+                return bool(group.get("able")) and all(
                     math.dist(unit[:2], target) <= success["within_m"] for unit in (group.get("units") or []) + down
                 ) and not (success.get("on_foot") and (group.get("mounted") or down))
 
@@ -450,7 +453,7 @@ class Runtime:
         elif "station" in success:
             target, _ = parse_grid(success["of"], self.world_size)
             for group in groups:
-                if group.get("group") == success["station"] and group.get("alive") and group.get("pos") \
+                if group.get("group") == success["station"] and group.get("able") and group.get("pos") \
                         and math.dist(group["pos"], target) <= success["within_m"]:
                     return f"{success['station']} reached grid {success['of']}"
         return None

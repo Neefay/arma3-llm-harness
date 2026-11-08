@@ -295,7 +295,8 @@ def aar(home: Home | None = None) -> str:
                 continue
             if group.get("pos"):
                 dead.discard(group["group"])
-                parts.append(f"{group['group']} {group['alive']} alive at {[round(c) for c in group['pos']]}")
+                able = group.get("able", group.get("alive", 0))  # older truth records call it "alive"
+                parts.append(f"{group['group']} {able} alive at {[round(c) for c in group['pos']]}")
             elif group["group"] not in dead:  # once is enough: a wiped-out group is otherwise missing from the review
                 dead.add(group["group"])
                 parts.append(f"{group['group']} 0 alive")

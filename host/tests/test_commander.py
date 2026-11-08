@@ -36,7 +36,7 @@ def exact_bearings(monkeypatch):
 
 
 def packet(**over) -> dict:
-    base = {"callsign": "Alpha", "pos": [3050.0, 3050.0], "grid": "030030", "dir": 90, "speed": 0, "alive": 4,
+    base = {"callsign": "Alpha", "pos": [3050.0, 3050.0], "grid": "030030", "dir": 90, "speed": 0, "able": 4,
             "wounded": 0, "baseline": 4, "leader": "Sam Reed", "rounds": 400, "rounds_baseline": 400,
             "behaviour": "AWARE", "combat_mode": "YELLOW", "order": "", "unable": "", "leg": 0, "legs": 1,
             "contacts": []}
@@ -66,7 +66,7 @@ def test_rounding_and_buckets():
 
 
 def test_sitrep_and_specific_answers():
-    text = reports.answer(packet(wounded=1, alive=3, rounds=190, contacts=[contact()]), None)
+    text = reports.answer(packet(wounded=1, able=3, rounds=190, contacts=[contact()]), None)
     assert "Grid 030 030, stationary." in text and "3 of 4 effective, 1 wounded" in text
     assert "Sam Reed has command" in text and "Ammo amber, about half." in text and "No current orders." in text
     assert "One infantry, bearing 045, roughly 300 metres, seen now." in text
@@ -231,9 +231,9 @@ def test_what_counts_as_being_in_combat():
     assert tracker.in_combat(packet(suppression=0.05), 100)
     assert tracker.in_combat(packet(contacts=[contact()]), 100)
     assert not tracker.in_combat(packet(contacts=[contact(age=31)]), 100)
-    tracker.update(packet(alive=4), None, 100)
-    tracker.update(packet(alive=3), None, 110)
-    assert tracker.in_combat(packet(alive=3), 139) and not tracker.in_combat(packet(alive=3), 141)
+    tracker.update(packet(able=4), None, 100)
+    tracker.update(packet(able=3), None, 110)
+    assert tracker.in_combat(packet(able=3), 139) and not tracker.in_combat(packet(able=3), 141)
 
 
 def test_the_harder_a_squad_is_hit_the_slower_it_talks():
@@ -315,15 +315,15 @@ def test_holding_fire_is_said_when_the_group_cant_engage():
 def test_casualties_group_then_leader_and_ammo_report():
     tracker = Tracker()
     tracker.update(packet(), None, 0)
-    assert tracker.update(packet(alive=3), None, 2) == []
-    assert tracker.update(packet(alive=2), None, 20) == []
-    said = tracker.update(packet(alive=2, wounded=1), None, 33)
+    assert tracker.update(packet(able=3), None, 2) == []
+    assert tracker.update(packet(able=2), None, 20) == []
+    said = tracker.update(packet(able=2, wounded=1), None, 33)
     assert [r.text for r in said] == ["Taking casualties, 2 of 4 effective, 1 wounded."]
-    assert [r.text for r in tracker.update(packet(alive=2, leader="Ana Cole"), None, 40)] == [
+    assert [r.text for r in tracker.update(packet(able=2, leader="Ana Cole"), None, 40)] == [
         "Leader down, Ana Cole has command."]
-    assert [r.text for r in tracker.update(packet(alive=2, leader="Ana Cole", rounds=150), None, 42)] == [
+    assert [r.text for r in tracker.update(packet(able=2, leader="Ana Cole", rounds=150), None, 42)] == [
         "Ammo amber, about half."]
-    assert tracker.update(packet(alive=2, leader="Ana Cole", rounds=300), None, 44) == []  # only when worsening
+    assert tracker.update(packet(able=2, leader="Ana Cole", rounds=300), None, 44) == []  # only when worsening
 
 
 def test_stuck_group_says_so_and_repeats_slowly():
@@ -629,7 +629,7 @@ def test_proof_of_concept_flow(tmp_path):
     b.silent(160)
     assert 'W1  due T+01:00: "Has Alpha arrived?"' in b.wakes[2][0] and b.wakes[2][1]["woke_on"] == "1 timer"
     b.runtime.end_turn("Nothing to do", messages_only=True)
-    b.game.emit(type="cmd_truth", t=165, groups=[{"group": "Alpha", "side": "WEST", "alive": 4, "pos": [3450, 3050]}])
+    b.game.emit(type="cmd_truth", t=165, groups=[{"group": "Alpha", "side": "WEST", "able": 4, "pos": [3450, 3050]}])
     b.silent(165)
     assert len(b.wakes) == 3  # a report on its way still gets through
     b.silent(176)
@@ -647,7 +647,7 @@ def test_arrival_report_isnt_lost_when_true_position_gets_there_first(tmp_path):
     b.runtime.order({"to": "Alpha", "legs": [{"type": "MOVE", "at": "B"}]})
     b.runtime.end_turn("Sent", messages_only=True)
     b.advance(102, order="O-0001")
-    b.game.emit(type="cmd_truth", t=104, groups=[{"group": "Alpha", "side": "WEST", "alive": 4, "pos": [3447, 3050]}])
+    b.game.emit(type="cmd_truth", t=104, groups=[{"group": "Alpha", "side": "WEST", "able": 4, "pos": [3447, 3050]}])
     b.silent(104)
     b.advance(108, order="O-0001", pos=[3450, 3050], grid="034030", leg=1)
     b.silent(120)
@@ -681,8 +681,8 @@ def test_review_shows_a_group_dying_though_the_commander_never_hears(tmp_path):
     b = Battle(tmp_path, events=[{"at": "0:10", "action": "kill_station", "station": "Alpha"}])
     b.start()
     b.runtime.order({"to": "Alpha", "legs": [{"type": "MOVE", "at": "B"}]})
-    alive = {"group": "Alpha", "side": "WEST", "alive": 4, "pos": [3060, 3050]}
-    gone = {"group": "Alpha", "side": "WEST", "alive": 0, "pos": []}
+    alive = {"group": "Alpha", "side": "WEST", "able": 4, "pos": [3060, 3050]}
+    gone = {"group": "Alpha", "side": "WEST", "able": 0, "pos": []}
     for t, group in ((102, alive), (112, gone), (117, gone)):
         b.game.emit(type="cmd_truth", t=t, groups=[group])
         b.silent(t)
@@ -906,9 +906,9 @@ def village(tmp_path, **over) -> Battle:
 
 
 def groups(alpha=4, east1=4, east2=2) -> list[dict]:
-    return [{"group": "Alpha", "side": "WEST", "alive": alpha, "pos": [3050, 3050] if alpha else []},
-            {"group": "East 1", "side": "EAST", "alive": east1, "pos": [4100, 4100] if east1 else []},
-            {"group": "East 2", "side": "EAST", "alive": east2, "pos": [4100, 3900] if east2 else []}]
+    return [{"group": "Alpha", "side": "WEST", "able": alpha, "pos": [3050, 3050] if alpha else []},
+            {"group": "East 1", "side": "EAST", "able": east1, "pos": [4100, 4100] if east1 else []},
+            {"group": "East 2", "side": "EAST", "able": east2, "pos": [4100, 3900] if east2 else []}]
 
 
 def test_clearing_the_enemy_wins_and_the_commander_only_hears_at_the_end(tmp_path):
@@ -1050,7 +1050,7 @@ def test_map_image_shows_only_what_the_commander_has(tmp_path):
         b.runtime.map_image(radius=5)
     # Facts about the real battle change nothing in the picture.
     before = b.runtime.map_image()["png"]
-    b.game.emit(type="cmd_truth", t=100, groups=[{"group": "East 1", "side": "EAST", "alive": 9, "pos": [3400, 3000]}])
+    b.game.emit(type="cmd_truth", t=100, groups=[{"group": "East 1", "side": "EAST", "able": 9, "pos": [3400, 3000]}])
     b.runtime.step(0)
     assert b.runtime.map_image()["png"] == before
 
@@ -1143,7 +1143,7 @@ def test_unperceived_facts_change_nothing_the_commander_sees(tmp_path):
         b.start()
         b.runtime.schedule({"wake": "check"}, after="0:30")
         b.runtime.end_turn("x")
-        b.game.emit(type="cmd_truth", t=102, groups=[{"group": "East 1", "side": "EAST", "alive": 9, "pos": truth}])
+        b.game.emit(type="cmd_truth", t=102, groups=[{"group": "East 1", "side": "EAST", "able": 9, "pos": truth}])
         b.game.emit(type="killed", t=102, victim=killed, victimType="O_Soldier_F", killer="X", weapon="arifle_MX_F")
         b.game.queue.append({"seq": 99, "k": "err", "text": f"error in {killed}"})
         b.advance(102, contacts=[contact()])
@@ -1272,7 +1272,7 @@ def test_vehicles_in_a_sitrep_and_the_vehicles_topic():
     assert reports.answer(packet(), None, ["vehicles"]) == "All on foot."
     assert "on foot" not in reports.answer(packet(), None)
     assert "On V1: Sam Reed as gunner." in reports.answer(on_gun, None)
-    all_in = packet(alive=2, mounted=[["V3", "driver", "A B", "x"], ["V3", "cargo", "C D", "x"]])
+    all_in = packet(able=2, mounted=[["V3", "driver", "A B", "x"], ["V3", "cargo", "C D", "x"]])
     assert reports.answer(all_in, None, ["vehicles"]) == "On V3: A B as driver, C D as cargo."
     assert reports.answer(packet(mounted=[["", "gunner", "A B", "x"]]), None, ["vehicles"]).startswith("On a vehicle:")
 
@@ -1392,7 +1392,7 @@ def test_losing_a_gunner_is_reported_but_getting_off_isnt():
     tracker = Tracker()
     seated = [["V1", "gunner", "Pat Vane", True]]
     tracker.update(packet(mounted=seated), None, 0)
-    said = tracker.update(packet(alive=3, mounted=[]), None, 2)
+    said = tracker.update(packet(able=3, mounted=[]), None, 2)
     assert [r.text for r in said] == ["Gunner down on V1."] and said[0].precedence == reports.PRIORITY
     tracker = Tracker()
     tracker.update(packet(mounted=seated), None, 0)
@@ -1815,9 +1815,9 @@ def marching(tmp_path) -> Battle:
     return b
 
 
-def team(name, x=5250, y=4450, mounted=0, alive=4) -> dict:
-    return {"group": name, "side": "WEST", "alive": alive, "mounted": mounted, "pos": [x, y],
-            "units": [[x, y, 0]] * alive}
+def team(name, x=5250, y=4450, mounted=0, able=4) -> dict:
+    return {"group": name, "side": "WEST", "able": able, "mounted": mounted, "pos": [x, y],
+            "units": [[x, y, 0]] * able}
 
 
 def truth(b, t, *groups) -> None:
@@ -1835,7 +1835,7 @@ def met(b) -> list[str]:
     [team("Alpha"), team("Bravo", mounted=1)],  # someone's still getting out
     [team("Alpha"), team("Bravo", x=4000)],  # one team's elsewhere
     [team("Alpha")],  # the other isn't on the net at all
-    [team("Alpha"), team("Bravo", alive=0)],  # wiped out
+    [team("Alpha"), team("Bravo", able=0)],  # wiped out
 ])
 def test_a_march_isnt_over_until_both_teams_are_on_foot_there(tmp_path, groups):
     b = marching(tmp_path)
@@ -1870,7 +1870,7 @@ def test_a_team_at_the_grid_counts_a_man_down_there_unless_it_has_to_be_on_foot(
     objective = {"stations": ["Alpha"], "of": "034 030", "within_m": 80}
     b = Battle(tmp_path, success=objective)
     b.start()
-    here = {"group": "Alpha", "side": "WEST", "alive": 3, "mounted": 0, "pos": [3450, 3050],
+    here = {"group": "Alpha", "side": "WEST", "able": 3, "mounted": 0, "pos": [3450, 3050],
             "units": [[3450, 3050, 0]] * 3}
     truth(b, 110, {**here, "down": [[3000, 3050]]})
     assert met(b) == []
@@ -1911,11 +1911,11 @@ def two_tasks(tmp_path) -> Battle:
 
 
 def alpha_at(x=3450, y=3050) -> dict:
-    return {"group": "Alpha", "side": "WEST", "alive": 4, "pos": [x, y], "units": [[x, y, 0]] * 4}
+    return {"group": "Alpha", "side": "WEST", "able": 4, "pos": [x, y], "units": [[x, y, 0]] * 4}
 
 
 def enemy(alive) -> dict:
-    return {"group": "East", "side": "EAST", "alive": alive, "pos": [6050, 6050], "units": []}
+    return {"group": "East", "side": "EAST", "able": alive, "pos": [6050, 6050], "units": []}
 
 
 def test_an_objective_done_is_its_own_event_and_the_battle_goes_on(tmp_path):
@@ -2200,8 +2200,8 @@ def said(b) -> list[str]:
 
 def test_a_man_going_down_is_reported_and_listed_once(tmp_path):
     b = wounded_battle(tmp_path)
-    b.advance(102, casualties=[down_row()], alive=3)
-    b.advance(104, casualties=[down_row()], alive=3)
+    b.advance(102, casualties=[down_row()], able=3)
+    b.advance(104, casualties=[down_row()], able=3)
     assert said(b).count("Sam Reed's down, grid 030 030. Listed as C1.") == 1
     assert "C1  Sam Reed  Alpha's  grid 030 030" in b.runtime.briefing()
 
@@ -2258,7 +2258,7 @@ def test_someone_elses_man_is_found_only_if_nobody_had_listed_him(tmp_path):
 
 
 def test_strength_and_the_casualties_topic(tmp_path):
-    answer = reports.answer(packet(alive=2, wounded=1, casualties=[
+    answer = reports.answer(packet(able=2, wounded=1, casualties=[
         {"id": "C1", "name": "Sam Reed", "dx": 40, "dy": 0, "grid": "030 030", "vehicle": "", "own": True, "new": False,
          "handled": ""},
         {"id": "C2", "name": "Ann Cole", "dx": 2, "dy": 0, "grid": "030 030", "vehicle": "", "own": False, "new": False,
@@ -2319,7 +2319,7 @@ def test_a_post_going_up_joins_the_list(tmp_path):
 def test_the_downed_dont_count_as_enemy_or_block_the_end(tmp_path):
     b = Battle(tmp_path, success={"enemy_cleared": True}, enemies=[{"id": "East", "at": "060 060", "units": 2}])
     b.start()
-    truth(b, 110, {"group": "East", "side": "EAST", "alive": 0, "pos": [], "units": [], "down": [[6050, 6050]]})
+    truth(b, 110, {"group": "East", "side": "EAST", "able": 0, "pos": [], "units": [], "down": [[6050, 6050]]})
     assert met(b) == ["the enemy has been cleared"]
 
 
@@ -2977,23 +2977,23 @@ def test_reports_from_a_squad_in_combat_arrive_late_and_in_order(tmp_path):
     b = in_the_fight(tmp_path)
     b.advance(102, contacts=[contact()], suppression=0.5)
     assert radio_words(b) == []  # nothing yet
-    b.advance(104, contacts=[contact()], suppression=0.5, alive=3)
-    b.advance(110, contacts=[contact()], suppression=0.5, alive=3)
+    b.advance(104, contacts=[contact()], suppression=0.5, able=3)
+    b.advance(110, contacts=[contact()], suppression=0.5, able=3)
     assert radio_words(b) == []  # under heavy fire, even a flash report takes about 15 s
     for t in (114, 117, 120):
-        b.advance(t, contacts=[contact()], suppression=0.5, alive=3)
+        b.advance(t, contacts=[contact()], suppression=0.5, able=3)
     assert radio_words(b)[0].startswith("Contact, one infantry, bearing 045")
     assert b.records.read("radio")[0]["t"] == 17  # logged when it was heard, and T+0 is mission time 100
     for t in (125, 131, 137, 143, 149, 155, 161, 167, 170):  # casualties are grouped for 30 s, then take 30 s to report
-        b.advance(t, contacts=[contact()], suppression=0.5, alive=3)
+        b.advance(t, contacts=[contact()], suppression=0.5, able=3)
     words = radio_words(b)
     assert words[1].startswith("Taking casualties, 3 of 4 effective")
 
 
 def test_a_calm_squad_still_reports_at_once(tmp_path):
     b = in_the_fight(tmp_path)
-    b.advance(102, order="", alive=3)
-    b.advance(104, order="", alive=2)
+    b.advance(102, order="", able=3)
+    b.advance(104, order="", able=2)
     assert b.runtime.outbox == []
 
 

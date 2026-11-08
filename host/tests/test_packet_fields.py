@@ -41,7 +41,7 @@ def test_every_field_the_host_reads_is_kept_or_added():
 def test_the_truth_record_has_what_the_objectives_and_review_read():
     sent = sent_by("truth", 3)
     assert sent == set(runtime.TRUTH_GROUP_FIELDS), sorted(sent ^ set(runtime.TRUTH_GROUP_FIELDS))
-    missing = read_by("group", "runtime.py", "aar.py") - sent
+    missing = read_by("group", "runtime.py", "aar.py", "operator.py") - sent - {"alive"}  # older records' name for able
     assert not missing, f"read from truth but never sent: {sorted(missing)}"
 
 

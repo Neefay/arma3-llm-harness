@@ -617,23 +617,23 @@ brmh_cmd_fnc_casualties = {
 
 brmh_cmd_fnc_packet = {
 	params ["_callsign", "_group"];
-	private _alive = (units _group) select {
+	private _able = (units _group) select {
 		[_x] call brmh_cmd_fnc_able
 	};
-	if (_alive isEqualTo []) exitWith {
+	if (_able isEqualTo []) exitWith {
 		nil
 	};
 	// For several seconds after a leader dies, leader still returns the body. A downed one takes a moment to pass it on too.
 	private _leader = if ([leader _group] call brmh_cmd_fnc_able) then {
 		leader _group
 	} else {
-		_alive # 0
+		_able # 0
 	};
 	_group setVariable ["brmh_cmd_acting", _leader];
 	private _rounds = 0;
 	{
 		_rounds = _rounds + ([_x] call brmh_cmd_fnc_rounds);
-	} forEach _alive;
+	} forEach _able;
 	private _position = getPosATL _leader;
 	createHashMapFromArray [
 		["type", "cmd_report"],
@@ -642,29 +642,29 @@ brmh_cmd_fnc_packet = {
 		["grid", mapGridPosition _position],
 		["dir", getDir _leader],
 		["speed", speed _leader],
-		["alive", count _alive],
+		["able", count _able],
 		["wounded", {
 			lifeState _x isEqualTo "INJURED"
-		} count _alive],
-		["limping", (_alive select {
+		} count _able],
+		["limping", (_able select {
 			(_x getHitPointDamage "hitLegs") >= 0.5
 		}) apply {
 			name _x
 		}],
-		["baseline", _group getVariable ["brmh_cmd_baseline", count _alive]],
+		["baseline", _group getVariable ["brmh_cmd_baseline", count _able]],
 		["leader", name _leader],
 		["rounds", _rounds],
 		["rounds_baseline", _group getVariable ["brmh_cmd_roundsBaseline", _rounds]],
 		["behaviour", behaviour _leader],
 		["speed_mode", speedMode _group],
-		["spread", ((_alive - [_leader]) select {
+		["spread", ((_able - [_leader]) select {
 			vehicle _x isEqualTo _x
 		}) apply {
 			private _at = getPosATL _x;
 			[name _x, round ((_at # 0) - (_position # 0)), round ((_at # 1) - (_position # 1)), _x getVariable ["brmh_cmd_busy", false]]
 		}],
 		["combat_mode", combatMode _group],
-		["suppression", (_alive apply {
+		["suppression", (_able apply {
 			getSuppression _x
 		}) call BIS_fnc_arithmeticMean],
 		["order", _group getVariable ["brmh_cmd_order", ""]],
@@ -676,7 +676,7 @@ brmh_cmd_fnc_packet = {
 		["ruined", _group getVariable ["brmh_cmd_ruined", []]],
 		["seen_vehicles", _group getVariable ["brmh_cmd_seenVehicles", []]],
 		["seen_ruins", _group getVariable ["brmh_cmd_seenRuins", []]],
-		["mounted", [_alive] call brmh_cmd_fnc_mounted],
+		["mounted", [_able] call brmh_cmd_fnc_mounted],
 		["mount", _group getVariable ["brmh_cmd_mount", []]],
 		["missions", (_group getVariable ["brmh_cmd_missions", []]) apply {
 			[_x get "key", _x get "order", _x get "state", _x getOrDefault ["reason", ""], _x get "word", _x getOrDefault ["fired", 0], _x get "want", _x getOrDefault ["eta", 0], _x getOrDefault ["inAir", 0]]
@@ -686,7 +686,7 @@ brmh_cmd_fnc_packet = {
 		}],
 		["placed", _group getVariable ["brmh_cmd_placed", -1]],
 		["casualties", [_group, _leader] call brmh_cmd_fnc_casualties],
-		["up", _alive apply {
+		["up", _able apply {
 			[_x] call brmh_cmd_fnc_manKey
 		}],
 		["medical", _group getVariable ["brmh_cmd_care", []]],
@@ -698,13 +698,13 @@ brmh_cmd_fnc_truth = {
 	private _groups = (allGroups select {
 		side _x in [west, east, independent]
 	}) apply {
-		private _alive = (units _x) select {
+		private _able = (units _x) select {
 			[_x] call brmh_cmd_fnc_able
 		};
 		createHashMapFromArray [
 			["group", groupId _x],
 			["side", str side _x],
-			["alive", count _alive],
+			["able", count _able],
 			["down", ((units _x) select {
 				alive _x and {
 					not ([_x] call brmh_cmd_fnc_able)
@@ -715,17 +715,17 @@ brmh_cmd_fnc_truth = {
 			}],
 			["mounted", {
 				vehicle _x isNotEqualTo _x
-			} count _alive],
+			} count _able],
 			["limping", {
 				(_x getHitPointDamage "hitLegs") >= 0.5
-			} count _alive],
+			} count _able],
 			["leader_limping", ((leader _x) getHitPointDamage "hitLegs") >= 0.5],
-			["pos", if (_alive isEqualTo []) then {
+			["pos", if (_able isEqualTo []) then {
 				[]
 			} else {
-				(getPosATL (_alive # 0)) select [0, 2]
+				(getPosATL (_able # 0)) select [0, 2]
 			}],
-			["units", _alive apply {
+			["units", _able apply {
 				private _position = getPosATL _x;
 				[round (_position # 0), round (_position # 1), round (_position # 2)]
 			}]

@@ -38,13 +38,13 @@ def battle(tmp_path) -> Path:
     (folder.parent / "battle.json").write_text(json.dumps({
         "scenario": SCENARIO, "buildings": BUILDINGS, "world_size": 8192, "run": "20261105-043541", "attempt": 2}))
     rows(folder.parent / "truth.jsonl",
-         {"t": 5, "groups": [{"group": "Alpha 1-1", "side": "WEST", "alive": 1, "pos": [4100, 3800],
+         {"t": 5, "groups": [{"group": "Alpha 1-1", "side": "WEST", "able": 1, "pos": [4100, 3800],
                               "units": [[4100, 3800, 0]]},
-                             {"group": "Alpha", "side": "WEST", "alive": 8, "pos": [3950, 3550],
+                             {"group": "Alpha", "side": "WEST", "able": 8, "pos": [3950, 3550],
                               "units": [[3950, 3550, 0]]}]},
-         {"t": 90, "groups": [{"group": "East Patrol", "side": "EAST", "alive": 6, "pos": [4250, 3950]}]},
+         {"t": 90, "groups": [{"group": "East Patrol", "side": "EAST", "able": 6, "pos": [4250, 3950]}]},
          {"t": 130, "groups": []},  # past the end
-         {"t": -120, "groups": [{"group": "Alpha", "side": "WEST", "alive": 8, "pos": [1, 1]}]})  # the next mission
+         {"t": -120, "groups": [{"group": "Alpha", "side": "WEST", "able": 8, "pos": [1, 1]}]})  # the next mission
     rows(folder.parent / "kills.jsonl",
          {"t": 20, "victim": "Owen King", "side": "WEST", "victimPos": [4100, 3700, 0], "killer": "Khalil Amani",
           "killerSide": "EAST", "weapon": "AK", "distance": 208},
@@ -122,7 +122,7 @@ def shelled(battle, *groups, position=None, order="O-0009", victim_at=(4100, 410
 
 
 def alpha(x, y):
-    return {"group": "Alpha", "side": "WEST", "alive": 8, "pos": [x, y], "units": [[x, y, 0]]}
+    return {"group": "Alpha", "side": "WEST", "able": 8, "pos": [x, y], "units": [[x, y, 0]]}
 
 
 def test_shelling_a_position_it_was_told_about_is_the_commanders_decision(battle):
@@ -244,8 +244,8 @@ def test_the_observer_slots_soldier_isnt_one_of_the_battles_deaths(battle):
     with (battle.parent / "kills.jsonl").open("a", encoding="utf-8") as file:
         file.write(json.dumps({"t": 80, "victim": "Observer", "side": "WEST", "victimPos": [4100, 3800, 0]}) + "\n")
     rows(battle.parent / "truth.jsonl",
-         {"t": 5, "groups": [{"group": "Alpha 1-1", "side": "WEST", "alive": 1, "pos": [4100.2, 3800.1]},
-                             {"group": "Alpha", "side": "WEST", "alive": 8, "pos": [4100, 3700]}]})
+         {"t": 5, "groups": [{"group": "Alpha 1-1", "side": "WEST", "able": 1, "pos": [4100.2, 3800.1]},
+                             {"group": "Alpha", "side": "WEST", "able": 8, "pos": [4100, 3700]}]})
     assert [kill["victim"] for kill in aar.battle_data(battle)["kills"]] == ["Owen King", "Habib Noori"]
 
 
@@ -405,10 +405,10 @@ def test_scorecard(battle):
 def test_position_error_compares_the_last_report_with_where_the_station_was(tmp_path):
     data = {"radio": [{"t": 10, "from": "Alpha", "pos": [100.0, 100.0]}], "markers": [], "stations": {}, "enemies": [],
             "frames": [
-                {"t": 5, "groups": [{"group": "Alpha", "alive": 4, "pos": [0, 0], "units": []}]},  # nothing heard yet
-                {"t": 20, "groups": [{"group": "Alpha", "alive": 4, "pos": [100, 130], "units": []}]},
-                {"t": 30, "groups": [{"group": "Alpha", "alive": 4, "pos": [100, 150], "units": []}]},
-                {"t": 40, "groups": [{"group": "Alpha", "alive": 0, "pos": [], "units": []}]}]}  # dead: no position
+                {"t": 5, "groups": [{"group": "Alpha", "able": 4, "pos": [0, 0], "units": []}]},  # nothing heard yet
+                {"t": 20, "groups": [{"group": "Alpha", "able": 4, "pos": [100, 130], "units": []}]},
+                {"t": 30, "groups": [{"group": "Alpha", "able": 4, "pos": [100, 150], "units": []}]},
+                {"t": 40, "groups": [{"group": "Alpha", "able": 0, "pos": [], "units": []}]}]}  # dead: no position
     assert aar._position_error(data) == 40
 
 
@@ -565,7 +565,7 @@ def test_finding_a_battle(battle, tmp_path):
 
 # -- what gets recorded in the first place ---------------------------------------------------------------------------
 
-GROUP = {"group": "Alpha", "side": "WEST", "alive": 4, "pos": [3050, 3050]}
+GROUP = {"group": "Alpha", "side": "WEST", "able": 4, "pos": [3050, 3050]}
 
 
 def test_truth_stops_soon_after_the_battle_ends(tmp_path):
@@ -605,3 +605,9 @@ def test_a_saved_battle_remembers_it_has_ended(tmp_path):
     b.runtime.save()
     resumed = b.new_runtime()
     assert resumed.ended_at == 10 and resumed.restarted is False
+
+
+def test_old_truth_records_still_read():
+    """Before the rename, the truth record called the able members "alive", and old battles are still reviewed."""
+    from arma_harness.commander.aar import _able
+    assert _able({"group": "Alpha", "alive": 3}) == 3 and _able({"group": "Alpha", "able": 2}) == 2

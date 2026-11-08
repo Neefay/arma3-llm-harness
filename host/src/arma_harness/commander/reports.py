@@ -208,7 +208,7 @@ def answer(packet: dict, route: dict | None, topics: list[str] | None = None,
             case "task":
                 parts.append(_task_words(packet, route, in_combat))
             case "strength":
-                parts.append(f"{packet['alive']} of {packet['baseline']} effective{_hurt_words(packet)}."
+                parts.append(f"{packet['able']} of {packet['baseline']} effective{_hurt_words(packet)}."
                              f"{_legs_words(packet)}{_apart_words(packet)} "
                              f"{packet['leader']} has command.")
             case "casualties":
@@ -321,7 +321,7 @@ def _vehicle_words(packet: dict) -> str:
     for vehicle, seat, name, *_ in rows:  # the rest of a row isn't for saying aloud
         by_vehicle.setdefault(vehicle or "a vehicle", []).append(f"{name} as {seat}")
     words = " ".join(f"On {vehicle}: {', '.join(seats)}." for vehicle, seats in by_vehicle.items())
-    on_foot = packet.get("alive", 0) - len(rows)
+    on_foot = packet.get("able", 0) - len(rows)
     return f"{words} {on_foot} on foot." if on_foot > 0 else words
 
 
@@ -499,7 +499,7 @@ class Tracker:
     leg: int = 0
     on_station: list[int] = field(default_factory=list)
     route_done: bool = False
-    alive: int = -1
+    able: int = -1
     casualties_since: float = -1.0
     leader: str = ""
     ammo: str = ""
@@ -514,7 +514,7 @@ class Tracker:
     hurt_at: float = -1.0
     mount_said: list = field(default_factory=list)
     gunners: dict[str, str] = field(default_factory=dict)
-    gunners_alive: int = 0
+    gunners_able: int = 0
     fire_said: dict[str, str] = field(default_factory=dict)
     spotter: bool = False
     impacts: list[dict] = field(default_factory=list)
@@ -769,9 +769,9 @@ class Tracker:
                 out.append(Report(ROUTINE, words))
         gunners = {row[0]: row[2] for row in packet.get("mounted") or [] if row[1] == "gunner"}
         for vehicle in self.gunners:
-            if vehicle not in gunners and packet.get("alive", 0) < self.gunners_alive:
+            if vehicle not in gunners and packet.get("able", 0) < self.gunners_able:
                 out.append(Report(PRIORITY, f"Gunner down on {vehicle or 'the gun'}."))
-        self.gunners, self.gunners_alive = gunners, packet.get("alive", 0)
+        self.gunners, self.gunners_able = gunners, packet.get("able", 0)
         return out
 
     def _order(self, packet: dict, route: dict | None, now: float) -> list[Report]:
@@ -872,16 +872,16 @@ class Tracker:
         return []
 
     def _casualties(self, packet: dict, now: float) -> list[Report]:
-        alive = packet["alive"]
+        able = packet["able"]
         out = []
-        if self.alive >= 0 and alive < self.alive:
+        if self.able >= 0 and able < self.able:
             self.hurt_at = now
             if self.casualties_since < 0:
                 self.casualties_since = now
-        self.alive = alive
+        self.able = able
         if self.casualties_since >= 0 and now - self.casualties_since >= CASUALTY_GROUP_S:
             self.casualties_since = -1.0
-            out.append(Report(PRIORITY, f"Taking casualties, {alive} of {packet['baseline']} effective"
+            out.append(Report(PRIORITY, f"Taking casualties, {able} of {packet['baseline']} effective"
                                         f"{_hurt_words(packet)}."))
         return out
 
