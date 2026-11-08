@@ -2052,6 +2052,17 @@ def test_a_squad_going_in_stops_and_starts_is_moving_though_paused_right_now():
     assert now["under_way"] and reports.answer(now, None, ["position"]) == "Grid 030 030, moving south."
 
 
+def test_a_halted_squad_is_stationary_however_it_got_there():
+    """It said "moving east" for half a minute after "Halted", from the walk before the halt."""
+    tracker = Tracker()
+    for t, y in ((100, 4000), (106, 3990), (112, 3980)):
+        walking(tracker, t, y)
+    fields = packet(pos=[3050, 3980], speed=0.0, leader="Sam Reed")
+    fields["t"] = 118
+    tracker.note_movement(fields, {"kind": "halt", "legs": []})
+    assert not fields["under_way"] and reports.answer(fields, None, ["position"]) == "Grid 030 030, stationary."
+
+
 def test_soldiers_shuffling_about_are_stationary():
     tracker = Tracker()
     for t, y in ((100, 4000), (110, 4006), (120, 3998), (130, 4005)):

@@ -283,7 +283,7 @@ class Runtime:
         if self.t0 is None or self.ended:
             return
         tracker = self._tracker(callsign)
-        tracker.note_movement(packet)
+        tracker.note_movement(packet, self.routes.get(callsign))
         said = tracker.update(packet, self.routes.get(callsign), packet["t"], self.buildings)
         for one in tracker.gone:
             entry = next((entry for entry in self.casualties.values() if entry["id"] == one), None)

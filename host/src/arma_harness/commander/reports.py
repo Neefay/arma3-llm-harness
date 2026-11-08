@@ -517,13 +517,15 @@ class Tracker:
     trail: list[list] = field(default_factory=list)
     trail_leader: str = ""
 
-    def note_movement(self, packet: dict) -> None:
+    def note_movement(self, packet: dict, route: dict | None = None) -> None:
         """Whether it's been getting anywhere lately, and which way, for when it's asked at a moment it's paused."""
         now, pos = packet["t"], packet.get("pos")
         if not pos:
             return
         if packet.get("leader") != self.trail_leader:  # a new leader is somewhere else, without anyone having moved
             self.trail, self.trail_leader = [], packet.get("leader") or ""
+        if (route or {}).get("kind") == "halt":  # it knows it's stopped, whatever it was doing a moment ago
+            self.trail = []
         self.trail = [row for row in self.trail if now - row[0] <= MOVING_OVER_S] + [[now, pos[0], pos[1]]]
         dx, dy = pos[0] - self.trail[0][1], pos[1] - self.trail[0][2]
         packet["under_way"] = math.hypot(dx, dy) >= MOVING_M

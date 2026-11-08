@@ -309,7 +309,8 @@ def play_vehicles(client: Client) -> list[str]:
     # The squad moves off, and its man stays on the gun.
     client.tool("commander_order", to="Hammer", legs=[{"type": "MOVE", "at": "038 039"}])
     text = heard(client, "stays on V1", 30)
-    time.sleep(25)
+    # Measured on arrival: the squad may start on the far side of the gun, and walk right past it on the way.
+    text += heard(client, "Arrived", 180)
     apart = in_game(harness, """
     private _gun = brmh_cmd_vehicles get "V1";
     private _group = brmh_cmd_stations get "Hammer";
@@ -495,7 +496,7 @@ def play_fire(client: Client) -> list[str]:
 
     # A leg wound, which a squad says, and which the game's own measures don't.
     in_game(harness, 'leader (brmh_cmd_stations get "Bravo") setHitPointDamage ["hitLegs", 0.6]; true')
-    assert "Slow going," in hear("hit in the legs", 30)
+    assert "Slow going," in hear("hit in the legs", 90)  # Bravo can be in a fight by now, and slow to say so
     answer = client.tool("commander_ask", to="Bravo", topics=["strength"])["replies"][0]["text"]
     assert "hit in the legs." in answer, answer
 
@@ -880,7 +881,8 @@ def play_casevac_village(client: Client) -> list[str]:
     who = knock("Alpha")
     hear(f"{who}'s down", 40)
     order("Alpha", {"type": "CARRY", "casualties": [listed(who)], "at": "038 038"})
-    text = hear(f"Set {who} down.", 300)
+    # Slow, not stuck: reaching a man at his post among the buildings, then 400 m or so at a carrier's pace.
+    text = hear(f"Set {who} down.", 600)
     assert f"Can't get to {who}" not in text, text[-600:]
 
     # Treating and carrying the same man: the medics wait until he's set down, rather than chase him.
