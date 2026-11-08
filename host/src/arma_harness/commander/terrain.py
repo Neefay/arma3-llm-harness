@@ -18,6 +18,10 @@ SCATTERED_PER_HA = 20
 WOODS_PER_HA = 80
 SCRUB_PER_HA = 50
 COVER_AROUND_M = 50  # cover is judged over the ground around a point, not one tree's worth of it
+# A grid only puts someone within its 100 m square, so ground this close to either end of a sight line can't be said to
+# be in the way: he could be standing on it, or past it.
+SIGHT_SLACK_M = 50
+HILLTOP_NEAR_M = 600  # a higher top within this, from a slope, is worth naming
 _ROAD_WORDS = {"MAIN ROAD": "main road", "ROAD": "road", "TRACK": "track", "TRAIL": "trail"}
 _PLACE_KINDS = {"NameCityCapital": "town", "NameCity": "town", "NameVillage": "village", "NameLocal": "place",
                 "NameMarine": "bay", "Airport": "airfield", "Hill": "hill"}
@@ -160,9 +164,15 @@ class Terrain:
         steepness = "gentle" if rise < 0.10 else "moderate" if rise < 0.25 else "steep"
         lie = ("flat" if rise < 0.03
                else f"a {steepness} slope ({round(rise * 100)}%), falling to the {compass_word(falls)}")
+        top = None
         if rise < 0.15 and self._is_top(x, y):
             lie = "a hilltop"
+        else:
+            top = self.nearest_top(x, y, h)
         words = [f"Grid {grid}: {h} m, {lie}. {self.ground(x, y).capitalize()}."]
+        if top:
+            words.append(f"Hilltop {top[2]} m: {_rough(math.dist((x, y), top[:2]))} m "
+                         f"{compass_word_xy(top[0] - x, top[1] - y)}.")
         road = self.nearest_road(x, y)
         if road and road[0] <= 400:
             where = "on it" if road[0] < 15 else f"{_rough(road[0])} m {compass_word_xy(road[2], road[3])}"
@@ -175,6 +185,19 @@ class Terrain:
             where = "here" if place[0] < 150 else f"{_rough(place[0])} m {compass_word_xy(place[2], place[3])}"
             words.append(f"{place[1]}: {where}.")
         return " ".join(words)
+
+    def nearest_top(self, x: float, y: float, h: float) -> tuple[float, float, int] | None:
+        """The nearest hilltop higher than here, if one is close enough to be the hill this is on."""
+        tops = [top for top in self.spot_heights(limit=200, apart_m=150)
+                if top[2] >= h + 5 and 60 <= math.dist((x, y), top[:2]) <= HILLTOP_NEAR_M
+                and self._uphill_to(x, y, h, top)]
+        top = min(tops, key=lambda top: math.dist((x, y), top[:2]), default=None)
+        named = top and any(math.dist(top[:2], (px, py)) <= 100 for _, _, px, py in self.places)
+        return None if named else top  # a named hill is said by its name, with the places
+
+    def _uphill_to(self, x: float, y: float, h: float, top: tuple[float, float, int]) -> bool:
+        """Whether the way to a top never drops below here: a top across a valley is another hill."""
+        return all(self.height(x + (top[0] - x) * k / 8, y + (top[1] - y) * k / 8) >= h - 2 for k in range(1, 8))
 
     def _is_top(self, x: float, y: float) -> bool:
         h = self.height(x, y)
@@ -189,9 +212,12 @@ class Terrain:
         eye_a, eye_b = self.height(ax, ay) + EYE_M, self.height(bx, by) + EYE_M
         length = math.hypot(bx - ax, by - ay)
         steps = max(2, int(length / (self.step / 4)))
+        slack = min(SIGHT_SLACK_M, length / 4) / length if length else 0
         worst = None
         for k in range(1, steps):
             t = k / steps
+            if t < slack or t > 1 - slack:
+                continue
             x, y = ax + t * (bx - ax), ay + t * (by - ay)
             above = self.height(x, y) - (eye_a + t * (eye_b - eye_a))
             if above > 0 and (worst is None or above > worst[0]):

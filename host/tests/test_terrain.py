@@ -95,6 +95,59 @@ def test_the_map_draws_the_ground_under_the_beliefs():
     assert Image.open(BytesIO(far)).convert("RGB").getpixel((510, 490)) == map_mod._PAPER
 
 
+def flat(n=20, step=10, bumps=()) -> Terrain:
+    """Level ground at 0 m, 200 m across, with some cells raised: [(i, j, height)]."""
+    cells = [[0, 0, 0, 0] for _ in range(n * n)]
+    for i, j, h in bumps:
+        cells[j * n + i][0] = h
+    return Terrain(0, 0, step, n, cells)
+
+
+def test_a_crest_within_a_grid_square_of_either_end_is_not_in_the_way():
+    """Stratis: a 2 m lip in the target's own square was called the ground hiding it, but a grid only puts someone
+    within 100 m, so he could be standing on that lip."""
+    near_the_end = flat(bumps=[(18, 10, 3)])  # x 185, 10 m short of the end
+    assert near_the_end.line_of_sight((5, 105), (195, 105))[0]
+    in_the_middle = flat(bumps=[(10, 10, 3)])
+    clear, (x, _, h) = in_the_middle.line_of_sight((5, 105), (195, 105))
+    assert not clear and 95 <= x <= 115 and h > 2
+
+
+def test_a_slope_names_the_hilltop_it_rises_to():
+    t = island()
+    t.places.remove(["Hill 160", "Hill", 3000, 3200])
+    assert "Hilltop 158 m: 250 m north." in t.describe(3000, 2950, "030 029")
+    t.places.append(["Hill 160", "Hill", 3000, 3200])  # named, it's said once, by its name
+    named = t.describe(3000, 2950, "030 029")
+    assert "Hilltop" not in named and "Hill 160: 250 m north." in named
+    assert "Hilltop" not in t.describe(3025, 3225, "030 032")  # on it already
+    assert "Hilltop" not in t.describe(3800, 3800, "038 038")  # flat, and the hill is too far to be this one's
+
+
+def test_labels_never_land_on_each_other():
+    from PIL import ImageDraw
+
+    labels = map_mod._Labels(ImageDraw.Draw(Image.new("RGB", (map_mod.SIZE, map_mod.SIZE))))
+    font = map_mod._font(15)
+    for text in ("E1 MG in the HQ", "O1 Camp Maxwell", "H1 patrol?"):
+        assert labels.put((500, 500), text, (0, 0, 0), font, map_mod.AROUND, True)
+    placed = labels.taken[1:]
+    assert all(not (a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3])
+               for k, a in enumerate(placed) for b in placed[k + 1:])
+    # A label that doesn't have to be there is left out rather than drawn over the others.
+    crowded = [(500, 500)] * 12
+    dropped = [labels.put(at, "B12", (0, 0, 0), font, map_mod.CENTRED, False) for at in crowded]
+    assert False in dropped
+
+
+def test_nothing_is_drawn_past_the_edge_of_the_sheet():
+    t = island()
+    t.roads.append([4100, 3030, 4500, 3030, "ROAD"])  # off the sheet, which ends at 040
+    drawn = Image.open(BytesIO(map_mod.render([4200, 3000], 400, [], [], {}, {}, "test", terrain=t))).convert("RGB")
+    assert drawn.getpixel((662, 462)) == map_mod._PAPER  # x 4330, on that road
+    assert drawn.getpixel((250, 300)) == map_mod._SHEET_EDGE  # x 4000: the sheet's edge, over the grid line there
+
+
 def terrain_battle(tmp_path) -> Battle:
     b = Battle(tmp_path, ao={"at": "030 030", "radius": 600})
     b.runtime.terrain = island()
