@@ -19,7 +19,7 @@ MAX_RADIUS_M = 300
 ORDER_TYPES = set(LEG_TYPES) | SINGLE_LEG | {"PATROL", "HALT", "POSTURE", "MOUNT", "DISMOUNT", "FIRE_MISSION",
                                              "CHECK_FIRE", "CARRY", "UNLOAD", "TREAT", "AID_POST"}
 CARE_ORDERS = {"CARRY": "carry", "UNLOAD": "unload", "TREAT": "treat", "AID_POST": "post"}
-STANDS_ALONE = {"HALT", "POSTURE", "FIRE_MISSION", "CHECK_FIRE"}
+STANDS_ALONE = {"HALT", "POSTURE", "CHECK_FIRE"}  # done on receipt, so there's nothing for a next step to follow
 ENDLESS = {"OCCUPY", "CORDON", "ATTACK", "DEFEND", "PATROL_AREA", "SWEEP", "PATROL"}  # nothing could ever follow these
 AMMO = {"HE", "SMOKE"}
 MAX_FIRE_ROUNDS = 32

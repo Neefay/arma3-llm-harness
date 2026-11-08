@@ -2663,6 +2663,14 @@ def test_each_step_starts_when_the_last_has_really_finished(tmp_path):
     assert b.runtime.chains == {}
 
 
+def test_a_chain_says_who_stays_on_a_gun(tmp_path):
+    b = chained(tmp_path)
+    b.runtime.order({"to": "Alpha", "legs": [DRIVE, {"type": "FIRE_MISSION", "at": "041 041"}]})
+    b.advance(102, order="O-0001", mounted=[["V1", "gunner", "Pat Vane", True]])
+    assert any(line.startswith("Copy, moving to grid 050 030, then fire mission") and "Pat Vane stays on V1." in line
+               for line in said(b)), said(b)
+
+
 def test_a_chain_is_finished_with_after_its_last_step_is_sent(tmp_path):
     b = chained(tmp_path)
     b.runtime.order({"to": "Alpha", "legs": [MOUNT, DRIVE]})
@@ -2832,6 +2840,10 @@ def test_a_carry_that_fails_stops_the_chain(tmp_path):
     assert sent(b) == ["CARRY"] and "Stopping there, waiting for orders." in said(b)
 
 
+def test_a_boarding_stopped_by_a_new_order_is_said():
+    assert reports._boarding_words(["V1", "stopped", "", []]) == "Stopped getting on V1."
+
+
 def test_men_who_cant_get_off_are_named_and_stop_a_chain():
     status = ["V1", "stuck", "", ["Sam Reed"]]
     assert reports._boarding_words(status) == "Can't get Sam Reed off V1."
@@ -2865,7 +2877,8 @@ def test_a_chain_survives_a_restart(tmp_path):
 
 
 CHAINERS = {"Alpha": {"capabilities": ["MOVE", "HOLD", "SENTRY", "SEARCH", "MOUNT", "DISMOUNT", "DEFEND", "OCCUPY",
-                                       "CARRY", "HALT", "POSTURE", "FIRE_MISSION", "PATROL"], "at": "030 030"}}
+                                       "CARRY", "HALT", "POSTURE", "FIRE_MISSION", "CHECK_FIRE", "PATROL"],
+                      "at": "030 030"}}
 
 
 def chain_check(*legs, **fields):
@@ -2911,9 +2924,29 @@ def test_a_mistake_in_a_later_step_is_refused_at_once():
         chain_check(MOUNT, DRIVE, {"type": "DISMOUNT", "vehicle": "V9"})
 
 
-def test_fire_orders_go_alone():
-    with pytest.raises(Invalid, match="FIRE_MISSION must be the only leg"):
-        chain_check(MOUNT, {"type": "FIRE_MISSION", "at": "041 041"})
+def test_check_fire_goes_alone_and_a_fire_mission_can_be_a_step():
+    with pytest.raises(Invalid, match="CHECK_FIRE must be the only leg"):
+        chain_check(MOUNT, {"type": "CHECK_FIRE"})
+    checked = chain_check(MOUNT, {"type": "MOVE", "at": "034 030"}, {"type": "FIRE_MISSION", "at": "041 041"})
+    assert [one["mode"] for one in checked["checked"]] == ["mount", "replace", "fire"]
+
+
+def fire_row(order, state, gun="V1"):
+    return [gun, order, state, "", "HE", 3, 3, 30, 0]
+
+
+@pytest.mark.parametrize("rows, outcome", [
+    ([fire_row("O", "firing")], None),
+    ([fire_row("O", "holding")], None),
+    ([fire_row("O", "done")], "done"),
+    ([fire_row("O", "done"), fire_row("O", "firing", "V2")], None),
+    ([fire_row("O", "done"), fire_row("O", "out", "V2")], "failed"),
+    ([fire_row("O", "cantlay")], "failed"),
+    ([fire_row("O", "unable")], "failed"),
+    ([fire_row("Other", "done")], None),
+])
+def test_when_a_fire_step_is_over(rows, outcome):
+    assert reports.step_outcome("fire", "O", {"missions": rows}, False) == outcome
 
 
 def test_a_chain_cant_be_appended():

@@ -43,8 +43,9 @@ LEGS_HELP = (
     "What the squad does, in order. Each leg starts when the one before has finished, so one order can be a whole "
     "task, such as MOUNT, MOVE, DISMOUNT, OCCUPY or CARRY, MOUNT, MOVE, DISMOUNT, UNLOAD. Prefer this to sending steps "
     "one at a time: the reply gives the total time, and you don't have to wake for each step, while a separate order "
-    "sent too soon replaces what the squad was doing. If a step fails, the squad says so and waits for you. HALT, "
-    "POSTURE, FIRE_MISSION and CHECK_FIRE go alone. HOLD and the orders that run until replaced can only go last: use "
+    "sent too soon replaces what the squad was doing. If a step fails, the squad says so and waits for you. A "
+    "FIRE_MISSION can be a step, such as MOUNT, MOVE, FIRE_MISSION for a gun that has to move first. HALT, POSTURE "
+    "and CHECK_FIRE go alone. HOLD and the orders that run until replaced can only go last: use "
     "MOVE with hold_for to wait somewhere on the way.")
 _STRING = {"type": "string"}
 _LEG = {

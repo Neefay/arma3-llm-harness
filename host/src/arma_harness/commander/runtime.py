@@ -843,6 +843,8 @@ class Runtime:
                 riding = not route.get("seat")
             elif mode == "dismount":
                 riding = False
+            elif mode == "fire":
+                sure = False  # how long the guns take isn't known until they fire
             elif mode in reports._CARE_MODES:
                 sure = False
                 # Unloading happens where they are, which by then needn't be where the commander's list has the truck.

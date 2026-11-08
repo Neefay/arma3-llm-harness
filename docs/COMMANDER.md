@@ -389,7 +389,7 @@ An order's legs run in order, each starting when the one before has really finis
 | When a step is over | Everyone's aboard or off, the route's finished, or every man named has a result. The squad's own orders about the wounded count, so `CARRY, MOUNT` waits until both men are loaded |
 | A step fails | The squad reports it, adds `Stopping there, waiting for orders.`, and drops the rest. A truck doesn't leave without the men it was waiting for. A man dying or waking doesn't count as failing |
 | Cancelling | A new order that moves or stops the squad, or `MOUNT` without a named seat, `DISMOUNT` or another chain, cancels the rest, and the reply says so: `Halted at grid 052 060. Dropping the rest: moving to grid 054 060, then getting off.` `POSTURE`, fire orders, appended legs and separate orders about the wounded don't |
-| Can't be chained | `HALT`, `POSTURE`, `FIRE_MISSION`, `CHECK_FIRE`. Whether "move up and fire" should chain is left for later |
+| Can't be chained | `HALT`, `POSTURE`, `CHECK_FIRE`, which are done on receipt. `FIRE_MISSION` can be a step: "move up and fire" is `MOVE, FIRE_MISSION`, and the plan stops if any gun doesn't fire every round |
 | Must go last | `OCCUPY`, `CORDON`, `ATTACK`, `DEFEND`, `PATROL_AREA`, `SWEEP`, `PATROL`, and `HOLD`, because they run until replaced. `SENTRY` can go earlier, since it ends when an enemy appears, and so can `MOVE` with `hold_for` |
 
 A later step is still a squad order, so it can call off a separate `CARRY` sent while the chain was running, as any newer order would.

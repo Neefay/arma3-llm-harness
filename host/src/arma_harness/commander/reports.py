@@ -391,10 +391,22 @@ _CARE_FAILED = {("carry", "wrecked"), ("carry", "no bearer"), ("carry", "can't r
                 ("treat", "no medic"), ("treat", "can't find"), ("treat", "can't reach"), ("post", "no medic"),
                 ("post", "medic down"), ("post", "can't reach")}
 _CARE_MODES = {"carry", "unload", "treat", "post"}
+_FIRE_PENDING = {"firing", "holding"}
+
+
+def _fire_outcome(order: str, packet: dict) -> str | None:
+    """A fire step is over when every gun's mission has ended. Anything short of every round fired stops the plan: the
+    commander said what to fire, and something else happened."""
+    states = [row[2] for row in packet.get("missions") or [] if row[1] == order]
+    if not states or any(state in _FIRE_PENDING for state in states):
+        return None
+    return "done" if all(state == "done" for state in states) else "failed"
 
 
 def step_outcome(mode: str, order: str, packet: dict, route_done: bool) -> str | None:
     """"done", "failed", or None while it's still going."""
+    if mode == "fire":
+        return _fire_outcome(order, packet)
     if mode in ("mount", "dismount"):
         word = (packet.get("mount") or ["", ""])[1]
         if word in ("on", "off", "none"):
@@ -778,7 +790,9 @@ class Tracker:
                 out.append(Report(ROUTINE, said))
             else:
                 self.leg, self.on_station, self.route_done, self.checked = 0, [], False, []
-                words = (route or {}).get("says") or (
+                says = (route or {}).get("says")
+                # A man staying on a gun is worth saying whatever the order, so a chain's reply says it too.
+                words = says + _who_stays(packet, route) if says else (
                     _acknowledgement(route, grid) + _who_stays(packet, route) + self._how_long(packet, route, now))
                 words = stepped(words, bool((route or {}).get("then")), (route or {}).get("dropping", ""))
                 out.append(Report(ROUTINE, words, grid if _is_stop(route) else None))
@@ -914,6 +928,7 @@ def _boarding_words(status: list) -> str | None:
         "on": f"{who} on {vehicle}{place}." + (f" {spare} didn't fit." if spare else ""),
         "none": "Nobody's on a vehicle.",
         "off": f"Off {vehicle}.",
+        "stopped": f"Stopped getting on {vehicle}.",
         "stuck": f"Can't get {who} off {vehicle}.",
     }
     return said.get(word)

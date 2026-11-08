@@ -504,6 +504,14 @@ def play_fire(client: Client) -> list[str]:
     fire(to="Anvil", at="040 050", rounds=2)
     text = hear("Unable, can't lay on that target.", 60)
 
+    # Move up and fire, as one order: the gunner stays on the mortar while the rest move, then the fire step runs.
+    client.tool("commander_order", to="Hammer", legs=[{"type": "MOVE", "at": "020 022"},
+                                                      {"type": "FIRE_MISSION", "at": "028 020", "rounds": 1}])
+    text = hear("then fire mission, 1 HE at grid 028 020.", 30)
+    assert "stays on V1" in text, text[-600:]
+    text = hear("Rounds complete.", 240)  # the step starting, the shot and the end can all come in one wake
+    assert "Now fire mission, 1 HE at grid 028 020." in text, text[-600:]
+
     # A gunner who's down isn't a gunner, though he's alive and still in his seat. Mid-mission, then from the start.
     fire(at="028 020", rounds=8, guns=["V1"])
     hear("Shot,", 60)
@@ -780,6 +788,14 @@ def play_casevac_chained(client: Client) -> list[str]:
     aboard = in_game(harness, """{vehicle _x isNotEqualTo _x} count units (brmh_cmd_stations get "Angel")""")
     print("HALTED, list and aboard", boarding, "then aboard", aboard, flush=True)
     assert boarding[0] == 0 and aboard == boarding[1], (boarding, aboard)  # nobody else climbs in
+
+    # A squad order takes back the men walking to their seats, and says so.
+    order("Angel", mount_v2)
+    hear("Copy, mounting V2.", 30)
+    order("Angel", {"type": "MOVE", "at": "020 061"})
+    hear("Stopped getting on V2.", 30)
+    boarding = in_game(harness, """count ((brmh_cmd_stations get "Angel") getVariable ["brmh_cmd_mountList", []])""")
+    assert boarding == 0, boarding
 
     text = hear("Listed as C", 60, 2)
     assert "C1" in text and "C2" in text, text

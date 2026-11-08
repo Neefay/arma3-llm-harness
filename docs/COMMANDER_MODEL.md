@@ -210,7 +210,7 @@ Task ::= Trip(Waypoint+) | Order
 ```
 
 - **P1.** Every step before the last is `Finite` or `Triggered`, including every waypoint of a trip.
-- **P2.** `HALT`, `POSTURE` and the `Guns` lane are single-step plans.
+- **P2.** `Instant` orders are single-step plans.
 - **P3.** A station has at most one plan, in its Course lane. A Course order replaces it, and the station says what was dropped.
 - **P4.** A plan is validated whole when issued. Each step starts when the one before it has ended `Done` or `Moot`, and a `Failed` step ends the plan.
 
@@ -384,6 +384,7 @@ stateDiagram-v2
   state "going off" as going_off
   state "off" as off
   state "stuck" as stuck
+  state "stopped" as stopped
   [*] --> going: MOUNT
   [*] --> wrecked: vehicle destroyed
   [*] --> noseat: no such seat
@@ -394,7 +395,7 @@ stateDiagram-v2
   going --> nobody: none aboard
   going --> unreachable: deadline
   going --> wrecked: vehicle destroyed
-  going --> [*]: HALT or DISMOUNT
+  going --> stopped: Course order
   [*] --> going_off: DISMOUNT
   [*] --> none: DISMOUNT, none aboard
   going_off --> off: all off

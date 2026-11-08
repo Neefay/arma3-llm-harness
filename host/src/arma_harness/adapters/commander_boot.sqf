@@ -397,10 +397,13 @@ brmh_cmd_fnc_startMount = {
 	_group setVariable ["brmh_cmd_mount", [_key, "going", _kind, []]];
 };
 
-// Those still on their way to a seat stop. Anyone already in it stays there.
+// Those still on their way to a seat stop. Anyone already in it stays there. A boarding stopped partway is said to have been.
 brmh_cmd_fnc_stopMount = {
 	params ["_group"];
 	private _vehicle = _group getVariable ["brmh_cmd_mountVehicle", objNull];
+	private _list = _group getVariable ["brmh_cmd_mountList", []];
+	private _key = (_group getVariable ["brmh_cmd_mount", []]) param [0, ""];
+	private _kind = (_group getVariable ["brmh_cmd_mount", []]) param [2, ""];
 	{
 		if (alive (_x # 0) and {
 			vehicle (_x # 0) isNotEqualTo _vehicle
@@ -408,9 +411,13 @@ brmh_cmd_fnc_stopMount = {
 			unassignVehicle (_x # 0);
 			[_x # 0] orderGetIn false;
 		};
-	} forEach (_group getVariable ["brmh_cmd_mountList", []]);
+	} forEach _list;
 	_group setVariable ["brmh_cmd_mountList", []];
-	_group setVariable ["brmh_cmd_mount", []];
+	if (_list isNotEqualTo []) then {
+		_group setVariable ["brmh_cmd_mount", [_key, "stopped", _kind, []]];
+	} else {
+		_group setVariable ["brmh_cmd_mount", []];
+	};
 };
 
 brmh_cmd_fnc_stepMount = {
@@ -1066,13 +1073,13 @@ brmh_cmd_fnc_order = {
 	};
 	if (_mode in ["replace", "halt"]) then {
 		[_group] call brmh_cmd_fnc_callOffCare;
+		[_group] call brmh_cmd_fnc_stopMount;
 	};
 	[_group, _posture] call brmh_cmd_fnc_posture;
 	if (_mode isEqualTo "posture") exitWith {
 		true
 	};
 	if (_mode isEqualTo "halt") exitWith {
-		[_group] call brmh_cmd_fnc_stopMount;
 		[_group] call brmh_cmd_fnc_clearRoute;
 		// Clearing waypoints doesn't stop a walking group, and doFollow and doMove don't either. doStop does.
 		doStop (units _group);

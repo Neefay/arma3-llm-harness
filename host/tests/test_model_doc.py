@@ -105,7 +105,7 @@ def test_the_table_has_every_order_type_once():
 
 @pytest.mark.parametrize("name, in_the_code, from_the_table", [
     ("ENDLESS", lambda: orders.ENDLESS, lambda: where(ending="Standing") - {"HOLD"}),
-    ("STANDS_ALONE", lambda: orders.STANDS_ALONE, lambda: where(ending="Instant") | where(lane="Guns")),
+    ("STANDS_ALONE", lambda: orders.STANDS_ALONE, lambda: where(ending="Instant")),
     ("CARE_ORDERS", lambda: set(orders.CARE_ORDERS), lambda: where(lane="Detail")),
     ("PLACING_ORDERS", lambda: reports.PLACING_ORDERS, lambda: where(real="Placing")),
     ("TASK_ORDERS", lambda: reports.TASK_ORDERS, lambda: where(real="CBA")),
