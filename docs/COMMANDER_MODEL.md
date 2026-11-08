@@ -8,11 +8,13 @@
 
 Commander mode is a loop of five functions, and only one of them is the LLM.
 
-```text
-              perceive             speak               hear             decide              act
-   Truth ---------------> Knowledge --------> Utterance ------> Belief ---------> Act ---------> Truth'
-             the engine        the harness                the commander's      the LLM      the harness
-                                                              records                      and the engine
+```mermaid
+flowchart LR
+  T[Truth] -->|"perceive<br/>the engine"| K[Knowledge]
+  K -->|"speak<br/>the harness"| U[Utterance]
+  U -->|"hear<br/>the commander's records"| B[Belief]
+  B -->|"decide<br/>the LLM"| A[Act]
+  A -->|"act<br/>the harness and the engine"| T2["Truth, changed"]
 ```
 
 | Function | Type | Who owns it | When it's wrong |
@@ -137,9 +139,13 @@ Situation = Riding(Vehicle) | Busy(Task) | Apart(distance)     while Able
 
 Which gives **strength as a family of sets, not a number**:
 
-```text
-Nominal ⊇ Living ⊇ Able ⊇ Free
-                  Able ⊇ Present          Free and Present overlap, and neither contains the other
+```mermaid
+flowchart TD
+  N["Nominal<br/>everyone it started with, and anyone who's joined"] -->|contains| L["Living<br/>Able and Down"]
+  L -->|contains| A["Able<br/>could act if asked"]
+  A -->|contains| F["Free<br/>on foot, not on a task"]
+  A -->|contains| P["Present<br/>riding, or within 100 m of the leader"]
+  F -.-|"overlap: neither contains the other"| P
 ```
 
 | Set | Means | Who needs it |
@@ -414,14 +420,22 @@ So a timer, a timed order, a repeating check-in and the next step of a chain are
 
 ### 8.5 Life of a task
 
-```text
-Sent → Received → Active → Milestone* → Ended(Outcome)
-
-Outcome = Done
-        | Moot(why)         the man died, or woke. Nobody failed, and the plan carries on
-        | Failed(why)       can't be done. A plan stops here
-        | Superseded(by)    another claim took its men
-        | Silent            nobody's left to say
+```mermaid
+stateDiagram-v2
+  [*] --> Sent
+  Sent --> Received
+  Received --> Active
+  Active --> Active: a milestone, such as on station
+  Active --> Done
+  Active --> Moot: the man died or woke, and the plan carries on
+  Active --> Failed: it can't be done, and a plan stops here
+  Active --> Superseded: another claim took its men
+  Active --> Silent: nobody's left to say
+  Done --> [*]
+  Moot --> [*]
+  Failed --> [*]
+  Superseded --> [*]
+  Silent --> [*]
 ```
 
 The important property is that **only `Silent` may end a task without speech**. A task that ends without a word is the worst thing that can happen to a commander, because it goes on believing something false. Six real cases were exactly that, and each was fixed by making the ending spoken: the medic who forgot a man still on a truck, the chain that would have been dropped quietly, the boarding that went on after "Halted", a man who died waiting his turn for a medic, the last medic being lost with men still waiting, and a timed order that couldn't go out, which only the operator's log heard about.
