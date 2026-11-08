@@ -84,11 +84,11 @@ def test_every_machine_in_the_list_has_a_chart():
             "server"} == charts
 
 
-# -- the order table in section 8.2 --------------------------------------------------------------------------------
+# -- the order table in section 7.2 --------------------------------------------------------------------------------
 
 def order_table() -> dict[str, dict[str, str]]:
     """Each order's lane, ending and realisation, as the model's table gives them."""
-    section = MODEL[MODEL.index("### 8.2 All 22 orders"):MODEL.index("### 8.3")]
+    section = MODEL[MODEL.index("<!-- order-table -->"):MODEL.index("### 7.3")]
     rows = re.findall(r"^\| `(\w+)` \| ([^|]+) \| ([^|]+) \| [^|]+ \| ([^|]+) \|$", section, flags=re.M)
     return {name: {"lane": lane.split(",")[0].strip(), "ending": ending.strip(), "real": real.strip()}
             for name, lane, ending, real in rows}
