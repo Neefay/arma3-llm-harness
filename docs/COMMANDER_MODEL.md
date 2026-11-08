@@ -1,6 +1,6 @@
 # Commander Mode: the abstract model
 
-**Status:** a design, for the owner to react to. Nothing here is implemented as written, though almost all of it describes what the code already does. Written 2026-11-07.
+**Status:** a model of the system as built, checked against the code, with the places they still disagree in [section 13](#13-where-the-code-and-the-model-disagree). Some of its suggestions aren't built, and [section 15](#15-questions-for-you) has open questions for the owner. Updated 2026-11-07.
 
 **Audience:** the owner, and anyone reasoning about commander mode who wants the shape of it before the detail. [COMMANDER.md](COMMANDER.md) remains the reference for how it's built. This page asks what kinds of thing exist at all, and which rules follow from them.
 
@@ -82,10 +82,10 @@ Every datum in the system lives in exactly one stratum, and most design question
 | Knowledge(Alpha) | Under us, we're driving it |
 | Belief | V1, grid 061 060, because that's the last anyone said |
 
-This gap is the point of the game, not a defect, and things this week came from getting it wrong in both directions:
+This gap is the point of the game, not a defect, and faults have come from getting it wrong in both directions:
 
 - **Too much, nearly:** updating the commander's vehicle list from a moving squad would have been an easy fix for a wrong estimate, and it would have given the commander a live tracker for that squad. It was fixed inside the squad's reply, where the knowledge really is.
-- **Too much, in fact:** checking this page against the code found that the casualty list *did* do that. Every packet rewrote a casualty's grid and the time of his "report", so the briefing tracked his carriers live, in a fight or not, and a man left behind vanished from the list when he died, with nobody having said so. Both are now fixed: the list holds what's been said, and nothing else.
+- **Too much, in fact:** the casualty list did do that. Every packet rewrote a casualty's grid and the time of his "report", so the briefing tracked his carriers live, and a man left behind vanished from the list when he died, though nobody had said so. The list now holds what's been said, and nothing else.
 - **Too little:** the squad itself quoted a 2 km walk to a truck it was sitting in, because the estimate read `Belief` when it should have read `Knowledge`.
 
 **Rule:** a squad's speech is computed from `Knowledge`. Two narrow exceptions exist, and both are honest: what the commander told it (an order's own grid, and where its list has a vehicle when it's sent to one), and a name from the commander's list, which is how the two parties refer to the same thing.
@@ -281,7 +281,7 @@ It doesn't decide what wakes the commander, or the order lines are read in, whic
 
 This is the centre of the model, and the part checked hardest against the code.
 
-### 8.1 Four independent properties
+### 8.1 Four properties
 
 Every order type is described by four properties. The first three are the design, and the fourth comes after them.
 
@@ -337,7 +337,7 @@ They aren't fully independent, and it's better to say so. A `Detail` is always `
 
 \* "Squad" means everyone but gun crews, who stay on their gun and are announced as staying: `Pat Vane stays on V1.`
 
-**This table was checked.** The order-type sets in the code's constants can be computed from it:
+**This table is checked.** Every order-type set in the code's constants can be computed from it, and [test_model_doc.py](../host/tests/test_model_doc.py) fails if one stops matching:
 
 | Set in the code | Computed from the table |
 |---|---|
@@ -350,7 +350,7 @@ They aren't fully independent, and it's better to say so. A `Detail` is always `
 | `SINGLE_LEG` | `Placing` + `CBA` + `CLEAR` |
 | `SINGLE_LEG_ORDERS` | The same set as `SINGLE_LEG`, written a second time in another file |
 
-None of them disagree. So today's eight sets, in two files, are one table seen from different angles, with a few more written inline in the code as literals such as `("HOLD", "SENTRY")`. "Must go last in a chain" isn't a rule anyone needs to remember: it follows from `Standing`.
+So eight sets, in two files, are one table seen from different angles, with a few more written inline in the code as literals such as `("HOLD", "SENTRY")`. "Must go last in a chain" isn't a rule anyone needs to remember: it follows from `Standing`.
 
 ### 8.3 Claims: the one rule behind "newest wins"
 
@@ -358,7 +358,7 @@ The commander's rule, as we've been describing it, has a list of exceptions: a n
 
 > **An order takes the men it's entitled to. A squad order is entitled to everyone. A detail is entitled only to men who are free. Whatever loses men it can't do without stops.**
 
-"The newest order wins" is what that looks like from the commander's side for squad orders, and it isn't the rule itself. A first draft of this page said the newest claim always wins, and that's false: a second detail can't take men from the first. It gets whoever's left, or waits.
+"The newest order wins" is what that looks like from the commander's side for squad orders, and it isn't the rule itself. Between two details, the first keeps its men: the second gets whoever's left, or waits.
 
 | Situation | Claims | Result under the rule | Today |
 |---|---|---|---|
@@ -371,7 +371,7 @@ The commander's rule, as we've been describing it, has a list of exceptions: a n
 | `TREAT`, then `HOLD` | `HOLD` takes the medics | Treatment stops | Same |
 | `CARRY`, then a second `CARRY` | Only men still free | The second gets who's left, or "Nobody free" | Same |
 | `CARRY`, then `TREAT` | Medics carrying aren't free | Treatment waits for them | Same |
-| `MOUNT` with a seat, during a carry | Takes one free man | Nothing stops | Same, since this review |
+| `MOUNT` with a seat, during a carry | Takes one free man | Nothing stops | Same |
 | A man who's already someone's job | The casualty is taken too | "Already being moved", from anyone but the same squad's new `CARRY` | Same |
 | `MOVE` during `MOUNT` | `MOVE` takes those still walking to a seat | **Boarding should stop** | **Different**: see [section 13](#13-where-the-code-and-the-model-disagree) |
 
@@ -430,18 +430,18 @@ The important property is that **only `Silent` may end a task without speech**. 
 
 ### 8.6 The machines underneath
 
-Every task, and a good deal else, is carried out by a state machine. None of them is declared as one. Each is a string field, a set of flags, or a variable whose presence means something, stepped by a timer. This is the list, from a hunt through the code on 2026-11-07.
+Every task, and a good deal else, is carried out by a state machine. None of them is declared as one. Each is a string field, a set of flags, or a variable whose presence means something, stepped by a timer. There are 21, each charted in the [appendix](#appendix-state-charts).
 
 **Game side, per squad or per job:**
 
 | Machine | Held as | States | Every path ends? |
 |---|---|---|---|
 | Carry | `"state"` in a hashmap | going, fetching, lifting, carrying, working, loading, done | Yes: each state has a timeout or a give-up |
-| Treat job | `"state"`, plus a queue | queued, going, working, then up or released | Yes, since the queue was fixed this week |
+| Treat job | `"state"`, plus a queue | queued, waiting, going, working, then up or released | Yes |
 | Aid post | `"state"` | going, building, then up or given up | Yes |
 | Fire mission | `"state"` | firing, holding, then done, out, can't lay, gunner, destroyed, stopped | Yes |
 | Boarding | `brmh_cmd_mount` `[vehicle, word, …]` and a list | going, then on, taken, unreachable, wrecked, nobody | Yes, with a deadline |
-| Getting off | The same variable | going off, off, none, stuck | Yes, since a 30 s deadline was added |
+| Getting off | The same variable | going off, off, none, stuck | Yes, with a deadline |
 | Clearing | Whether `clearQueue` exists, plus `clearLeft` and per-man deadlines | idle, between buildings, in a building, done | Yes, while anyone's able |
 | Placing | `placed` as -1, 0 or 1 | idle, walking to spots, in position | Yes, with a deadline |
 | CBA task | `task` flag, `releaseUntil` | running, being released | Released by the next order |
@@ -455,7 +455,7 @@ Every task, and a good deal else, is carried out by a state machine. None of the
 | The battle | `mission_t`, `t0`, `ended`, `restarted`, `game_lost_since` | not ready, ready, running, ended, plus "game lost" over any of them. A restart is in practice an end: nothing re-enrols the stations |
 | The commander's attention | `WakeLogic` | waiting, debouncing, in a turn, turn assumed over |
 | A chain | `chains[callsign]` | sent, seen by the game, next step, failed, finished |
-| An objective | `objectives_due`, `objectives_done` | not met, met and waiting out the grace period, confirmed. Since this week, "met" can go back to "not met" |
+| An objective | `objectives_due`, `objectives_done` | not met, met and waiting out the grace period, confirmed. "Met" goes back to "not met" if it stops being true |
 | A squad's order | `Tracker` fields `order`, `leg`, `route_done`, `on_station` | acknowledged, under way, passing, arrived or on station, done |
 | Contact | `contact_active`, `contact_seen`, `contact_said` | none, in contact, lost |
 | A casualty on the list | Its entry's `state` and `said_*` fields | listed, located again, gone |
@@ -463,7 +463,138 @@ Every task, and a good deal else, is carried out by a state machine. None of the
 | Speech in a fight | The outbox | said now, or held until its delay is up |
 | The server's battle | `Server.runtime` | none yet, loaded, replaced |
 
-**What the hunt found.** Each of these comes from two machines touching the same thing without agreeing, and every one is predicted by the claims rule in [section 8.3](#83-claims-the-one-rule-behind-newest-wins). That's a better test of the model than anything else on this page.
+The worst faults in these have all been one kind: two machines touching the same thing without agreeing, such as clearing handing a room to a man carrying someone. Four were found and fixed, and they're listed under [how this page was checked](#how-this-page-was-checked). Each was a breach of the claims rule.
+
+## 9. Time and attention
+
+```text
+Clock     = MissionTime                 runs whatever anyone is doing
+Attention = Turn*                       the commander exists only in turns
+Turn      = Wake × Briefing × Act* × End
+Wake      = Timer(note) | Messages(n) | Notice(Higher)
+```
+
+There's no game loop that waits for the commander. **Thinking costs mission time**, and that's a mechanic and not a limitation. Three things follow directly:
+
+| Consequence | How it shows up |
+|---|---|
+| Deciding when to look again is part of commanding | No fixed interval, and a turn that ends with no timer has to say so |
+| Work should be delegated downward where it can be | Chains, timed orders, and squads that act without being told |
+| Old information is normal | Every listing has an age, and reports can lag by half a minute or so in a fight |
+
+`Briefing` is a function, `Belief × new Utterances → text`, and it's the only thing that makes a turn self-contained. Since it's pure, a new session can take over from the records. That's what "all memory is written down" amounts to.
+
+## 10. Scenarios
+
+A scenario is a value, and a battle is that value plus a commander.
+
+```text
+Scenario = Forces × Assets × Enemies × Objective* × Failure? × TimeLimit × Events × Dials × Brief
+
+Objective  = Text × Predicate(Truth)      judged by Higher, on truth, with a short grace period
+Predicate  = AllAt(Stations, Place, on_foot?)     every Living man within reach of it. If on_foot, nobody's
+                                                  riding or down either. At least one must be Able
+           | Eliminated                           no enemy in the scenario still Able
+           | Reached(Station, Place)              its first Able man got there. A simple check, for simple scenarios
+Failure    = all stations lost                    none of them with anyone Able
+Event      = At(time) × World action              a man going down, a squad being lost
+```
+
+**Objectives are the one thing judged on truth,** which is why they have to be careful about which set they count: `AllAt` counts `Living`, and `Eliminated` counts `Able`. For enemies, down is out. For your own, down is still yours. That asymmetry is correct, and it's exactly the distinction the false win got wrong.
+
+**The brief and the objective can differ,** and they did: `casevac_rv` asks for a rendezvous in its text, and only checks that all six reach the objective. Both Haiku and Sonnet noticed, in effect, and skipped the rendezvous in some runs. That's allowed: the brief is advice, and the predicate is the mission.
+
+**Dials** are what a scenario can turn without any new code:
+
+| Dial | Values today | Reserved |
+|---|---|---|
+| Delivery | Debounce, `hold` or `deliver` | Radio delay, loss, garbling |
+| Medical | Field, facility and build times, wake chance | |
+| Capabilities | `Station → Order types` | |
+
+## 11. Review: sorting a bad outcome
+
+The owner's rule is that a harness fault gets fixed at once, a reasonable belief that turned out wrong is the fog working, and a poor decision is the LLM's own. In terms of the loop, that's a single procedure:
+
+> **Walk the loop from `Truth`, and find the first arrow where the output doesn't follow from the input.**
+
+| First bad arrow | Called | Do | Examples |
+|---|---|---|---|
+| None: truth reached belief with no arrow at all | Leak, the most serious along with a bad verdict | Fix | The casualty list following a carried man |
+| `perceive` | Fog | Leave | Soldiers walking past an enemy in a building |
+| `speak` | Fault | Fix | `distant out`. LIMITED and FULL ignored by estimates. "6 of 6" with two men missing. 4 km "on foot" for a squad boarding |
+| `hear` | Judgement, unless the wording invited it | Fix the wording if so | Sonnet reading "Get them off first" as sorted out: partly wording, so it's now "We'll treat them when they're off" |
+| `decide` | Judgement | Leave | Not bringing a mortar to bear. Commanders ignoring the rendezvous |
+| `act` | Fault | Fix | The carry nothing could cancel. Medics refusing a man by milliseconds. HALT that didn't stop boarding |
+| `Verdict` | Fault, and the most serious | Fix | "All six on foot" passed with four |
+
+Two refinements came out of writing this table:
+
+- **`speak` has a test for whether something is a fault:** would a real squad leader in that position have known this, and said it? Haiku's 2 km carry looked like bad judgement until the answer turned out to be yes: they'd have said "that'll take 20 minutes". So that was `speak`, and the fix worked.
+- **A correct arrow can produce a terrible outcome.** A commander that shells its own men on an old report has had every arrow work. That's the game.
+
+`Record` exists to make this procedure possible: it holds each stratum separately, so a review can compare them at any moment. It needs nothing else from the rest of the system.
+
+## 12. Invariants
+
+Each of these is a rule the model implies. The right-hand column is a fault that broke it, where one did: none of them is as obvious as it looks.
+
+| # | Invariant | What broke it |
+|---|---|---|
+| 1 | Only utterances cross the fog line. An order's tool result never varies with the state of the world | The casualty list, printing live positions |
+| 2 | A squad's speech comes from its own `Knowledge`, apart from names and its own orders | A squad quoting a walk to a truck it was sitting in |
+| 3 | Only `Silent` may end a task without speech | Six cases, [section 8.5](#85-life-of-a-task) |
+| 4 | Every count names its set | `alive` meaning `Able`: the false win |
+| 5 | A forecast and the behaviour it forecasts read the same state | LIMITED and FULL changing the game and not the estimate |
+| 6 | An order takes only what it's entitled to, and nothing else stops anything | Orders that couldn't cancel carries. A one-man `MOUNT` that cancelled them |
+| 7 | Only the last step of a plan may be `Standing` | A `HOLD` partway along a trip, or something appended after one, would never finish. Now refused |
+| 8 | A plan is checked whole, when it's sent, and its later steps can only fail by being reported | Enforced |
+| 9 | What's wrong with an order is refused when the commander could have known, and reported by the unit otherwise | |
+| 10 | A session belongs to one battle, and says so if it's been replaced | A new session finding the last battle, and being told it had already won |
+| 11 | Every field the game sends reaches what reads it | `speed_mode` dropped by a field list, which no test noticed |
+| 12 | Nothing in `Record` reaches the commander | |
+
+Invariants 2, 4, 5 and 11 could become properties of the code's types rather than things tests catch: see [section 14](#14-what-this-could-become).
+
+## 13. Where the code and the model disagree
+
+The model was compared with the code, not just written from it. These are the places they differ, and each one is a decision.
+
+| # | Where | Model says | Code does | My view |
+|---|---|---|---|---|
+| 1 | `MOVE` during `MOUNT` | Takes the men walking to a seat, so boarding stops | Boarding carries on, then the truck drives | **The one real inconsistency left.** Both Haiku and Sonnet relied on it, and it looks like a helpful accident. Chains now cover what they wanted. I'd follow the rule, but a commander would get a surprise, so it's your call |
+| 2 | `DISMOUNT` | Takes those aboard, so doesn't disturb carriers. But it's in the Course lane, so it replaces a plan | Exactly that | Fine. It's two separate questions. Worth stating, because it looks like an inconsistency between `CANCELS_A_CHAIN` and `callOffCare`, and it isn't |
+| 3 | A verdict | Never wrong | Truth is sampled, so it can only be as right as the last sample before the word is given | Fine |
+| 4 | `MOUNT` naming a seat | A detail: one man, leaving the squad's course alone | Exactly that. The order type is still listed once, under Course | Fine. It's the one order whose lane depends on its arguments |
+| 5 | Refusals | Priority | Water and boarding refusals are Routine, and care refusals are Priority | Harmless, since neither changes what wakes it. Inconsistent |
+| 6 | `all_stations_lost` | Your own down are still yours | Counts `Able`, so all of them down loses the battle | Probably right as a game rule, since nobody's left to do anything, but it's the opposite of how objectives count |
+| 7 | `HOLD` with `hold_for` | Would be `Finite` | Refused partway along an order, because the engine's `HOLD` doesn't complete. `MOVE` with `hold_for` is offered instead | Fine, though `MOVE` with `hold_for` hasn't been run in a chain live |
+| 8 | Timed `Schedule` and chain steps | Both are `Rule`s | Separate code | Harmless now. Matters only if event triggers get built |
+| 9 | `alive` in packets | Should be named `able` | Means `Able`, and truth has `alive` and `down` | A rename would have prevented a real bug, and it's cheap |
+| 10 | Route | Plan, task, and how to acknowledge it are separate | One dict with `kind`, `legs`, `says`, `then`, `dropping`, `keeps_progress`, `acknowledge`, `walk_to` and more | Grown by accretion, much of it during the chain work. It works, and it's the first thing I'd tidy |
+| 11 | Order properties | One table | Eight sets across two files, with one duplicate, and some literals | Nothing's wrong today. The next order type has to be added in the right places by hand |
+| 12 | Fire orders | Could be a step: "move up and fire" is well-formed in the grammar | Refused, by decision | Left open, as you agreed |
+
+### How this page was checked
+
+It was compared with the code three ways, because the same hands wrote both and can't be trusted to see past that. Each found faults in the code as well as in the page, and those are the best evidence the model is worth having.
+
+1. **By computation.** [test_model_doc.py](../host/tests/test_model_doc.py) checks the order table and the string-state charts against the code, and was seen to fail on a dropped state.
+2. **By a fresh reader,** asked only to break it. It found 12 kinds of problem, each checked against the code before being accepted. The claims rule was wrong as first written ("the newest claim always wins"), and sections 5, 7.5 and 10 had errors, all corrected. It found these faults in the code:
+
+| Found | Effect | Now |
+|---|---|---|
+| The casualty list followed carried men, and showed when a distant man had died | A fog leak | Fixed |
+| A man dying in the treat queue, or the last medic going down | Chained orders hung forever, with no word | Fixed |
+| A `HOLD` partway along a trip | Would never finish | Refused |
+| Appending to nothing during a chain | The chain's next step overrode the newer order | Fixed |
+| `MOUNT` or `DISMOUNT` left the old route running | A squad walked on with no reports | Fixed |
+| `DISMOUNT` during boarding | Men went on boarding, unreported | Fixed |
+| One man's `MOUNT` named a seat | Called off the squad's carries and its chain, and stopped its arrival reports | Fixed |
+| A verdict didn't look again before being given | A man going down in the last 10 s still got "all six on foot" | Fixed |
+| A timed order that couldn't go out | Only the operator's log heard | Fixed. This reverses an earlier choice: a test was named "only troubles the operator" |
+
+3. **By hunting for state machines.** All 21 in [section 8.6](#86-the-machines-underneath) turned out to be undeclared, and four places had two of them touching the same thing without agreeing. The claims rule predicted all four, which is a better test of the model than anything else here. Each fix has a scene in the live suite.
 
 | # | Conflict | Effect | Fixed, and checked live |
 |---|---|---|---|
@@ -474,11 +605,32 @@ Every task, and a good deal else, is carried out by a state machine. None of the
 
 Conflicts 1 and 3 are the same mistake as the false win: a machine asking a question about a man that only one of the sets in [section 5.1](#51-a-members-condition) can answer, and asking a different one. A declared machine would have had to say which.
 
-### 8.7 Charts
+## 14. What this could become
 
-Each machine as it is in the code. Where a state is a string in the code, the chart names it with exactly that string, as `state "going off" as going_off`, and [test_machine_charts.py](../host/tests/test_machine_charts.py) fails if the code and the chart disagree about which ones exist. Names without quotes are states the code holds some other way: a list a man is on, a flag, or a variable being there at all. Those are drawn as faithfully, and nothing checks them.
+Nothing here needs doing for the model to be useful as a way of thinking. In order of value for effort:
 
-#### Game side
+1. **One order table in the code.** The table in [section 8.2](#82-all-22-orders) as the single source, with today's sets derived from it. Small, with no behaviour change, and adding an order type becomes one row. The test that checks this page against the code is most of the work.
+2. **A declared packet schema.** One list of fields, used by both the SQF writer and the Python reader, with a test that they match. It would have caught `speed_mode` on the day, and it's the main remaining place where a typo fails silently.
+3. **Named strength sets.** `able`, `living`, `free`, `present`, replacing `alive`. Mostly a rename, and it removes invariant 4 as something to remember.
+4. **Claims as real code.** A single function deciding what a new order calls off, in place of `CANCELS_A_CHAIN` plus the branches in `brmh_cmd_fnc_order`. Only worth it if decision 1 in [section 13](#13-where-the-code-and-the-model-disagree) goes the rule's way, or when another lane arrives.
+5. **`Rule` as the one trigger mechanism.** Worth doing only when event triggers are wanted, since it's what they'd be built on.
+6. **Declared state machines.** One small runner, with each machine written as states, the events that move it, a deadline for every state that waits, and what's said on leaving, in place of the hand-written ones in [section 8.6](#86-the-machines-underneath). It would make "no deadline" impossible to write by accident, and every check of a man would have to say which set it means. A big change for the game side, so only once the machines have stopped changing shape.
+7. **A property test of the fog,** in place of today's specific leak tests: for any two truths with the same `Knowledge`, everything the commander receives is identical. It's the strongest statement of the central promise, and invariant 1 made executable.
+
+I'd do 1 and 2 whatever else happens, and I haven't started any of them.
+
+## 15. Questions for you
+
+1. **Does this match what you meant by "most upstream"?** I took it as the concepts themselves, independent of Arma. If you meant something more like a schema or a DSL that scenarios and orders are written in, sections 8 and 10 are the base for that, and I'd take it further in that direction.
+2. **`MOVE` during `MOUNT`:** should the rule win, or does boarding carry on as an accepted exception? ([section 13](#13-where-the-code-and-the-model-disagree), row 1.)
+3. **Is `Claims` the right word and idea for you?** It's the one new concept here, not just a new name, and everything in [section 8.3](#83-claims-the-one-rule-behind-newest-wins) rests on it.
+4. **Should this feed the commander's doctrine?** The mode table in [section 7.1](#71-mode-how-sure-can-the-speaker-be) and the claims rule are both short, and could replace several habits with one idea each. That's testable: a better explanation should show up as fewer turns.
+
+## Appendix: state charts
+
+Each machine as it is in the code. Where a state is a string in the code, the chart names it with exactly that string, as `state "going off" as going_off`, and [test_model_doc.py](../host/tests/test_model_doc.py) fails if the code and the chart disagree about which ones exist. Names without quotes are states the code holds some other way: a list a man is on, a flag, or a variable being there at all. Those are drawn as faithfully, and nothing checks them.
+
+### Game side
 
 <!-- machine: carry -->
 ```mermaid
@@ -660,7 +812,7 @@ stateDiagram-v2
   end note
 ```
 
-#### Host side
+### Host side
 
 <!-- machine: battle -->
 ```mermaid
@@ -782,153 +934,3 @@ stateDiagram-v2
 ```
 
 Smaller machines that aren't charted: stuck reports, which are part of the order chart, ammunition bands, which only ever get worse, limps, and the check-in that stays quiet when nothing's changed.
-
-## 9. Time and attention
-
-```text
-Clock     = MissionTime                 runs whatever anyone is doing
-Attention = Turn*                       the commander exists only in turns
-Turn      = Wake × Briefing × Act* × End
-Wake      = Timer(note) | Messages(n) | Notice(Higher)
-```
-
-There's no game loop that waits for the commander. **Thinking costs mission time**, and that's a mechanic and not a limitation. Three things follow directly:
-
-| Consequence | How it shows up |
-|---|---|
-| Deciding when to look again is part of commanding | No fixed interval, and a turn that ends with no timer has to say so |
-| Work should be delegated downward where it can be | Chains, timed orders, and squads that act without being told |
-| Old information is normal | Every listing has an age, and reports can lag by half a minute or so in a fight |
-
-`Briefing` is a function, `Belief × new Utterances → text`, and it's the only thing that makes a turn self-contained. Since it's pure, a new session can take over from the records. That's what "all memory is written down" amounts to.
-
-## 10. Scenarios
-
-A scenario is a value, and a battle is that value plus a commander.
-
-```text
-Scenario = Forces × Assets × Enemies × Objective* × Failure? × TimeLimit × Events × Dials × Brief
-
-Objective  = Text × Predicate(Truth)      judged by Higher, on truth, with a short grace period
-Predicate  = AllAt(Stations, Place, on_foot?)     every Living man within reach of it. If on_foot, nobody's
-                                                  riding or down either. At least one must be Able
-           | Eliminated                           no enemy in the scenario still Able
-           | Reached(Station, Place)              its first Able man got there. A simple check, for simple scenarios
-Failure    = all stations lost                    none of them with anyone Able
-Event      = At(time) × World action              a man going down, a squad being lost
-```
-
-**Objectives are the one thing judged on truth,** which is why they have to be careful about which set they count: `AllAt` counts `Living`, and `Eliminated` counts `Able`. For enemies, down is out. For your own, down is still yours. That asymmetry is correct, and it's exactly the distinction the false win got wrong.
-
-**The brief and the objective can differ,** and they did: `casevac_rv` asks for a rendezvous in its text, and only checks that all six reach the objective. Both Haiku and Sonnet noticed, in effect, and skipped the rendezvous in some runs. That's allowed: the brief is advice, and the predicate is the mission.
-
-**Dials** are what a scenario can turn without any new code:
-
-| Dial | Values today | Reserved |
-|---|---|---|
-| Delivery | Debounce, `hold` or `deliver` | Radio delay, loss, garbling |
-| Medical | Field, facility and build times, wake chance | |
-| Capabilities | `Station → Order types` | |
-
-## 11. Review: sorting a bad outcome
-
-The owner's rule is that a harness fault gets fixed at once, a reasonable belief that turned out wrong is the fog working, and a poor decision is the LLM's own. In terms of the loop, that's a single procedure:
-
-> **Walk the loop from `Truth`, and find the first arrow where the output doesn't follow from the input.**
-
-| First bad arrow | Called | Do | From this week |
-|---|---|---|---|
-| None: truth reached belief with no arrow at all | Leak, the most serious along with a bad verdict | Fix | The casualty list following a carried man |
-| `perceive` | Fog | Leave | Soldiers walking past an enemy in a building |
-| `speak` | Fault | Fix | `distant out`. LIMITED and FULL ignored by estimates. "6 of 6" with two men missing. 4 km "on foot" for a squad boarding |
-| `hear` | Judgement, unless the wording invited it | Fix the wording if so | Sonnet reading "Get them off first" as sorted out: partly wording, so it's now "We'll treat them when they're off" |
-| `decide` | Judgement | Leave | Not bringing a mortar to bear. Commanders ignoring the rendezvous |
-| `act` | Fault | Fix | The carry nothing could cancel. Medics refusing a man by milliseconds. HALT that didn't stop boarding |
-| `Verdict` | Fault, and the most serious | Fix | "All six on foot" passed with four |
-
-Two refinements came out of writing this table:
-
-- **`speak` has a test for whether something is a fault:** would a real squad leader in that position have known this, and said it? Haiku's 2 km carry looked like bad judgement until the answer turned out to be yes: they'd have said "that'll take 20 minutes". So that was `speak`, and the fix worked.
-- **A correct arrow can produce a terrible outcome.** A commander that shells its own men on an old report has had every arrow work. That's the game.
-
-`Record` exists to make this procedure possible: it holds each stratum separately, so a review can compare them at any moment. It needs nothing else from the rest of the system.
-
-## 12. Invariants
-
-Each of these is a rule the model implies. Those marked with a bug are ones this week showed aren't obvious.
-
-| # | Invariant | What broke it |
-|---|---|---|
-| 1 | Only utterances cross the fog line. An order's tool result never varies with the state of the world | The casualty list, printing live positions |
-| 2 | A squad's speech comes from its own `Knowledge`, apart from names and its own orders | A squad quoting a walk to a truck it was sitting in |
-| 3 | Only `Silent` may end a task without speech | Six cases, [section 8.5](#85-life-of-a-task) |
-| 4 | Every count names its set | `alive` meaning `Able`: the false win |
-| 5 | A forecast and the behaviour it forecasts read the same state | LIMITED and FULL changing the game and not the estimate |
-| 6 | An order takes only what it's entitled to, and nothing else stops anything | Orders that couldn't cancel carries. A one-man `MOUNT` that cancelled them |
-| 7 | Only the last step of a plan may be `Standing` | A `HOLD` partway along a trip, or something appended after one, would never finish. Now refused |
-| 8 | A plan is checked whole, when it's sent, and its later steps can only fail by being reported | Enforced |
-| 9 | What's wrong with an order is refused when the commander could have known, and reported by the unit otherwise | |
-| 10 | A session belongs to one battle, and says so if it's been replaced | A new session finding the last battle, and being told it had already won |
-| 11 | Every field the game sends reaches what reads it | `speed_mode` dropped by a field list, which no test noticed |
-| 12 | Nothing in `Record` reaches the commander | |
-
-Invariants 2, 4, 5 and 11 could become properties of the code's types rather than things tests catch: see [section 14](#14-what-this-could-become).
-
-## 13. Where the code and the model disagree
-
-The model was compared with the code, not just written from it. These are the places they differ, and each one is a decision.
-
-| # | Where | Model says | Code does | My view |
-|---|---|---|---|---|
-| 1 | `MOVE` during `MOUNT` | Takes the men walking to a seat, so boarding stops | Boarding carries on, then the truck drives | **The one real inconsistency left.** Both Haiku and Sonnet relied on it, and it looks like a helpful accident. Chains now cover what they wanted. I'd follow the rule, but a commander would get a surprise, so it's your call |
-| 2 | `DISMOUNT` | Takes those aboard, so doesn't disturb carriers. But it's in the Course lane, so it replaces a plan | Exactly that | Fine. It's two separate questions. Worth stating, because it looks like an inconsistency between `CANCELS_A_CHAIN` and `callOffCare`, and it isn't |
-| 3 | A verdict | Never wrong | Truth is sampled, so it can only be as right as the last sample before the word is given | Fine. It used to latch and not look again for 10 s, which is fixed |
-| 4 | `MOUNT` naming a seat | A detail: one man, leaving the squad's course alone | Exactly that, since this review. The order type is still listed once, under Course | Fine. It's the one order whose lane depends on its arguments |
-| 5 | Refusals | Priority | Water and boarding refusals are Routine, and care refusals are Priority | Harmless, since neither changes what wakes it. Inconsistent |
-| 6 | `all_stations_lost` | Your own down are still yours | Counts `Able`, so all of them down loses the battle | Probably right as a game rule, since nobody's left to do anything, but it's the opposite of how objectives count |
-| 7 | `HOLD` with `hold_for` | Would be `Finite` | Refused partway along an order, because the engine's `HOLD` doesn't complete. `MOVE` with `hold_for` is offered instead | Fine, though `MOVE` with `hold_for` hasn't been run in a chain live |
-| 8 | Timed `Schedule` and chain steps | Both are `Rule`s | Separate code | Harmless now. Matters only if event triggers get built |
-| 9 | `alive` in packets | Should be named `able` | Means `Able`, and truth has `alive` and `down` | A rename would have prevented a real bug, and it's cheap |
-| 10 | Route | Plan, task, and how to acknowledge it are separate | One dict with `kind`, `legs`, `says`, `then`, `dropping`, `keeps_progress`, `acknowledge`, `walk_to` and more | Grown by accretion, some of it by me this week. It works, and it's the first thing I'd tidy |
-| 11 | Order properties | One table | Eight sets across two files, with one duplicate, and some literals | Nothing's wrong today. The next order type has to be added in the right places by hand |
-| 12 | Fire orders | Could be a step: "move up and fire" is well-formed in the grammar | Refused, by decision | Left open, as you agreed |
-
-### How this page was checked
-
-It was compared with the code twice, because I wrote both and can't be trusted to see past that.
-
-1. **By computation.** The order table was written down as data, and each set in the code's constants was recomputed from it. All eight match.
-2. **By a fresh reader,** asked only to break it. It found 12 kinds of problem, and I checked them against the code before accepting them. The rule in [section 8.3](#83-claims-the-one-rule-behind-newest-wins) was wrong as first written, and sections 5, 7.5 and 10 had errors, all now corrected. More usefully, it found real bugs:
-
-| Found | Effect | Now |
-|---|---|---|
-| The casualty list followed carried men, and showed when a distant man had died | A fog leak | Fixed |
-| A man dying in the treat queue, or the last medic going down | Chained orders hung forever, with no word | Fixed |
-| A `HOLD` partway along a trip | Would never finish | Refused |
-| Appending to nothing during a chain | The chain's next step overrode the newer order | Fixed |
-| `MOUNT` or `DISMOUNT` left the old route running | A squad walked on with no reports | Fixed |
-| `DISMOUNT` during boarding | Men went on boarding, unreported | Fixed |
-| One man's `MOUNT` named a seat | Called off the squad's carries and its chain, and stopped its arrival reports | Fixed |
-| A verdict didn't look again before being given | A man going down in the last 10 s still got "all six on foot" | Fixed |
-| A timed order that couldn't go out | Only the operator's log heard | Fixed. This reverses an earlier choice: a test was named "only troubles the operator" |
-
-## 14. What this could become
-
-Nothing here needs doing for the model to be useful as a way of thinking. In order of value for effort:
-
-1. **One order table in the code.** The table in [section 8.2](#82-all-22-orders) as the single source, with today's sets derived from it. Small, with no behaviour change, and adding an order type becomes one row. The check I ran for this page is most of the test.
-2. **A declared packet schema.** One list of fields, used by both the SQF writer and the Python reader, with a test that they match. It would have caught `speed_mode` on the day, and it's the main remaining place where a typo fails silently.
-3. **Named strength sets.** `able`, `living`, `free`, `present`, replacing `alive`. Mostly a rename, and it removes invariant 4 as something to remember.
-4. **Claims as real code.** A single function deciding what a new order calls off, in place of `CANCELS_A_CHAIN` plus the branches in `brmh_cmd_fnc_order`. Only worth it if decision 1 in [section 13](#13-where-the-code-and-the-model-disagree) goes the rule's way, or when another lane arrives.
-5. **`Rule` as the one trigger mechanism.** Worth doing only when event triggers are wanted, since it's what they'd be built on.
-6. **Declared state machines.** One small runner, with each machine written as states, the events that move it, a deadline for every state that waits, and what's said on leaving, in place of the hand-written ones in [section 8.6](#86-the-machines-underneath). It would make "no deadline" impossible to write by accident, and every check of a man would have to say which set it means. A big change for the game side, so only once the conflicts there are fixed and the machines have stopped changing shape.
-7. **A property test of the fog,** in place of today's specific leak tests: for any two truths with the same `Knowledge`, everything the commander receives is identical. It's the strongest statement of the central promise, and invariant 1 made executable.
-
-I'd do 1 and 2 whatever else happens, and I haven't started any of them.
-
-## 15. Questions for you
-
-1. **Does this match what you meant by "most upstream"?** I took it as the concepts themselves, independent of Arma. If you meant something more like a schema or a DSL that scenarios and orders are written in, sections 8 and 10 are the base for that, and I'd take it further in that direction.
-2. **`MOVE` during `MOUNT`:** should the rule win, or does boarding carry on as an accepted exception? ([section 13](#13-where-the-code-and-the-model-disagree), row 1.)
-3. **Is `Claims` the right word and idea for you?** It's the one new concept here, not just a new name, and everything in [section 8.3](#83-claims-the-one-rule-behind-newest-wins) rests on it.
-4. **Should this feed the commander's doctrine?** The mode table in [section 7.1](#71-mode-how-sure-can-the-speaker-be) and the claims rule are both short, and could replace several habits with one idea each. That's testable: a better explanation should show up as fewer turns.
