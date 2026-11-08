@@ -66,6 +66,11 @@ LEG_VERBS = {"HOLD": "holding at", "SENTRY": "watching at", "SEARCH": "searching
              "PATROL_AREA": "patrolling around", "SWEEP": "sweeping around"}
 
 
+def grid_at(x: float, y: float) -> str:
+    """The spoken 100 m grid square a point is in, such as "041 041"."""
+    return f"{int(x // 100):03d} {int(y // 100):03d}"
+
+
 def format_grid(grid: str) -> str:
     """Engine grid "052191" to spoken "052 191"."""
     middle = len(grid) // 2
@@ -747,7 +752,7 @@ class Tracker:
             dx = sum(row["dx"] for row in seen) / len(seen)
             dy = sum(row["dy"] for row in seen) / len(seen)
             away = max(50, round(math.hypot(dx, dy) / 50) * 50)
-            return [Report(ROUTINE, f"Splash seen, grid {int(x / 100):03d} {int(y / 100):03d}, "
+            return [Report(ROUTINE, f"Splash seen, grid {grid_at(x, y)}, "
                                     f"about {away} m {compass(dx, dy)} of us.")]
         return []
 

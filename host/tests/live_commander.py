@@ -1307,6 +1307,8 @@ def run(name: str, scenario: str, mode: str | None, play, watch: bool = False) -
     state, needs = harness.state(), scenario_mod.load(scenario).mission
     if state is not None and state.mission != needs:  # this run's own game, left up by the battle before
         harness.stop()
+    # Only this battle's errors count: a reused game still holds earlier ones, from other battles or spikes.
+    since = harness.bridge().cursor() if harness.state() is not None else 0
     started = operator.start(scenario, mode, harness, watch=bool(wanted))
     print(json.dumps({k: v for k, v in started.items() if k != "launch"}), flush=True)
     client = Client()
@@ -1316,7 +1318,7 @@ def run(name: str, scenario: str, mode: str | None, play, watch: bool = False) -
         client.close()
     print(f"\n--- AFTER ACTION: {name}\n{operator.aar(harness.home)}", flush=True)
     print(json.dumps(operator.status(harness.home), indent=1), flush=True)
-    errors = [e for e in harness.events(since=0, kinds=["err"]).get("events", [])]
+    errors = harness.events(since=since, kinds=["err"], limit=0).get("events", [])
     assert not errors, errors[:3]
     print(f"PASS: {name}", flush=True)
 

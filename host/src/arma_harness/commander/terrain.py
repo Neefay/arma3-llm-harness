@@ -37,6 +37,8 @@ class Terrain:
     roads: list[list] = field(default_factory=list)  # [x1, y1, x2, y2, kind]
     houses: list[list] = field(default_factory=list)  # [x, y, width, length, direction]
     places: list[list] = field(default_factory=list)  # [name, type, x, y]
+    # Worked out once from the above, never saved: contour segments by height.
+    contours: dict = field(default_factory=dict, compare=False, repr=False)
 
     @classmethod
     def from_game(cls, raw: list) -> Terrain:
@@ -172,17 +174,17 @@ class Terrain:
         words = [f"Grid {grid}: {h} m, {lie}. {self.ground(x, y).capitalize()}."]
         if top:
             words.append(f"Hilltop {top[2]} m: {_rough(math.dist((x, y), top[:2]))} m "
-                         f"{compass_word_xy(top[0] - x, top[1] - y)}.")
+                         f"{compass(top[0] - x, top[1] - y)}.")
         road = self.nearest_road(x, y)
         if road and road[0] <= 400:
-            where = "on it" if road[0] < 15 else f"{_rough(road[0])} m {compass_word_xy(road[2], road[3])}"
+            where = "on it" if road[0] < 15 else f"{_rough(road[0])} m {compass(road[2], road[3])}"
             words.append(f"Nearest {road[1]}: {where}.")
         count = self.houses_within(x, y, 150)
         if count:
             words.append(f"{count} building{'s' if count != 1 else ''} within 150 m.")
         place = self.nearest_place(x, y)
         if place and place[0] <= 1500:
-            where = "here" if place[0] < 150 else f"{_rough(place[0])} m {compass_word_xy(place[2], place[3])}"
+            where = "here" if place[0] < 150 else f"{_rough(place[0])} m {compass(place[2], place[3])}"
             words.append(f"{place[1]}: {where}.")
         return " ".join(words)
 
@@ -238,12 +240,7 @@ class Terrain:
 
 
 def compass_word(bearing: float) -> str:
-    return ["north", "north-east", "east", "south-east", "south", "south-west", "west", "north-west"][
-        round(bearing / 45) % 8]
-
-
-def compass_word_xy(dx: float, dy: float) -> str:
-    return compass(dx, dy)
+    return compass(math.sin(math.radians(bearing)), math.cos(math.radians(bearing)))
 
 
 def _rough(metres: float) -> int:

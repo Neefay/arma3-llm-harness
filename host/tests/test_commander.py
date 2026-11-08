@@ -2713,6 +2713,15 @@ def test_a_chain_sends_only_its_first_step_and_says_the_whole_of_it(tmp_path):
     assert sent(b) == ["MOUNT"]
 
 
+def test_a_posture_reaching_the_game_first_doesnt_strand_the_chain(tmp_path):
+    """The POSTURE's id replaced the chain's in the game before any report showed it, and the chain waited forever."""
+    b = chained(tmp_path)
+    b.runtime.order({"to": "Alpha", "legs": [MOUNT, DRIVE, DISMOUNT]})
+    b.runtime.order({"to": "Alpha", "legs": [{"type": "POSTURE"}], "speed": "FULL"})
+    b.advance(104, order="O-0002", mount=["V1", "on", "", ["Sam Reed"]], mounted=RIDING, leader="Sam Reed")
+    assert sent(b) == ["MOUNT", "POSTURE", "MOVE"]
+
+
 def test_each_step_starts_when_the_last_has_really_finished(tmp_path):
     b = chained(tmp_path)
     b.runtime.order({"to": "Alpha", "legs": [MOUNT, DRIVE, DISMOUNT]})

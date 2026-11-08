@@ -57,6 +57,8 @@ def _objectives(raw: dict) -> list[dict]:
         success = item.get("success") or {}
         if success and not {"enemy_cleared", "stations", "station"} & set(success):
             raise ValueError(f"{item['id']}: unknown success {success}")
+        if ({"stations", "station"} & set(success)) and not {"of", "within_m"} <= set(success):
+            raise ValueError(f"{item['id']}: a station's success needs of and within_m: {success}")
         out.append({"id": item["id"], "text": str(item["text"]).strip(), "success": success})
     ids = [item["id"] for item in out]
     if len(set(ids)) != len(ids):

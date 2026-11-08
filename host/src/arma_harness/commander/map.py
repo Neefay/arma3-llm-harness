@@ -231,6 +231,14 @@ def _place_names(terrain: Terrain, center, radius, xy) -> list[tuple]:
 
 
 def _contours(terrain: Terrain, levels):
+    """Each level's line segments, worked out once: the ground doesn't change during a battle."""
+    for level in levels:
+        if level not in terrain.contours:
+            terrain.contours.update(_trace(terrain, [level]))
+        yield level, terrain.contours[level]
+
+
+def _trace(terrain: Terrain, levels):
     """Marching squares over the cell centres: for each height, the line segments where the ground crosses it."""
     n, step = terrain.n, terrain.step
     heights = [[terrain.cells[j * n + i][0] for i in range(n)] for j in range(n)]

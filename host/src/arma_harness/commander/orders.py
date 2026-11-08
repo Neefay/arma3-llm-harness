@@ -66,6 +66,7 @@ SINGLE_LEG = kinds(realisation="Clearing") | kinds(realisation="Placing") | kind
 DEFAULT_RADIUS_M = {"CLEAR": 100, "CORDON": 30, "ATTACK": 80, "DEFEND": 100, "PATROL_AREA": 150, "SWEEP": 120}
 MAX_RADIUS_M = 300
 ORDER_TYPES = set(ORDER_TABLE)
+APPENDABLE = {"MOVE", "HOLD", "SEARCH", "SENTRY"}  # what mode append adds to the end of a route
 CARE_ORDERS = {name: ORDER_TABLE[name].mode for name in kinds(lane="Detail")}
 STANDS_ALONE = kinds(ending="Instant")  # done on receipt, so there's nothing for a next step to follow
 ENDLESS = kinds(ending="Standing")  # they run until replaced, so nothing could ever follow them
@@ -107,7 +108,7 @@ def parse_grid(text: str, world_size: float, precise: bool = False) -> tuple[lis
     return [float(x), float(y)], f"{match[1]} {match[2]}"
 
 
-def _place(at, markers: dict[str, dict], world_size: float) -> tuple[list[float], str]:
+def resolve_place(at, markers: dict[str, dict], world_size: float) -> tuple[list[float], str]:
     if at in (None, ""):
         raise Invalid("This leg needs at: a grid, marker or building id.")
     if isinstance(at, str) and at.strip() in markers:
@@ -120,10 +121,6 @@ def _place(at, markers: dict[str, dict], world_size: float) -> tuple[list[float]
     return parse_grid(at, world_size)
 
 
-def resolve_place(at, places: dict[str, dict], world_size: float) -> tuple[list[float], str]:
-    return _place(at, places, world_size)
-
-
 def _enum(value, allowed: set[str], label: str) -> str:
     if value in (None, ""):
         return ""
@@ -133,14 +130,20 @@ def _enum(value, allowed: set[str], label: str) -> str:
     return upper
 
 
-def _number(value, label: str) -> float:
+def number(value, label: str) -> float:
+    """A number from the commander, which may come as text. Not negative, and not NaN or infinite, which pass any
+    range check and would go on to the engine."""
+    if isinstance(value, bool):
+        raise Invalid(f"Bad {label} {value!r}.")
     try:
-        number = float(value or 0)
+        result = float(value or 0)
     except (TypeError, ValueError):
         raise Invalid(f"Bad {label} {value!r}.") from None
-    if number < 0:
+    if result < 0 or not math.isfinite(result):
         raise Invalid(f"Bad {label} {value!r}.")
-    return number
+    return result
+
+
 
 
 def validate(request: dict, stations: dict[str, dict], markers: dict[str, dict], world_size: float,
@@ -148,7 +151,7 @@ def validate(request: dict, stations: dict[str, dict], markers: dict[str, dict],
              casualties: dict[str, dict] | None = None) -> dict:
     """Check a commander_order request and build what the game side needs: {to, mode, engine_legs, posture, route}."""
     to = request.get("to")
-    if to not in stations:
+    if not isinstance(to, str) or to not in stations:
         raise Invalid(f"Unknown callsign {to!r}. See commander_roster.")
     legs = request.get("legs") or []
     if not isinstance(legs, list) or not legs:
@@ -167,6 +170,9 @@ def validate(request: dict, stations: dict[str, dict], markers: dict[str, dict],
         if kind not in stations[to]["capabilities"]:
             raise Invalid(f"{to} can't do {kind}. See commander_roster.")
         types.append(kind)
+    if mode == "append" and set(types) - APPENDABLE:  # anything else used to replace the route, without a word
+        raise Invalid("Only MOVE, HOLD, SEARCH and SENTRY can be appended. To do more, send the whole task as one "
+                      "order.")
     alone = (STANDS_ALONE | {"CAS"}) & set(types)
     if alone and len(types) > 1:
         raise Invalid(f"{sorted(alone)[0]} must be the only leg in an order.")
@@ -195,14 +201,14 @@ def validate(request: dict, stations: dict[str, dict], markers: dict[str, dict],
     if single:
         return _single_leg(to, legs[0], types[0], posture, {**markers, **known}, world_size, known)
     if "PATROL" in types:
-        return _patrol(to, legs, types, posture, markers, world_size)
+        return _patrol(to, legs, types, posture, {**markers, **known}, world_size)
     engine_legs, route_legs = [], []
     for leg, kind in zip(legs, types, strict=True):
         if kind in ("HOLD", "SENTRY") and not leg.get("at") and route_legs:  # stay where the last leg ended
             pos, grid = list(route_legs[-1]["pos"]), route_legs[-1]["grid"]
         else:
-            pos, grid = _place(leg.get("at"), {**markers, **known}, world_size)
-        radius, completion = _number(leg.get("radius"), "radius"), _number(leg.get("completion"), "completion")
+            pos, grid = resolve_place(leg.get("at"), {**markers, **known}, world_size)
+        radius, completion = number(leg.get("radius"), "radius"), number(leg.get("completion"), "completion")
         hold_for = parse_time(leg["hold_for"]) if leg.get("hold_for") else 0
         engine_legs.append([LEG_TYPES[kind], pos, radius, completion, hold_for])
         route_legs.append({"type": kind, "pos": pos, "grid": grid, "completion": completion})
@@ -271,7 +277,7 @@ def _care(to, legs, types, posture, markers, buildings, world_size, vehicles, ca
     if kind == "TREAT":
         return {**base, "engine_legs": [[who]], "words": f"Copy, treating {names}."}
     if kind == "AID_POST":
-        pos, grid = _place(leg.get("at"), places, world_size)
+        pos, grid = resolve_place(leg.get("at"), places, world_size)
         return {**base, "engine_legs": [[[*pos, 0]]], "dest": pos,
                 "words": f"Copy, setting up an aid post at grid {grid}."}
     vehicle = leg.get("vehicle")
@@ -288,7 +294,7 @@ def _care(to, legs, types, posture, markers, buildings, world_size, vehicles, ca
                 "dest": _vehicle_place(vehicles[at.strip()], world_size)}
     if not at:
         raise Invalid("CARRY needs a vehicle, or at: a place or aid post to take them to.")
-    pos, grid = _place(at, places, world_size)
+    pos, grid = resolve_place(at, places, world_size)
     return {**base, "engine_legs": [[who, [*pos, 0]]], "words": f"Copy, carrying {names} to grid {grid}.", "dest": pos}
 
 
@@ -297,6 +303,8 @@ def _fire(to, legs, types, posture, stations, world_size, vehicles) -> dict:
     has to be a grid reference, which the commander works out for itself."""
     leg = legs[0]
     guns = leg.get("guns") or []
+    if isinstance(guns, str):  # one gun, named on its own
+        guns = [guns]
     unknown = [gun for gun in guns if gun not in vehicles]
     if unknown:
         raise Invalid(f"guns must be from your vehicle list, and these aren't: {unknown}.")
@@ -315,7 +323,7 @@ def _fire(to, legs, types, posture, stations, world_size, vehicles) -> dict:
     rounds = leg.get("rounds", 3)
     if not isinstance(rounds, int) or isinstance(rounds, bool) or not 1 <= rounds <= MAX_FIRE_ROUNDS:
         raise Invalid(f"rounds must be a whole number from 1 to {MAX_FIRE_ROUNDS}.")
-    radius = _number(leg.get("radius"), "radius")
+    radius = number(leg.get("radius"), "radius")
     if radius > MAX_FIRE_RADIUS_M:
         raise Invalid(f"A fire mission's radius is at most {MAX_FIRE_RADIUS_M} metres.")
     observer = leg.get("observer")
@@ -337,7 +345,7 @@ def _cas(to, leg, posture, world_size) -> dict:
                       f"one. Markers and building ids can't be passed to a pilot: work out the grid.")
     aim, grid = parse_grid(at, world_size, precise=True)
     least, most, default = CAS_RADIUS_M
-    radius = _number(leg.get("radius"), "radius") or default
+    radius = number(leg.get("radius"), "radius") or default
     if not least <= radius <= most:
         raise Invalid(f"radius must be between {least} and {most} metres.")
     return {"to": to, "mode": "cas", "engine_legs": [[aim, radius]], "posture": posture, "route": None,
@@ -373,7 +381,7 @@ def _building_of(at, places: dict[str, dict], known: dict[str, dict]) -> str | N
 def _single_leg(to, leg, kind, posture, places, world_size, known) -> dict:
     """Orders that aren't a route of waypoints: buildings, cordons and CBA tasks."""
     at = leg.get("at")
-    radius = _number(leg.get("radius"), "radius") or DEFAULT_RADIUS_M.get(kind, 0)
+    radius = number(leg.get("radius"), "radius") or DEFAULT_RADIUS_M.get(kind, 0)
     if radius > MAX_RADIUS_M:
         raise Invalid(f"{kind} covers at most {MAX_RADIUS_M} metres.")
     if kind == "CLEAR":
@@ -381,7 +389,7 @@ def _single_leg(to, leg, kind, posture, places, world_size, known) -> dict:
     building = _building_of(at, places, known)
     if kind == "OCCUPY" and not building:
         raise Invalid("OCCUPY needs a building id, such as B3. Your buildings are listed in commander_mission.")
-    pos, grid = _place(at, places, world_size)
+    pos, grid = resolve_place(at, places, world_size)
     return {"to": to, "mode": "replace", "engine_legs": [[kind, pos, radius, 0, 0]], "posture": posture,
             "route": {"kind": "route", "legs": [{"type": kind, "pos": pos, "grid": grid, "completion": 0,
                                                  "radius": radius, "building": building}]}}
@@ -399,7 +407,7 @@ def _clear(to, at, radius, posture, places, world_size, known) -> dict:
         chosen = [known[_building_of(at, places, known)]]
         pos, grid = list(chosen[0]["pos"]), chosen[0]["at"]
     else:
-        pos, grid = _place(at, places, world_size)
+        pos, grid = resolve_place(at, places, world_size)
         chosen = sorted((b for b in known.values() if math.dist(b["pos"], pos) <= radius),
                         key=lambda b: math.dist(b["pos"], pos))
     ids = [building["id"] for building in chosen]
@@ -413,7 +421,7 @@ def _patrol(to, legs, types, posture, markers, world_size) -> dict:
     points = legs[0].get("at")
     if not isinstance(points, list) or len(points) < 2:
         raise Invalid("PATROL needs a list of at least 2 grids in at.")
-    places = [_place(point, markers, world_size) for point in points]
+    places = [resolve_place(point, markers, world_size) for point in points]
     engine_legs = [["MOVE", pos, 0, 0, 0] for pos, _ in places] + [["CYCLE", places[0][0], 0, 0, 0]]
     route_legs = [{"type": "MOVE", "pos": pos, "grid": grid, "completion": 0} for pos, grid in places]
     return {"to": to, "mode": "replace", "engine_legs": engine_legs, "posture": posture,

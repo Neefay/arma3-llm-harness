@@ -10,6 +10,7 @@ import math
 import re
 import threading
 import time
+import traceback
 from dataclasses import asdict
 from typing import Protocol
 
@@ -121,11 +122,17 @@ class Runtime:
         self.trackers = {k: Tracker(**{field: value for field, value in v.items() if field in known})
                          for k, v in saved.get("trackers", {}).items()}
         if "wake" in saved:
-            self.wake = WakeLogic(**saved["wake"])
+            fields = WakeLogic.__dataclass_fields__
+            self.wake = WakeLogic(**{field: value for field, value in saved["wake"].items() if field in fields})
         else:
             self.wake = WakeLogic(quiet_s=scenario.quiet_s, ceiling_s=scenario.ceiling_s,
                                   mode=scenario.mid_turn_messages)
         self.radio: list[dict] = records.read("radio")
+        # Rows are written as they happen, and the counters only when the state is saved: after a crash between the
+        # two, an order could get an id already used, and its squad would never acknowledge it.
+        for prefix, rows in (("R", self.radio), ("O", records.read("orders"))):
+            used = [int(row["id"].split("-")[1]) for row in rows if str(row.get("id", "")).startswith(f"{prefix}-")]
+            self.next_id[prefix] = max([self.next_id.get(prefix, 1), *(number + 1 for number in used)])
 
     # -- clock -----------------------------------------------------------------------------------
 
@@ -157,7 +164,10 @@ class Runtime:
         with self.lock:
             self.game_lost_since, self.game_lost_said = None, False
             for event in result.get("events", []):
-                self._event(event)
+                try:
+                    self._event(event)
+                except Exception:  # one bad event mustn't stop the battle: the cursor would never pass it
+                    self.records.operator_log(f"event skipped: {event}\n{traceback.format_exc()}")
             self.cursor = result.get("next", self.cursor)
             self.tick()
 
@@ -227,10 +237,14 @@ class Runtime:
                 self._say(callsign, f"{building} is destroyed.", reports.ROUTINE, None, t)
 
     def _new_vehicle_id(self) -> str:
+        return self._unused_id("V", self.vehicles)
+
+    def _unused_id(self, prefix: str, taken: dict) -> str:
+        """The next id of a kind that nothing has yet: the commander or the scenario may have used one already."""
         while True:
-            vehicle_id = self._id("V")
-            if vehicle_id not in self.vehicles:
-                return vehicle_id
+            new_id = self._id(prefix)
+            if new_id not in taken:
+                return new_id
 
     def _in_combat(self, callsign: str) -> bool:
         tracker, packet = self.trackers.get(callsign), self.packets.get(callsign)
@@ -344,7 +358,7 @@ class Runtime:
             if new:
                 entry = self.casualties[key] = {"id": f"C{len(self.casualties) + 1}", "key": key, "name": name,
                                                 "squad": callsign, "first_t": packet["t"]}
-            grid = f"{int(cx / 100):03d} {int(cy / 100):03d}"
+            grid = reports.grid_at(cx, cy)
             where = self._vehicle_id(vehicle) if aboard else ""
             entry.update(pos=[cx, cy], grid=grid, t=packet["t"], vehicle=where, state="down")
             if own:
@@ -369,10 +383,9 @@ class Runtime:
         existing = self._vehicle_id(key)
         if existing:
             return existing, grid
-        number = 1 + sum(vehicle["id"].startswith("A") for vehicle in self.vehicles.values())
-        self.vehicles[f"A{number}"] = {"id": f"A{number}", "key": key, "name": "Aid post", "at": grid, "t": t,
-                                       "wrecked": False}
-        return f"A{number}", grid
+        post_id = next(f"A{number}" for number in range(1, len(self.vehicles) + 2) if f"A{number}" not in self.vehicles)
+        self.vehicles[post_id] = {"id": post_id, "key": key, "name": "Aid post", "at": grid, "t": t, "wrecked": False}
+        return post_id, grid
 
     def _tracker(self, callsign: str) -> Tracker:
         if callsign not in self.trackers:
@@ -797,6 +810,10 @@ class Runtime:
         if appending and previous["legs"] and previous["legs"][-1]["type"] in orders_mod.ENDLESS:
             raise Invalid(f"{previous['legs'][-1]['type']} runs until replaced, so nothing can be added after it. "
                           "Send a new order.")
+        not_waypoints = [leg["type"] for leg in previous.get("legs") or [] if leg["type"] not in orders_mod.LEG_TYPES]
+        if appending and not_waypoints:  # its reports would follow the CLEAR and never the legs after it
+            raise Invalid(f"{not_waypoints[0]} isn't a route of waypoints, so nothing can be added after it. Send a "
+                          "new order, or one with the whole task.")
         # Appending to nothing is a new route, so it takes over like one.
         mode = "replace" if checked["mode"] == "append" and not appending else checked["mode"]
         one_man = mode == "mount" and checked["route"].get("seat")  # the rest of the squad carries on
@@ -818,7 +835,9 @@ class Runtime:
         chain = self.chains.get(callsign)
         if not chain or self.ended:
             return
-        chain["seen"] = chain["seen"] or packet.get("order") == chain["order"]
+        # Its own id, or any later one: a POSTURE sent straight after can reach the game first, and replace the id
+        # before any report shows it. An order that ends the chain has already deleted it.
+        chain["seen"] = chain["seen"] or _order_number(packet.get("order")) >= _order_number(chain["order"])
         if not chain["seen"]:
             return
         outcome = reports.step_outcome(chain["mode"], chain["order"], packet, tracker.route_done)
@@ -959,6 +978,10 @@ class Runtime:
         return reports.estimate(far, reports.PACE_CARRYING, "carrying them", in_combat, reports.CARRY_LIFT_S)
 
     def _ask_targets(self, to, topics) -> list[str]:
+        if topics is not None and not (isinstance(topics, list) and all(isinstance(t, str) for t in topics)):
+            raise Invalid(f'topics is a list, such as ["position", "contacts"], not {topics!r}.')
+        if not isinstance(to, str):
+            raise Invalid(f"to is one callsign, or all, not {to!r}. Ask each station separately.")
         unknown = set(topics or []) - QUESTION_TOPICS
         if unknown:
             raise Invalid(f"Unknown topics {sorted(unknown)}: use {sorted(QUESTION_TOPICS)}.")
@@ -1032,8 +1055,12 @@ class Runtime:
                 raise Invalid(f"{format_time(first)} has already passed. It's {format_time(self.rel())}.")
             if kind == "wake" and not isinstance(what, str):
                 raise Invalid('A wake needs a note: {"wake": "why you want to wake"}.')
+            if kind in ("order", "ask") and not isinstance(what, dict):
+                raise Invalid(f'A scheduled {kind} needs its fields, such as {{"{kind}": {{"to": "Alpha", ...}}}}.')
+            if count is not None and (isinstance(count, bool) or not isinstance(count, int) or count < 1):
+                raise Invalid("count must be a whole number of times, 1 or more.")
             if kind == "order":
-                orders_mod.validate(what, self.scenario.stations, self.markers, self.world_size, self.buildings)
+                self._validate(what)  # with the vehicle and casualty lists, as a live order is checked
             if kind == "ask":
                 self._ask_targets(what.get("to"), what.get("topics"))
             base = self.t0 or 0.0
@@ -1114,8 +1141,8 @@ class Runtime:
         """Create or update a marker. The map holds belief: only the commander changes or retires it."""
         with self.lock:
             self._require_started()
-            marker_id = args.get("id")
-            if marker_id is not None and not re.fullmatch(r"[A-Za-z0-9_-]{1,16}", str(marker_id)):
+            marker_id = None if args.get("id") is None else str(args["id"])  # 5 and "5" are the same marker
+            if marker_id is not None and not re.fullmatch(r"[A-Za-z0-9_-]{1,16}", marker_id):
                 raise Invalid("A marker id is up to 16 letters, digits, - or _.")
             if any(building["id"] == marker_id for building in self.buildings):
                 raise Invalid(f"{marker_id} is a building's id. Choose another for this marker.")
@@ -1131,7 +1158,7 @@ class Runtime:
             if confidence and confidence not in MARKER_CONFIDENCE:
                 raise Invalid(f"Bad confidence {confidence!r}: use low, medium or high.")
             expires = parse_time(args["expires"]) if args.get("expires") else existing.get("expires")
-            marker = {"id": marker_id or self._id("M"), "kind": kind, **place,
+            marker = {"id": marker_id or self._unused_id("M", self.markers), "kind": kind, **place,
                       "label": args.get("label", existing.get("label", "")), "confidence": confidence,
                       "sources": args.get("sources", existing.get("sources", [])), "expires": expires,
                       "t": round(self.rel(), 1)}
@@ -1198,7 +1225,7 @@ class Runtime:
                 place = parse_grid(ao["at"], self.world_size)[0]
             else:
                 place = [self.world_size / 2, self.world_size / 2]
-            size = float(radius or (ao or {}).get("radius", 500))
+            size = orders_mod.number(radius or (ao or {}).get("radius", 500), "radius")
             if not 50 <= size <= 5000:
                 raise Invalid("radius must be between 50 and 5000 metres.")
             positions = {callsign: {"grid": place_["grid"], "age": _ago(self.now() - place_["t"])}
@@ -1207,10 +1234,12 @@ class Runtime:
                        f"Grid lines every {100 if size <= 800 else 500 if size <= 3000 else 1000} m.")
             if self.terrain:
                 caption += " Contours every " + ("10" if size <= 800 else "20") + " m."
-            png = map_mod.render(place, size, self.buildings, list(self.markers.values()), positions, self.checked,
-                                 caption, self.destroyed, list(self.vehicles.values()), self.terrain)
+            # A snapshot: drawing takes half a second, and the radio shouldn't wait for it.
+            drawing = (place, size, [dict(b) for b in self.buildings], [dict(m) for m in self.markers.values()],
+                       positions, dict(self.checked), caption, dict(self.destroyed),
+                       [dict(v) for v in self.vehicles.values()], self.terrain)
             self._used()
-            return {"png": png, "text": caption}
+        return {"png": map_mod.render(*drawing), "text": caption}
 
     def ground(self, at, to=None) -> dict:
         """What the map says about the ground at a place, or whether the ground lies between two. The map is common
@@ -1225,7 +1254,7 @@ class Runtime:
                 text = self.terrain.describe(*a, a_grid)
             else:
                 b, b_grid = orders_mod.resolve_place(to, known, self.world_size)
-                text = self.terrain.sight_words(tuple(a), a_grid, tuple(b), b_grid, _spoken_grid)
+                text = self.terrain.sight_words(tuple(a), a_grid, tuple(b), b_grid, reports.grid_at)
             self._used()
             return {"text": text}
 
@@ -1236,7 +1265,7 @@ class Runtime:
         ao = self.scenario.ao
         centre = parse_grid(ao["at"], self.world_size)[0] if ao else [self.world_size / 2] * 2
         rows = sorted(self.terrain.places, key=lambda row: math.dist(centre, row[2:4]))
-        return [{"name": name, "kind": place_kind(kind), "grid": _spoken_grid(x, y)} for name, kind, x, y in rows]
+        return [{"name": name, "kind": place_kind(kind), "grid": reports.grid_at(x, y)} for name, kind, x, y in rows]
 
     def brief(self) -> dict:
         with self.lock:
@@ -1245,6 +1274,8 @@ class Runtime:
 
     def notes(self, text: str) -> dict:
         with self.lock:
+            if not isinstance(text, str):
+                raise Invalid("Notes are text.")
             if len(text) > NOTES_LIMIT:
                 raise Invalid(f"Notes are limited to {NOTES_LIMIT} characters. These are {len(text)}.")
             self.records.set_notes(text)
@@ -1256,11 +1287,16 @@ class Runtime:
             start = parse_time(since) if since else 0
             rows = [r for r in self.radio if r["t"] >= start and (not sender or r["from"] == sender)]
             self._used()
-            return {"log": [_radio_line(r) for r in rows[-max(1, int(limit)):]]}
+            count = int(orders_mod.number(limit if limit is not None else 50, "limit"))
+            return {"log": [_radio_line(r) for r in rows[-max(1, count):]]}
 
     def _require_started(self) -> None:
         if self.t0 is None:
             raise Invalid("Call commander_mission first.")
+        # Back after a restart, the clock reads 0 until the game's first tick: "after 2:00" would be long past, and
+        # every station would seem silent.
+        if self.mission_t is None:
+            raise Invalid("The net isn't up yet. Try again in a few seconds.")
 
 
 def _clock(seconds: float) -> str:
@@ -1276,8 +1312,10 @@ def _schedule_words(kind: str, what) -> str:
     return f"{what.get('to')}: {topics}"
 
 
-def _spoken_grid(x: float, y: float) -> str:
-    return f"{int(x // 100):03d} {int(y // 100):03d}"
+def _order_number(order_id) -> int:
+    """O-0012 is 12. Anything else, such as no order yet, comes before every order."""
+    match = re.fullmatch(r"O-(\d+)", str(order_id or ""))
+    return int(match[1]) if match else -1
 
 
 def _ago(seconds: float) -> str:

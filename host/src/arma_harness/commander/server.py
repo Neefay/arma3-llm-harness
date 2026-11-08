@@ -166,6 +166,7 @@ class Server:
         self.stdin = stdin or sys.stdin.buffer
         self.stdout = stdout or sys.stdout.buffer
         self.write_lock = threading.Lock()
+        self.runtime_lock = threading.Lock()
         self.runtime_factory = runtime_factory
         self.still_current = still_current or (lambda runtime: True)
         self.runtime = None
@@ -182,13 +183,16 @@ class Server:
                    "params": {"content": text, "meta": meta}})
 
     def get_runtime(self):
-        if self.runtime is None:
-            try:
-                self.runtime = self.runtime_factory(self.wake)
-            except HarnessError as exc:
-                raise Invalid(NO_BATTLE) from exc
-            threading.Thread(target=self._loop, daemon=True).start()
-        return self.runtime
+        # Tool calls each run on a thread of their own, and two at once used to build two runtimes, each with a loop
+        # reading the same events: every report came twice.
+        with self.runtime_lock:
+            if self.runtime is None:
+                try:
+                    self.runtime = self.runtime_factory(self.wake)
+                except HarnessError as exc:
+                    raise Invalid(NO_BATTLE) from exc
+                threading.Thread(target=self._loop, daemon=True).start()
+            return self.runtime
 
     def _loop(self) -> None:
         # Its timers and scenario events would otherwise go on running, in a new battle with the same callsigns.
