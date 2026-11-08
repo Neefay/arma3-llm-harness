@@ -1,0 +1,17 @@
+# Plumbing: one squad goes through Camp Maxwell's buildings with nobody there, to hear what it says about each.
+# AI can't get into the cargo houses, and the squad has to say so rather than call them checked.
+name: stratis_clear_check
+mission: commander_stratis
+time_limit: "15:00"
+ao: { at: "032 029", radius: 120 }
+objective: Check the camp's buildings.
+text: >
+  Camp Maxwell, around grid 032 029, should be empty. Alpha is at its south edge. Check the buildings.
+stations:
+  - callsign: Alpha
+    role: infantry squad
+    capabilities: [MOVE, HOLD, SEARCH, CLEAR, HALT, POSTURE]
+    at: "032 028"
+    units: 8
+success: { station: Alpha, within_m: 20, of: "010 010" }
+mid_turn_messages: hold

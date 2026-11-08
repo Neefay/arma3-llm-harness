@@ -53,7 +53,8 @@ class Game(Protocol):
 PACKET_FIELDS = (
     "callsign", "pos", "grid", "dir", "speed", "able", "wounded", "baseline", "leader", "rounds", "rounds_baseline",
     "behaviour", "speed_mode", "spread", "combat_mode", "order", "unable", "leg", "legs", "clearing", "cleared",
-    "placed", "contacts", "suppression", "ruined", "seen_vehicles", "seen_ruins", "mounted", "mount", "missions",
+    "placed", "contacts", "suppression", "ruined", "blocked", "seen_vehicles", "seen_ruins", "mounted", "mount",
+    "missions",
     "gun_ammo", "limping", "casualties", "up", "medical")
 PACKET_HOST_FIELDS = ("t", "under_way")  # added here, after the game's report arrives
 # Each group in the truth record, as brmh_cmd_fnc_truth builds it. Only the review and the objectives read it.

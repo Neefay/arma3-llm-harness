@@ -1255,6 +1255,18 @@ def test_clearing_a_ruin_says_so_and_moves_on():
     assert tracker.update(packet(order="O-1", clearing=12, cleared=[], ruined=["B1"]), trip, 22) == []
 
 
+def test_a_building_nobody_got_into_is_not_reported_checked():
+    """Stratis, Camp Maxwell: AI stop 3 m outside a cargo house, and a man inside survived two "checked" reports."""
+    tracker, trip = Tracker(), clear_route("B1", "B3")
+    tracker.update(packet(order="O-1", clearing=30, cleared=[]), trip, 0)
+    said = tracker.update(packet(order="O-1", clearing=12, cleared=[], blocked=[["B1", 0, 1]]), trip, 20)
+    assert [(r.text, r.checked) for r in said] == [("Couldn't get into B1.", None)]
+    said = tracker.update(packet(order="O-1", clearing=0, cleared=[], blocked=[["B1", 0, 1], ["B3", 2, 5]]), trip, 40)
+    assert [(r.text, r.checked) for r in said][0] == ("B3 checked, nothing seen, but we couldn't get into all of it.",
+                                                      "B3")
+    assert said[-1].text.startswith("Finished checking B3; couldn't get into B1, at grid")
+
+
 def test_a_ruin_found_during_a_fight_arrives_late_but_still_counts(tmp_path):
     b = with_a_gun(tmp_path)
     b.runtime.routes["Alpha"] = clear_route("B1", "B3")

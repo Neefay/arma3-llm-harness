@@ -1205,6 +1205,27 @@ def play_village(client: Client) -> list[str]:
     return seen
 
 
+def play_stratis_clear(client: Client) -> list[str]:
+    """A squad going through buildings it can't all get into says which, and never calls those checked."""
+    brief = begin(client)
+    ids = [building["id"] for building in brief["buildings"]]
+    print("    buildings:", [(b["id"], b["type"]) for b in brief["buildings"]], flush=True)
+    client.tool("commander_order", to="Alpha", legs=[{"type": "CLEAR", "at": "032 029", "radius": 120}])
+    finish_turn(client, "Clearing")
+    seen, deadline = [], time.time() + 12 * 60
+    while time.time() < deadline:
+        wake = next_wake(client, 300)
+        seen.append(wake["content"])
+        finish_turn(client, "Waiting")
+        if "Finished checking" in wake["content"] or "Couldn't get into any" in wake["content"]:
+            break
+    text = chr(10).join(seen)
+    cargo = [b["id"] for b in brief["buildings"] if "Cargo House" in b["type"]]
+    assert any(f"Couldn't get into {building}" in text for building in cargo), "no cargo house reported as shut"
+    assert len(ids) >= 3
+    return seen
+
+
 def play_stratis(client: Client) -> list[str]:
     """Real ground: the map's terrain, named places and the ground tool, then the same fight as the village, uphill."""
     harness = Harness()
@@ -1290,7 +1311,8 @@ def main() -> None:
                ("casevac chained", "casevac_rv", "hold", play_casevac_chained),
                ("casevac village", "casevac_village", "hold", play_casevac_village),
                ("combat: take the village", "take_the_village", "hold", play_village, True),
-               ("stratis: Camp Maxwell", "stratis_maxwell", "hold", play_stratis)]
+               ("stratis: Camp Maxwell", "stratis_maxwell", "hold", play_stratis),
+               ("stratis: clearing the camp", "stratis_clear_check", "hold", play_stratis_clear)]
     wanted = sys.argv[1:]  # words to match in battle names; none means all of them
     try:
         for battle in battles:

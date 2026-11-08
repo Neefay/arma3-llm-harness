@@ -337,9 +337,12 @@ def _task_words(packet: dict, route: dict | None, in_combat: bool = False) -> st
         return "No current orders."
     if leg["type"] == "CLEAR":
         ids = leg.get("ids", [])
-        left = [building for building in ids if building not in (packet.get("cleared") or [])]
+        done = set(packet.get("cleared") or []) | {row[0] for row in packet.get("blocked") or []}
+        left = [building for building in ids if building not in done]
         if not left or packet.get("clearing", -1) == 0:
-            return f"Finished checking {', '.join(ids)}." if ids else "Nothing to check."
+            shut = [row[0] for row in packet.get("blocked") or [] if not row[1]]
+            barred = f" Couldn't get into {', '.join(shut)}." if shut else ""
+            return f"Finished checking {', '.join(ids)}.{barred}" if ids else "Nothing to check."
         return f"Checking {', '.join(left)}."
     if leg["type"] in PLACING_ORDERS:
         if packet.get("placed") == 1:
@@ -843,10 +846,28 @@ class Tracker:
             if building not in self.checked:
                 self.checked.append(building)
                 out.append(Report(ROUTINE, f"{building} is a ruin, nothing to check.", destroyed=building))
+        for building, reached, _of in packet.get("blocked") or []:
+            if building not in self.checked:
+                self.checked.append(building)
+                if reached:  # part of it was looked at, and the squad says which part wasn't
+                    result = "enemy still in the area" if seen_nearby else "nothing seen"
+                    out.append(Report(ROUTINE, f"{building} checked, {result}, but we couldn't get into all of it.",
+                                      checked=building))
+                else:
+                    out.append(Report(ROUTINE, f"Couldn't get into {building}."))
         if packet.get("clearing", -1) == 0:
             self.route_done = True
             ids = leg.get("ids", [])
-            words = f"Finished checking {', '.join(ids)}, at grid {grid}." if ids else "No known buildings there."
+            shut = {row[0] for row in packet.get("blocked") or [] if not row[1]}
+            looked = [building for building in ids if building not in shut]
+            if not ids:
+                words = "No known buildings there."
+            elif not looked:
+                words = f"Couldn't get into any of {', '.join(ids)}, at grid {grid}."
+            else:
+                barred = [building for building in ids if building in shut]
+                words = (f"Finished checking {', '.join(looked)}"
+                         + (f"; couldn't get into {', '.join(barred)}" if barred else "") + f", at grid {grid}.")
             out.append(Report(ROUTINE, words, grid))
         return out
 

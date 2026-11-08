@@ -674,6 +674,7 @@ brmh_cmd_fnc_packet = {
 		["clearing", _group getVariable ["brmh_cmd_clearLeft", -1]],
 		["cleared", _group getVariable ["brmh_cmd_cleared", []]],
 		["ruined", _group getVariable ["brmh_cmd_ruined", []]],
+		["blocked", _group getVariable ["brmh_cmd_blocked", []]],
 		["seen_vehicles", _group getVariable ["brmh_cmd_seenVehicles", []]],
 		["seen_ruins", _group getVariable ["brmh_cmd_seenRuins", []]],
 		["mounted", [_able] call brmh_cmd_fnc_mounted],
@@ -747,8 +748,10 @@ brmh_cmd_fnc_startClearing = {
 	_group setVariable ["brmh_cmd_clearLeft", _total max 1];
 	_group setVariable ["brmh_cmd_cleared", []];
 	_group setVariable ["brmh_cmd_ruined", []];
+	_group setVariable ["brmh_cmd_blocked", []];
 	{
 		_x setVariable ["brmh_cmd_clearBy", 0];
+		_x setVariable ["brmh_cmd_clearSpot", nil];
 	} forEach units _group;
 };
 
@@ -768,6 +771,8 @@ brmh_cmd_fnc_noticeNearby = {
 };
 
 // AI won't enter buildings to look for enemies it can't see, so soldiers are walked through every position in turn.
+// A position only counts once someone has stood on it: AI can't get into some buildings at all (a cargo house's floor is
+// up a step, and they stop 3 m outside), and a building nobody got into mustn't be reported as checked.
 brmh_cmd_fnc_stepClearing = {
 	params ["_group"];
 	private _spots = _group getVariable ["brmh_cmd_clearSpots", []];
@@ -776,15 +781,29 @@ brmh_cmd_fnc_stepClearing = {
 	{
 		private _soldier = _x;
 		[_soldier] call brmh_cmd_fnc_noticeNearby;
+		private _spot = _soldier getVariable "brmh_cmd_clearSpot";
+		// On it, and on its floor: standing under a raised floor outside is close in a straight line.
+		if (not isNil "_spot" and {
+			(_soldier distance2D _spot) < 1.5
+		} and {
+			abs (((getPosATL _soldier) # 2) - (_spot # 2)) < 0.8
+		}) then {
+			_group setVariable ["brmh_cmd_clearReached", (_group getVariable ["brmh_cmd_clearReached", 0]) + 1];
+			_soldier setVariable ["brmh_cmd_clearSpot", nil];
+		};
 		// A position can be unreachable, so nobody waits for one for long. Men on a job aren't sent to one.
 		if (time < (_soldier getVariable ["brmh_cmd_clearBy", 0]) and {
 			not unitReady _soldier
 		}) then {
 			_busy = _busy + 1;
 		} else {
+			_soldier setVariable ["brmh_cmd_clearSpot", nil];
 			if (_spots isNotEqualTo []) then {
-				_soldier doMove (_spots deleteAt 0);
-				_soldier setVariable ["brmh_cmd_clearBy", time + 45];
+				private _next = _spots deleteAt 0;
+				_soldier doMove _next;
+				_soldier setVariable ["brmh_cmd_clearSpot", _next];
+				// 45 s once he's there: a squad given CLEAR from 500 m away has the walk to make first.
+				_soldier setVariable ["brmh_cmd_clearBy", time + 45 + (_soldier distance _next) / 1.5];
 				_busy = _busy + 1;
 			};
 		};
@@ -798,7 +817,13 @@ brmh_cmd_fnc_stepClearing = {
 	}) then {
 		private _current = _group getVariable ["brmh_cmd_clearCurrent", ""];
 		if (_current isNotEqualTo "") then {
-			(_group getVariable ["brmh_cmd_cleared", []]) pushBack _current;
+			private _reached = _group getVariable ["brmh_cmd_clearReached", 0];
+			private _of = _group getVariable ["brmh_cmd_clearOf", 0];
+			if (_reached >= _of) then {
+				(_group getVariable ["brmh_cmd_cleared", []]) pushBack _current;
+			} else {
+				(_group getVariable ["brmh_cmd_blocked", []]) pushBack [_current, _reached, _of];
+			};
 			_group setVariable ["brmh_cmd_clearCurrent", ""];
 		};
 		if (_queue isNotEqualTo []) then {
@@ -809,6 +834,11 @@ brmh_cmd_fnc_stepClearing = {
 			} else {
 				_group setVariable ["brmh_cmd_clearCurrent", _next # 0];
 				_group setVariable ["brmh_cmd_clearSpots", _building buildingPos -1];
+				_group setVariable ["brmh_cmd_clearReached", 0];
+				_group setVariable ["brmh_cmd_clearOf", count (_building buildingPos -1)];
+				{
+					_x setVariable ["brmh_cmd_clearSpot", nil];
+				} forEach units _group;
 			};
 		} else {
 			_group setVariable ["brmh_cmd_clearQueue", nil];
@@ -1105,6 +1135,7 @@ brmh_cmd_fnc_order = {
 		_group setVariable ["brmh_cmd_clearQueue", nil];
 		_group setVariable ["brmh_cmd_clearLeft", -1];
 		_group setVariable ["brmh_cmd_cleared", []];
+		_group setVariable ["brmh_cmd_blocked", []];
 		_group setVariable ["brmh_cmd_placed", -1];
 		{
 			_x enableAI "PATH";
