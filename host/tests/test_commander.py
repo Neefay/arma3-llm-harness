@@ -2444,7 +2444,7 @@ def test_a_squad_says_what_a_new_order_called_off(kind, state, words):
 def test_the_commander_is_told_the_newest_order_wins():
     assert "the newest order wins" in ORDER_TYPES_HELP
     assert "order the squad first and these second" in ORDER_TYPES_HELP
-    assert "The newest order wins" in DOCTRINE
+    assert "An order takes the men it needs." in DOCTRINE and "How far to trust what you hear" in DOCTRINE
 
 
 def test_the_speed_setting_gets_as_far_as_the_estimate(tmp_path):
