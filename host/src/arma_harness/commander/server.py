@@ -30,7 +30,9 @@ ORDER_TYPES_HELP = (
     "repeat a route. HALT. POSTURE: change settings only. MOUNT: get into a vehicle from your list, one man if you "
     "name a seat, or everyone who fits. DISMOUNT: get off one, or all of them. FIRE_MISSION: fire this station's "
     "crewed guns at a grid reference of six or eight figures, and only that: markers and building ids can't be called "
-    "in. CHECK_FIRE: stop firing, though rounds in the air still land. Fire orders leave the squad's other orders as "
+    "in. CHECK_FIRE: stop firing, though rounds in the air still land. CAS: an aircraft flies to a grid, again "
+    "only a grid, and attacks whatever its pilot finds within the radius (default 150 m), then returns to its hold. "
+    "The pilot only attacks what he sees himself. Fire orders leave the squad's other orders as "
     "they are. CARRY: free men pick up casualties and take them to a vehicle or a place. A man carrying walks about "
     "100 m a minute, doesn't take cover and can't shoot back, so he's exposed. UNLOAD: get casualties off a stopped "
     "vehicle. TREAT: medics treat casualties where they lie, faster at an aid post or medical vehicle. "
@@ -45,7 +47,7 @@ LEGS_HELP = (
     "one at a time: the reply gives the total time, and you don't have to wake for each step, while a separate order "
     "sent too soon replaces what the squad was doing. If a step fails, the squad says so and waits for you. A "
     "FIRE_MISSION can be a step, such as MOUNT, MOVE, FIRE_MISSION for a gun that has to move first. HALT, POSTURE "
-    "and CHECK_FIRE go alone. HOLD and the orders that run until replaced can only go last: use "
+    "CHECK_FIRE and CAS go alone. HOLD and the orders that run until replaced can only go last: use "
     "MOVE with hold_for to wait somewhere on the way.")
 _STRING = {"type": "string"}
 _LEG = {

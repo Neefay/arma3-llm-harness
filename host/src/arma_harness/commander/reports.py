@@ -284,6 +284,13 @@ _CARE_WORDS = {
     ("carry", "no bearer"): "Nobody free to carry {name}.",
     ("carry", "nobody down"): "Nobody down here.",
     ("carry", "wrecked"): "Unable, {detail} is wrecked.",
+    ("sortie", "over"): "Over grid {detail}, looking.",
+    ("sortie", "engaging"): "Engaging, {detail}.",
+    ("sortie", "off target"): "Off target, returning to hold.",
+    ("sortie", "nothing seen"): "Nothing seen around grid {detail}, returning to hold.",
+    ("sortie", "winchester"): "Winchester, returning to hold.",
+    ("sortie", "called off"): "Breaking off.",
+    ("sortie", "not flying"): "Unable, not flying.",
     ("unload", "off"): "{name}'s off {detail}.",
     ("unload", "stuck"): "Can't get {name} off {detail}.",
     ("unload", "moving"): "{detail} has to stop first.",
@@ -679,7 +686,8 @@ class Tracker:
                 self.located.append(one)
             words = _CARE_WORDS.get((kind, state))
             if words:
-                bad = state not in ("carrying", "carried", "loaded", "treating", "up", "off", "building")
+                bad = state not in ("carrying", "carried", "loaded", "treating", "up", "off", "building", "over",
+                                    "engaging", "off target", "nothing seen", "called off")
                 out.append(Report(PRIORITY if bad else ROUTINE, words.format(name=name, detail=detail, grid=grid)))
         return out
 

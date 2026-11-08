@@ -20,6 +20,7 @@ MACHINES = {
     "carry": (r"startCarry|carry\w+|stepCarries", [STATE_PAIR]),
     "treat": (r"treat\w+|stepTreats", [STATE_PAIR]),
     "post": (r"postOrder|stepBuilds", [STATE_PAIR]),
+    "sortie": (r"casOrder", [STATE_PAIR]),
     "fire": (r"startFire|stepFire|checkFire|fireChunk|trackGun", [STATE_PAIR, r'_finish = "([a-z]+)"']),
     "boarding": (r"startMount|stepMount|stopMount|startDismount|stepDismount",
                  [r'brmh_cmd_mount", \[_key, "([a-z ]+)"', r'\["([a-z ]+)", (?:\[\]|_names)\] call _stop',
@@ -95,8 +96,8 @@ def test_every_ending_of_a_fire_mission_is_said():
 
 def test_every_machine_in_the_list_has_a_chart():
     charts = set(re.findall(r"<!-- machine: ([\w-]+) -->", MODEL))
-    assert {"carry", "treat", "post", "fire", "boarding", "clearing", "placing", "cba-task", "custody", "busy",
-            "battle", "attention", "chain", "objective", "order", "contact", "casualty-list", "apart", "outbox",
+    assert {"carry", "treat", "post", "sortie", "fire", "boarding", "clearing", "placing", "cba-task", "custody",
+            "busy", "battle", "attention", "chain", "objective", "order", "contact", "casualty-list", "apart", "outbox",
             "server"} == charts
 
 
@@ -124,7 +125,7 @@ def where(**want) -> set[str]:
 
 def test_the_table_has_every_order_type_once():
     assert set(order_table()) == orders.ORDER_TYPES
-    assert len(order_table()) == len(orders.ORDER_TYPES) == 22
+    assert len(order_table()) == len(orders.ORDER_TYPES) == 23
 
 
 @pytest.mark.parametrize("name, in_the_code, from_the_table", [

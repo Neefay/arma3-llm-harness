@@ -48,6 +48,7 @@ ORDER_TABLE: dict[str, OrderType] = {
     "UNLOAD": OrderType("Detail", "Finite", "None", "Scripted", "unload"),
     "FIRE_MISSION": OrderType("Guns", "Finite", "Crew", "Engine"),
     "CHECK_FIRE": OrderType("Guns", "Instant", "Crew", "Engine"),
+    "CAS": OrderType("Guns", "Finite", "Crew", "Engine"),
     "POSTURE": OrderType("Settings", "Instant", "None", "Engine"),
 }
 
@@ -71,6 +72,7 @@ ENDLESS = kinds(ending="Standing")  # they run until replaced, so nothing could 
 AMMO = {"HE", "SMOKE"}
 MAX_FIRE_ROUNDS = 32
 MAX_FIRE_RADIUS_M = 150
+CAS_RADIUS_M = (50, 500, 150)  # least, most, and when none is given
 SEATS = re.compile(r"^(driver|gunner|commander|cargo|turret:\d+)$")
 
 
@@ -165,7 +167,7 @@ def validate(request: dict, stations: dict[str, dict], markers: dict[str, dict],
         if kind not in stations[to]["capabilities"]:
             raise Invalid(f"{to} can't do {kind}. See commander_roster.")
         types.append(kind)
-    alone = STANDS_ALONE & set(types)
+    alone = (STANDS_ALONE | {"CAS"}) & set(types)
     if alone and len(types) > 1:
         raise Invalid(f"{sorted(alone)[0]} must be the only leg in an order.")
     if "HOLD" in types[:-1]:
@@ -184,6 +186,8 @@ def validate(request: dict, stations: dict[str, dict], markers: dict[str, dict],
         return _boarding(to, legs, types, posture, vehicles or {})
     if "FIRE_MISSION" in types or "CHECK_FIRE" in types:
         return _fire(to, legs, types, posture, stations, world_size, vehicles or {})
+    if types[0] == "CAS":
+        return _cas(to, legs[0], posture, world_size)
     if CARE_ORDERS.keys() & set(types):
         return _care(to, legs, types, posture, markers, buildings, world_size, vehicles or {}, casualties or {})
     single = SINGLE_LEG & set(types)
@@ -323,6 +327,21 @@ def _fire(to, legs, types, posture, stations, world_size, vehicles) -> dict:
             "route": None, "words": f"Copy, fire mission, {rounds} {ammo} at grid {grid}.",
             "mission": {"aim": aim, "grid": grid, "ammo": ammo, "rounds": rounds, "radius": radius,
                         "observer": observer}}
+
+
+def _cas(to, leg, posture, world_size) -> dict:
+    """Air support goes by grid alone, like fire, and the pilot attacks what he finds there."""
+    at = leg.get("at")
+    if not isinstance(at, str) or not (_GRID.match(at) or _FINE_GRID.match(at)):
+        raise Invalid(f"Air support needs a grid reference of six or eight figures, such as 041 041, and {at!r} isn't "
+                      f"one. Markers and building ids can't be passed to a pilot: work out the grid.")
+    aim, grid = parse_grid(at, world_size, precise=True)
+    least, most, default = CAS_RADIUS_M
+    radius = _number(leg.get("radius"), "radius") or default
+    if not least <= radius <= most:
+        raise Invalid(f"radius must be between {least} and {most} metres.")
+    return {"to": to, "mode": "cas", "engine_legs": [[aim, radius]], "posture": posture, "route": None,
+            "words": f"Copy, grid {grid}, on the way."}
 
 
 def _boarding(to, legs, types, posture, vehicles) -> dict:

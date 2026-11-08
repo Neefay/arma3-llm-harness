@@ -94,7 +94,7 @@ def build(raw: dict) -> Scenario:
                         "mode": enemy.get("mode", "hold"), "radius": enemy.get("radius", 100)})
     vehicles = [{"id": vehicle["id"], "class": vehicle["class"], "at": vehicle["at"],
                  "known": vehicle.get("known", True), "ammo": vehicle.get("ammo") or {},
-                 "medical": bool(vehicle.get("medical"))}
+                 "medical": bool(vehicle.get("medical")), "fly": float(vehicle.get("fly") or 0)}
                 for vehicle in raw.get("vehicles") or []]
     ids = {vehicle["id"] for vehicle in vehicles}
     for station in stations.values():

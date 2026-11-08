@@ -63,6 +63,7 @@ TRUTH_GROUP_FIELDS = ("group", "side", "able", "down", "mounted", "limping", "le
 # An order to the whole squad takes over from the rest of a chained order. POSTURE, fire orders, and orders about the
 # wounded leave it running, as they leave everything else.
 CANCELS_A_CHAIN = {"replace", "halt", "mount", "dismount", "chain"}
+AIR_PACE = 60  # m/s, about a Blackfoot's cruise; only for the "minutes out" a pilot gives
 
 
 class Runtime:
@@ -890,7 +891,7 @@ class Runtime:
         if mode == "posture":
             base = previous or {"kind": "posture", "legs": []}
             route = {**base, "keeps_progress": order_id, "acknowledge": "Copy.", "keeps_done": True}
-        elif mode in ("fire", "checkfire", "carry", "unload", "treat", "post"):
+        elif mode in ("fire", "checkfire", "cas", "carry", "unload", "treat", "post"):
             # About the gun, or the wounded, alone: the rest of the squad carries on with whatever it was doing.
             base = previous or {"kind": "posture", "legs": []}
             words = says or checked["words"] + self._care_estimate(mode, request, checked, callsign)
@@ -930,6 +931,9 @@ class Runtime:
     def _care_estimate(self, mode: str, request: dict, checked: dict, callsign: str) -> str:
         """How far and how long, from what the squad and the commander know, for orders about the wounded."""
         packet = self.packets.get(callsign)
+        if mode == "cas" and packet:  # an aircraft's own last report, at a helicopter's cruising speed
+            away = math.dist(packet["pos"], checked["engine_legs"][0][0])
+            return f" {reports._sentence(reports._time_words(max(away / AIR_PACE, 30)))} out."
         if mode not in ("carry", "treat", "post") or not packet:
             return ""
         in_combat = self._in_combat(callsign)

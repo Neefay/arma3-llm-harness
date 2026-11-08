@@ -104,15 +104,21 @@ def start(path: str, mode: str | None = None, harness: Harness | None = None, wa
             _result(h.exec(code, "server", timeout=10, args=[scenario.medical["wake_chance"]]))
     terrain = _sample_terrain(h, scenario, world_size) if world_name != "VR" else None
     _spawn_enemies(h, scenario, world_size)
-    buildings = _list_buildings(h, scenario, world_size)
+    buildings = _list_buildings(h, scenario, world_size, wait=world_name == "VR")
     _result(h.exec("brmh_cmd_buildings = createHashMapFromArray _this; true", "server", timeout=10,
                    args=[[building["id"], building["pos"]] for building in buildings]))
     vehicles = _spawn_vehicles(h, scenario, world_size)
+    flying = {vehicle["id"]: vehicle for vehicle in scenario.vehicles if vehicle.get("fly")}
     for station in scenario.stations.values():
-        for vehicle_id, seat in station["crew"].items():
-            if not _result(h.exec("_this call brmh_cmd_fnc_crew", "server", timeout=10,
-                                  args=[station["callsign"], vehicle_id, seat])):
-                raise HarnessError(f"{station['callsign']} couldn't crew {vehicle_id} as {seat}")
+        for vehicle_id, seats in station["crew"].items():
+            for seat in seats if isinstance(seats, list) else [seats]:  # an aircraft needs a pilot and a gunner
+                if not _result(h.exec("_this call brmh_cmd_fnc_crew", "server", timeout=10,
+                                      args=[station["callsign"], vehicle_id, seat])):
+                    raise HarnessError(f"{station['callsign']} couldn't crew {vehicle_id} as {seat}")
+            if vehicle_id in flying:  # it circles where it starts until it's needed
+                at, _ = parse_grid(flying[vehicle_id]["at"], world_size)
+                _result(h.exec("[brmh_cmd_stations get (_this # 0), _this # 1] call brmh_cmd_fnc_holdAir; true",
+                               "server", timeout=10, args=[station["callsign"], at]))
     attempt = _next_attempt(h.home, state.run_id)
     records_folder = h.home.runs / state.run_id / f"commander-{attempt}" / scenario.side
     records_folder.mkdir(parents=True, exist_ok=True)
@@ -162,13 +168,15 @@ def terrain_window(scenario: scenario_mod.Scenario, world_size: float) -> tuple[
     return centre, float(min(3000, max(800, round(reach + 700, -2))))
 
 
-def _list_buildings(h: Harness, scenario: scenario_mod.Scenario, world_size: float) -> list[dict]:
+def _list_buildings(h: Harness, scenario: scenario_mod.Scenario, world_size: float, wait: bool = True) -> list[dict]:
     """Numbers the enterable buildings in the area of operations, west to east. This is map knowledge: which
-    buildings exist, never who's in them."""
+    buildings exist, never who's in them. On a real map they're the world's own, so there's nothing to wait for, and an
+    area can have none."""
     if not scenario.ao:
         return []
     at, _ = parse_grid(scenario.ao["at"], world_size)
-    _wait_for_buildings(h, at, scenario.ao["radius"])
+    if wait:  # VR's village is built by the mission, which can still be at it
+        _wait_for_buildings(h, at, scenario.ao["radius"])
     rows = _result(h.exec("_this call brmh_cmd_fnc_listBuildings", "server", timeout=15,
                           args=[at, scenario.ao["radius"]]))
     rows = sorted(rows, key=lambda row: (round(row[0] / 50), row[1]))
@@ -184,7 +192,7 @@ def _spawn_vehicles(h: Harness, scenario: scenario_mod.Scenario, world_size: flo
         at, grid = parse_grid(vehicle["at"], world_size)
         ammo = [[word.upper(), rounds] for word, rounds in vehicle["ammo"].items()]
         name = _result(h.exec("_this call brmh_cmd_fnc_spawnVehicle", "server", timeout=10,
-                              args=[vehicle["id"], vehicle["class"], at, ammo]))
+                              args=[vehicle["id"], vehicle["class"], at, ammo, vehicle.get("fly", 0)]))
         if vehicle["medical"]:
             code = '(brmh_cmd_vehicles get _this # 0) setVariable ["ace_medical_isMedicalVehicle", true, true]; true'
             _result(h.exec(code, "server", timeout=10, args=[vehicle["id"]]))

@@ -1486,6 +1486,60 @@ def test_check_fire_and_needing_the_capability():
                         FIRING, MARKERS, 8192, [], LIST)
 
 
+AIR = {"Hawg": {"capabilities": ["CAS"]}, "Recon": {"capabilities": ["MOVE"]}}
+
+
+def cas(**leg) -> dict:
+    return orders.validate({"to": "Hawg", "legs": [{"type": "CAS", **leg}]}, AIR, MARKERS, 8192, [], LIST)
+
+
+def test_air_support_goes_by_grid_with_a_radius():
+    order = cas(at="037 024")
+    assert order["mode"] == "cas" and order["engine_legs"] == [[[3750.0, 2450.0], 150]]
+    assert order["words"] == "Copy, grid 037 024, on the way." and order["route"] is None
+    assert cas(at="0375 0245", radius=300)["engine_legs"] == [[[3755.0, 2455.0], 300]]
+
+
+@pytest.mark.parametrize(("leg", "words"), [
+    ({"at": "B"}, "Markers and building ids can't be passed to a pilot"),
+    ({}, "grid reference"),
+    ({"at": "037 024", "radius": 20}, "between 50 and 500"),
+    ({"at": "037 024", "radius": 900}, "between 50 and 500"),
+])
+def test_bad_air_support_is_refused(leg, words):
+    with pytest.raises(Invalid, match=words):
+        cas(**leg)
+
+
+def test_air_support_goes_alone_and_needs_the_capability():
+    with pytest.raises(Invalid, match="CAS must be the only leg"):
+        orders.validate({"to": "Hawg", "legs": [{"type": "CAS", "at": "037 024"}, {"type": "CAS", "at": "038 024"}]},
+                        AIR, MARKERS, 8192, [], LIST)
+    with pytest.raises(Invalid, match="can't do CAS"):
+        orders.validate({"to": "Recon", "legs": [{"type": "CAS", "at": "037 024"}]}, AIR, MARKERS, 8192, [], LIST)
+
+
+def test_the_pilot_reads_back_the_grid_and_how_long(tmp_path):
+    hawg = {"callsign": "Hawg", "role": "attack helicopter", "capabilities": ["CAS"], "at": "025 018"}
+    b = Battle(tmp_path, stations=[hawg], success={"station": "Hawg", "within_m": 50, "of": "034 030"})
+    b.start()
+    b.advance(102, callsign="Hawg", pos=[2550, 1850])
+    b.runtime.order({"to": "Hawg", "legs": [{"type": "CAS", "at": "037 024"}]})
+    assert b.game.calls[-1][1][2:4] == ["cas", [[[3750.0, 2450.0], 150]]]
+    b.advance(104, callsign="Hawg", pos=[2550, 1850], order="O-0001")
+    assert said(b)[-1] == "Copy, grid 037 024, on the way. Under a minute out."  # 1.3 km at 60 m/s
+
+
+def test_what_the_pilot_says_through_a_sortie(tmp_path):
+    b = Battle(tmp_path)
+    b.start()
+    for t, state, detail in ((102, "over", "037 024"), (104, "engaging", "guns"), (106, "off target", "")):
+        b.advance(t, medical=[["O-1", "sortie", "V1", "", state, detail]])
+    assert said(b) == ["Over grid 037 024, looking.", "Engaging, guns.", "Off target, returning to hold."]
+    b.advance(108, medical=[["O-2", "sortie", "V1", "", "nothing seen", "037 024"]])
+    assert said(b)[-1] == "Nothing seen around grid 037 024, returning to hold."
+
+
 def mission(state="firing", fired=0, want=6, reason="", word="HE", eta=27.6, in_air=0, gun="V1", order="O-1"):
     return [gun, order, state, reason, word, fired, want, eta, in_air]
 

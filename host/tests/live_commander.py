@@ -1205,6 +1205,32 @@ def play_village(client: Client) -> list[str]:
     return seen
 
 
+def play_cas(client: Client) -> list[str]:
+    """Close air support on a real game: the pilot flies to the grid, attacks what he finds, and says so."""
+    harness = Harness()
+    begin(client)
+    seen, sorties, deadline = [], 0, time.time() + 13 * 60
+    while time.time() < deadline and sorties < 3:
+        sorties += 1
+        client.tool("commander_order", to="Hawg", legs=[{"type": "CAS", "at": "037 024", "radius": 200}])
+        finish_turn(client, f"Sortie {sorties}")
+        while time.time() < deadline:
+            wake = next_wake(client, 300)
+            seen.append(wake["content"])
+            if sorties == 1 and "Engaging" in wake["content"]:
+                snap(harness, "cas engaging")
+            finish_turn(client, "Waiting")
+            if "MISSION END" in wake["content"] or "returning to hold" in wake["content"]:
+                break
+        if "MISSION END" in seen[-1]:
+            break
+    text = chr(10).join(seen)
+    assert "Hawg: Copy, grid 037 024, on the way." in text, text[-2000:]
+    assert "Hawg: Over grid 037 024, looking." in text
+    assert "returning to hold" in text or "MISSION END" in text
+    return seen
+
+
 def play_stratis_clear(client: Client) -> list[str]:
     """A squad going through buildings it can't all get into says which, and never calls those checked."""
     brief = begin(client)
@@ -1312,7 +1338,8 @@ def main() -> None:
                ("casevac village", "casevac_village", "hold", play_casevac_village),
                ("combat: take the village", "take_the_village", "hold", play_village, True),
                ("stratis: Camp Maxwell", "stratis_maxwell", "hold", play_stratis),
-               ("stratis: clearing the camp", "stratis_clear_check", "hold", play_stratis_clear)]
+               ("stratis: clearing the camp", "stratis_clear_check", "hold", play_stratis_clear),
+               ("stratis: close air support", "stratis_cas", "hold", play_cas)]
     wanted = sys.argv[1:]  # words to match in battle names; none means all of them
     try:
         for battle in battles:

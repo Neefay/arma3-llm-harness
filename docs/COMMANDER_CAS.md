@@ -72,6 +72,26 @@ Nobody but an observer reports what the strike hit, as with fire missions. Obser
 5. **Weapon choice.** Should the commander choose weapons, or the pilot? AI pilots pick on their own. Restricting them means removing the other magazines for the run.
 6. **Helicopters.** The Blackfoot did better than the A-164 against infantry. Should a scenario offer both?
 
-## First cut
+## First cut (built and played live)
 
-What can be built now without those answers: the `CAS` order realised as a `SAD` waypoint, on the declared state-machine runner (holding, inbound, over the target, returning). It would get the radio lines above, a Stratis scenario with a Blackfoot, and a live battle.
+The `CAS` order is realised as a `SAD` waypoint on the declared state-machine runner. The aircraft spawns flying (a scenario vehicle with `fly: <metres>`), crewed by its station (`crew: { V1: [driver, gunner] }`), and circles where it starts until it's needed. The machine is `brmh_cmd_sortieMachine`, charted in the model's appendix.
+
+What the pilot says, as played on Stratis (`scenarios/commander/stratis_cas.yaml`, live scene "stratis: close air support"):
+
+```text
+Hawg: Copy, grid 037 024, on the way. Under a minute out.
+Hawg: Over grid 037 024, looking.
+Hawg: Contact, a few contacts, bearing 330, roughly 200 metres; one contact, bearing 340, roughly 200 metres. Engaging.
+Hawg: Engaging, guns.
+```
+
+The gunner killed four of the six in about 1.5 s from about 350 m, and Recon killed the other two when they walked into it.
+
+Two findings:
+
+- **Prone infantry in grass are invisible from the air.** With the squad set to hold, its men saw the helicopter and lay down. The crew passed within 74 m three times and never detected them (`knowsAbout` 0), so each sortie ended "Nothing seen around grid 037 024, returning to hold." Revealed by script, the same crew fired within a minute. This is fog, not a fault, but it makes CAS useless against an enemy that has gone to ground, unless someone on the ground can show the pilot where they are.
+- **The pilot's contact report uses the existing words:** bearing and range from the aircraft. That's question 3.
+
+## Recommendation: talk-on
+
+A station that can see the enemy, named as `observer` on the CAS order as for fire missions, passes the pilot what it sees: the enemy it knows about within the radius, at its own level of knowledge. That's a radio talk-on, and it moves knowledge from one station to another, so it isn't a leak. In model terms it's an arrow from `Knowledge(observer)` to `Knowledge(pilot)`, which needs a line in the model. It would also cover question 1(b) without a laser.

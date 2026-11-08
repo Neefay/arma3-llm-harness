@@ -192,6 +192,7 @@ Realisation  =  the engine mechanism; non-normative
 | `UNLOAD` | Detail | Finite | None | Scripted |
 | `FIRE_MISSION` | Guns | Finite | Crew | Engine |
 | `CHECK_FIRE` | Guns | Instant | Crew | Engine |
+| `CAS` | Guns | Finite | Crew | Engine |
 | `POSTURE` | Settings | Instant | None | Engine |
 
 `All` is every member not crewing a gun.
@@ -342,6 +343,25 @@ stateDiagram-v2
   going --> building: arrived
   going --> [*]: unreachable, or 5 min
   building --> [*]: built
+```
+
+<!-- machine: sortie -->
+```mermaid
+stateDiagram-v2
+  state "inbound" as inbound
+  state "over" as over
+  state "engaging" as engaging
+  state "leaving" as leaving
+  [*] --> inbound: CAS
+  inbound --> over: near the grid
+  inbound --> leaving: 10 min
+  over --> engaging: first shot
+  over --> leaving: nothing left to attack, or 4 min
+  engaging --> leaving: nothing left to attack, or 4 min
+  leaving --> [*]: off target, or nothing seen
+  inbound --> [*]: aircraft lost, out of ammunition, or called off
+  over --> [*]: aircraft lost, out of ammunition, or called off
+  engaging --> [*]: aircraft lost, out of ammunition, or called off
 ```
 
 <!-- machine: fire -->

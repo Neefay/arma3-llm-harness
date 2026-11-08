@@ -1127,6 +1127,10 @@ brmh_cmd_fnc_order = {
 		[_group, _order, _legs # 0 # 0] call brmh_cmd_fnc_checkFire;
 		true
 	};
+	if (_mode isEqualTo "cas") exitWith {
+		([_group, _order] + (_legs # 0)) call brmh_cmd_fnc_casOrder;
+		true
+	};
 	if (_mode in ["carry", "unload", "treat", "post"]) exitWith {
 		([_group, _order] + (_legs # 0)) call (missionNamespace getVariable format ["brmh_cmd_fnc_%1Order", _mode]);
 		true
@@ -1327,14 +1331,22 @@ brmh_cmd_fnc_spawnEnemy = {
 		1 - Class (STRING)
 		2 - Position [x, y] (ARRAY)
 		3 - Ammunition [magazine, rounds] pairs, empty to leave it as it comes (ARRAY)
+		4 - (OPTIONAL) Height to start flying at, metres; 0 on the ground (NUMBER) - Default: 0
 	USAGE:
 		["V1", "B_Mortar_01_F", [4150, 3350], [["8Rnd_82mm_Mo_shells", 16]]] call brmh_cmd_fnc_spawnVehicle;
+		["V2", "B_Heli_Attack_01_dynamicLoadout_F", [2500, 1500], [], 150] call brmh_cmd_fnc_spawnVehicle;
 	RETURNS: Its display name
 	ENVIRONMENT: Server
 */
 brmh_cmd_fnc_spawnVehicle = {
-	params [["_key", "", [""]], ["_class", "", [""]], ["_at", [], [[]], 2], ["_ammo", [], [[]]]];
-	private _vehicle = createVehicle [_class, _at + [0], [], 0, "NONE"];
+	params [["_key", "", [""]], ["_class", "", [""]], ["_at", [], [[]], 2], ["_ammo", [], [[]]], ["_fly", 0, [0]]];
+	private _vehicle = createVehicle [_class, _at + [0], [], 0, ["NONE", "FLY"] select (_fly > 0)];
+	if (_fly > 0) then {
+		// Airborne and already moving, so it doesn't stall in its first second.
+		_vehicle setPosASL [_at # 0, _at # 1, (getTerrainHeightASL _at) + _fly];
+		_vehicle setVelocityModelSpace [0, [40, 100] select (_vehicle isKindOf "Plane"), 0];
+		_vehicle flyInHeight _fly;
+	};
 	_vehicle setVariable ["brmh_cmd_key", _key];
 	brmh_cmd_vehicles set [_key, _vehicle];
 	if (getNumber (configOf _vehicle >> "artilleryScanner") > 0) then {
@@ -2631,6 +2643,182 @@ brmh_cmd_fnc_machineProblems = {
 		} forEach (_y getOrDefault ["ON", []]);
 	} forEach _states;
 	_problems
+};
+
+// Close air support: the pilot flies to the grid and attacks whatever he finds there himself, by the engine's own
+// seek-and-destroy. Nothing is aimed for him: no AI aircraft will bomb a bare grid (docs/COMMANDER_CAS.md).
+brmh_cmd_sortieMachine = [
+	["KIND", "sortie"],
+	["INITIAL", "inbound"],
+	["ALWAYS", [
+		[{
+			not alive (_this get "VEHICLE") or {
+				not ([driver (_this get "VEHICLE")] call brmh_cmd_fnc_able)
+			}
+		}, {}, "", "lost"],
+		[{
+			[_this get "VEHICLE"] call brmh_cmd_fnc_winchester
+		}, {}, "", "winchester"]
+	]],
+	["STATES", [
+		["inbound", [
+			["ON", [
+				[{
+					((_this get "VEHICLE") distance2D (_this get "AIM")) <= (_this get "RADIUS") + 300
+				}, {
+					_this get "GRID"
+				}, "over", "over"]
+			]],
+			["DEADLINE", [600, {}, "leaving", ""]]
+		]],
+		["over", [
+			["ON", [
+				[{
+					[_this] call brmh_cmd_fnc_sortieShots > 0
+				}, {
+					((_this get "VEHICLE") getVariable ["brmh_cmd_lastShot", [0, "guns"]]) # 1
+				}, "engaging", "engaging"],
+				[{
+					[_this] call brmh_cmd_fnc_sortieDone
+				}, {}, "leaving", ""]
+			]],
+			["DEADLINE", [240, {}, "leaving", ""]]
+		]],
+		["engaging", [
+			["ON", [
+				[{
+					[_this] call brmh_cmd_fnc_sortieDone
+				}, {}, "leaving", ""]
+			]],
+			["DEADLINE", [240, {}, "leaving", ""]]
+		]],
+		["leaving", [
+			["ON", [
+				[{
+					[_this] call brmh_cmd_fnc_sortieShots > 0
+				}, {}, "", "off target"],
+				[{
+					true
+				}, {
+					_this get "GRID"
+				}, "", "nothing seen"]
+			]],
+			["DEADLINE", [1, {}, "", "nothing seen"]]
+		]]
+	]],
+	["RELEASE", {
+		private _group = _this get "GROUP";
+		if (alive (_this get "VEHICLE")) then {
+			[_group, _group getVariable ["brmh_cmd_hold", getPosATL (_this get "VEHICLE")]] call brmh_cmd_fnc_holdAir;
+		};
+	}]
+];
+
+brmh_cmd_fnc_sortieShots = {
+	params ["_machine"];
+	((_machine get "VEHICLE") getVariable ["brmh_cmd_shots", 0]) - (_machine get "SHOTS")
+};
+
+// The seek-and-destroy waypoint is finished: the pilot has nothing more he knows of to attack there.
+brmh_cmd_fnc_sortieDone = {
+	params ["_machine"];
+	(currentWaypoint (_machine get "GROUP")) > (_machine get "WAYPOINT")
+};
+
+// "037024" as it's said on the radio, "037 024".
+brmh_cmd_fnc_spokenGrid = {
+	params ["_grid"];
+	private _half = (count _grid) / 2;
+	format ["%1 %2", _grid select [0, _half], _grid select [_half]]
+};
+
+// Nothing left to drop or shoot. Flares and the designator's batteries aren't weapons.
+brmh_cmd_fnc_winchester = {
+	params ["_vehicle"];
+	((magazinesAllTurrets _vehicle) findIf {
+		(_x # 2) > 0 and {
+			not ("cmflare" in toLowerANSI (_x # 0))
+		} and {
+			(_x # 0) isNotEqualTo "Laserbatteries"
+		}
+	}) < 0
+};
+
+/*
+	NAME: brmh_cmd_fnc_holdAir
+	DESCRIPTION: An aircraft circles a place until it's needed.
+	PARAMETERS:
+		0 - Group (GROUP)
+		1 - Position (ARRAY)
+	ENVIRONMENT: Server
+*/
+brmh_cmd_fnc_holdAir = {
+	params [["_group", grpNull, [grpNull]], ["_at", [], [[]], [2, 3]]];
+	_group setVariable ["brmh_cmd_hold", _at];
+	[_group] call brmh_cmd_fnc_clearRoute;
+	private _wp = _group addWaypoint [(_at select [0, 2]) + [0], 0];
+	_wp setWaypointType "LOITER";
+	_wp setWaypointLoiterType "CIRCLE_L";
+	_wp setWaypointLoiterRadius ([500, 1000] select ((vehicle leader _group) isKindOf "Plane"));
+	_group setCombatMode "YELLOW";
+};
+
+/*
+	NAME: brmh_cmd_fnc_casOrder
+	DESCRIPTION: Sends a station's aircraft to attack what it finds around a grid, then back to its hold. A new order
+		calls off the one before.
+	PARAMETERS:
+		0 - Group (GROUP)
+		1 - Order id (STRING)
+		2 - Grid centre [x, y] (ARRAY)
+		3 - Radius, metres (NUMBER)
+	ENVIRONMENT: Server
+*/
+brmh_cmd_fnc_casOrder = {
+	params ["_group", "_order", "_aim", "_radius"];
+	private _vehicle = vehicle leader _group;
+	{
+		if ((_x get "GROUP") isEqualTo _group and {
+			((_x get "SPEC") get "KIND") isEqualTo "sortie"
+		}) then {
+			_x call ["#END", ["called off"]];
+		};
+	} forEach brmh_cmd_builds;
+	if (not (_vehicle isKindOf "Air") or {
+		not alive _vehicle
+	}) exitWith {
+		[_group, _order, "sortie", "", "not flying"] call brmh_cmd_fnc_careSay;
+	};
+	if (isNil {
+		_vehicle getVariable "brmh_cmd_shotsHandler"
+	}) then {
+		_vehicle setVariable ["brmh_cmd_shotsHandler", _vehicle addEventHandler ["Fired", {
+			params ["_vehicle", "", "", "", "_ammo"];
+			private _word = switch (true) do {
+				case (_ammo isKindOf ["BombCore", configFile >> "CfgAmmo"]): {
+					"bombs"
+				};
+				case (_ammo isKindOf ["MissileCore", configFile >> "CfgAmmo"]): {
+					"missiles"
+				};
+				case (_ammo isKindOf ["RocketCore", configFile >> "CfgAmmo"]): {
+					"rockets"
+				};
+				default {
+					"guns"
+				};
+			};
+			_vehicle setVariable ["brmh_cmd_lastShot", [time, _word]];
+			_vehicle setVariable ["brmh_cmd_shots", (_vehicle getVariable ["brmh_cmd_shots", 0]) + 1];
+		}]];
+	};
+	[_group] call brmh_cmd_fnc_clearRoute;
+	private _wp = _group addWaypoint [(_aim select [0, 2]) + [0], 0];
+	_wp setWaypointType "SAD";
+	_wp setWaypointCompletionRadius _radius;
+	_group setBehaviour "COMBAT";
+	_group setCombatMode "RED";
+	brmh_cmd_builds pushBack ([brmh_cmd_sortieMachine, [["GROUP", _group], ["ORDER", _order], ["SUBJECT", _vehicle getVariable ["brmh_cmd_key", ""]], ["VEHICLE", _vehicle], ["AIM", _aim], ["RADIUS", _radius], ["GRID", [mapGridPosition _aim] call brmh_cmd_fnc_spokenGrid], ["WAYPOINT", _wp # 1], ["SHOTS", _vehicle getVariable ["brmh_cmd_shots", 0]]]] call brmh_cmd_fnc_newMachine);
 };
 
 // The aid post: a medic walks to the place, then builds. Its states are the words the radio uses for them.
