@@ -203,14 +203,31 @@ def _spawn_vehicles(h: Harness, scenario: scenario_mod.Scenario, world_size: flo
 def _spawn_enemies(h: Harness, scenario: scenario_mod.Scenario, world_size: float) -> None:
     for enemy in scenario.enemies:
         at, _ = parse_grid(enemy["at"], world_size)
+        reachable = []
         if enemy["mode"] == "garrison":
             _wait_for_buildings(h, at, enemy["radius"])
+            reachable = _reachable_positions(h, at, enemy["radius"])
         spawned = _result(h.exec('[_this # 0, [east, west] select (_this # 1 isEqualTo "west"), _this # 2, _this # 3, '
-                                 "_this # 4, _this # 5, _this # 6] call brmh_cmd_fnc_spawnEnemy", "server", timeout=10,
-                                 args=[enemy["id"], enemy["side"], enemy["units"], enemy["class"], at, enemy["mode"],
-                                       enemy["radius"]]))
+                                 "_this # 4, _this # 5, _this # 6, _this # 7] call brmh_cmd_fnc_spawnEnemy", "server",
+                                 timeout=10, args=[enemy["id"], enemy["side"], enemy["units"], enemy["class"], at,
+                                                   enemy["mode"], enemy["radius"], reachable]))
         if spawned != enemy["units"]:
             raise HarnessError(f"enemy {enemy['id']}: spawned {spawned} of {enemy['units']}")
+
+
+def _reachable_positions(h: Harness, at: list[float], radius: float, timeout: float = 240) -> list:
+    """The building positions a soldier really got to, so a garrison is never placed where nobody can clear it. Takes a
+    minute or two: see brmh_cmd_fnc_probePositions."""
+    _result(h.exec("_this call brmh_cmd_fnc_probePositions; true", "server", timeout=20, args=[at, radius]))
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        done, reachable = _result(h.exec("brmh_cmd_probe", "server", timeout=10))
+        if done:
+            if not reachable:
+                raise HarnessError(f"no building position within {radius} m of {at} could be reached, so no garrison")
+            return reachable
+        time.sleep(2)
+    raise HarnessError(f"probing building positions around {at} didn't finish in {timeout} s")
 
 
 def _wait_for_buildings(h: Harness, at: list[float], radius: float, timeout: float = 30) -> None:

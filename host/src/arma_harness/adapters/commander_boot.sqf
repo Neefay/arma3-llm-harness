@@ -601,7 +601,14 @@ brmh_cmd_fnc_crew = {
 	true
 };
 
-// Who a squad knows is down: its own, wherever they are, and anyone else's within sight of its leader.
+// Whether a man is on the squad's side. By his group's side: ACE can make a man who's down captive, which changes his own.
+// The enemy's downed are never carried, treated or listed.
+brmh_cmd_fnc_friendly = {
+	params ["_group", "_man"];
+	((side _group) getFriend (side group _man)) >= 0.6
+};
+
+// Who a squad knows is down: its own, wherever they are, and anyone else's on its side within sight of its leader.
 brmh_cmd_fnc_casualties = {
 	params ["_group", "_leader"];
 	private _down = (units _group) select {
@@ -613,6 +620,8 @@ brmh_cmd_fnc_casualties = {
 	private _others = brmh_cmd_down select {
 		alive _x and {
 			group _x isNotEqualTo _group
+		} and {
+			[_group, _x] call brmh_cmd_fnc_friendly
 		} and {
 			(_x distance2D _leader) < 30
 		} and {
@@ -1315,6 +1324,100 @@ brmh_cmd_fnc_killStation = {
 };
 
 /*
+	NAME: brmh_cmd_fnc_probePositions
+	DESCRIPTION: Finds the building positions AI can really get to, by sending a soldier to each. The engine's own path
+		planner says every one is reachable, and on Stratis soldiers stopped 3 m outside cargo houses it had planned paths
+		into. A garrison placed where nobody can reach can't be cleared, so garrisons only go where these got. The walkers
+		are hidden, captive and can't be hurt, and are deleted when done. Operator action, before anyone else is placed.
+	PARAMETERS:
+		0 - Centre [x, y] (ARRAY)
+		1 - Radius, metres (NUMBER)
+	USAGE:
+		[[3250, 2950], 120] call brmh_cmd_fnc_probePositions;
+		brmh_cmd_probe params ["_done", "_reachable"];
+	RETURNS: Nothing. brmh_cmd_probe becomes [true, positions reached] when every walker has finished
+	ENVIRONMENT: Server
+*/
+brmh_cmd_fnc_probePositions = {
+	params [["_centre", [], [[]], 2], ["_radius", 100, [0]]];
+	brmh_cmd_probe = [false, []];
+	brmh_cmd_probeWalkers = [];
+	{
+		private _house = _x;
+		private _outside = _house getPos [((boundingBoxReal _house) # 2) + 4, random 360];
+		{
+			private _group = createGroup [civilian, true];
+			private _man = _group createUnit ["C_man_1", _outside, [], 4, "NONE"];
+			_man setCaptive true;
+			_man allowDamage false;
+			hideObjectGlobal _man;
+			// Those for one building set off a few seconds apart, so they don't jam its doorway.
+			brmh_cmd_probeWalkers pushBack (createHashMapFromArray [["MAN", _man], ["SPOT", _x], ["START", time + 4 * _forEachIndex], ["BEST", 1e9], ["GAIN", time + 4 * _forEachIndex]]);
+		} forEach (_house buildingPos -1);
+	} forEach (nearestObjects [_centre + [0], ["House"], _radius] select {
+		count (_x buildingPos -1) > 0
+	});
+	if (not isNil "brmh_cmd_probePfh") then {
+		[brmh_cmd_probePfh] call CBA_fnc_removePerFrameHandler;
+	};
+	brmh_cmd_probePfh = [{
+		call brmh_cmd_fnc_stepProbe
+	}, 1] call CBA_fnc_addPerFrameHandler;
+};
+
+brmh_cmd_fnc_stepProbe = {
+	{
+		private _walker = _x;
+		private _man = _walker get "MAN";
+		private _spot = _walker get "SPOT";
+		if (time >= (_walker get "START") and {
+			not ("SENT" in _walker)
+		}) then {
+			_man doMove _spot;
+			_walker set ["SENT", true];
+		};
+		if ("SENT" in _walker) then {
+			private _away = _man distance _spot;
+			if (_away < (_walker get "BEST") - 0.5) then {
+				_walker set ["BEST", _away];
+				_walker set ["GAIN", time];
+			};
+			// The same test as clearing's: on the position, and on its floor.
+			if ((_man distance2D _spot) < 1.5 and {
+				abs (((getPosATL _man) # 2) - (_spot # 2)) < 0.8
+			}) then {
+				_walker set ["RESULT", true];
+			} else {
+				if (not alive _man or {
+					(time - (_walker get "GAIN")) > 20
+				} or {
+					(time - (_walker get "START")) > 120
+				}) then {
+					_walker set ["RESULT", false];
+				};
+			};
+		};
+	} forEach (brmh_cmd_probeWalkers select {
+		not ("RESULT" in _x)
+	});
+	if ((brmh_cmd_probeWalkers findIf {
+		not ("RESULT" in _x)
+	}) < 0) then {
+		brmh_cmd_probe = [true, (brmh_cmd_probeWalkers select {
+			_x get "RESULT"
+		}) apply {
+			_x get "SPOT"
+		}];
+		{
+			deleteVehicle (_x get "MAN");
+		} forEach brmh_cmd_probeWalkers;
+		brmh_cmd_probeWalkers = [];
+		[brmh_cmd_probePfh] call CBA_fnc_removePerFrameHandler;
+		brmh_cmd_probePfh = nil;
+	};
+};
+
+/*
 	NAME: brmh_cmd_fnc_spawnEnemy
 	DESCRIPTION: Spawns an opposing group for a scenario. Operator action. Enemies are never on the net.
 	PARAMETERS:
@@ -1325,13 +1428,14 @@ brmh_cmd_fnc_killStation = {
 		4 - Position [x, y] (ARRAY)
 		5 - Mode: "hold" stays put, "garrison" takes positions in nearby buildings, "patrol" walks the area (STRING)
 		6 - Radius in metres (NUMBER)
+		7 - (OPTIONAL) For a garrison, the positions it may take, from brmh_cmd_fnc_probePositions (ARRAY) - Default: any
 	USAGE:
 		["East 1", east, 6, "O_Soldier_F", [4100, 4160], "garrison", 120] call brmh_cmd_fnc_spawnEnemy;
 	RETURNS: Number of soldiers created
 	ENVIRONMENT: Server
 */
 brmh_cmd_fnc_spawnEnemy = {
-	params [["_id", "", [""]], ["_side", east, [east]], ["_count", 1, [0]], ["_class", "", [""]], ["_at", [], [[]], 2], ["_mode", "hold", [""]], ["_radius", 100, [0]]];
+	params [["_id", "", [""]], ["_side", east, [east]], ["_count", 1, [0]], ["_class", "", [""]], ["_at", [], [[]], 2], ["_mode", "hold", [""]], ["_radius", 100, [0]], ["_reachable", [], [[]]]];
 	private _centre = _at + [0];
 	private _group = createGroup [_side, false];
 	for "_i" from 1 to _count do {
@@ -1340,10 +1444,13 @@ brmh_cmd_fnc_spawnEnemy = {
 	_group setGroupIdGlobal [_id];
 	brmh_cmd_enemies pushBack _group;
 	if (_mode isEqualTo "garrison") then {
-		private _spots = [];
-		{
-			_spots append (_x buildingPos -1);
-		} forEach nearestObjects [_centre, ["House"], _radius];
+		// Only where a soldier was seen to get, when the operator probed first: see brmh_cmd_fnc_probePositions.
+		private _spots = +_reachable;
+		if (_spots isEqualTo []) then {
+			{
+				_spots append (_x buildingPos -1);
+			} forEach nearestObjects [_centre, ["House"], _radius];
+		};
 		{
 			if (_spots isNotEqualTo []) then {
 				_x setPosATL (_spots deleteAt floor random count _spots);
@@ -2048,7 +2155,9 @@ brmh_cmd_fnc_carryOrder = {
 			}
 		})) arrayIntersect (brmh_cmd_down + units _group);
 		_men = _men select {
-			(_x distance2D leader _group) < 100
+			(_x distance2D leader _group) < 100 and {
+				[_group, _x] call brmh_cmd_fnc_friendly
+			}
 		};
 	};
 	if (_men isEqualTo []) exitWith {
@@ -2228,6 +2337,8 @@ brmh_cmd_fnc_treatOrder = {
 		_men = brmh_cmd_down select {
 			alive _x and {
 				(_x distance2D leader _group) < 100
+			} and {
+				[_group, _x] call brmh_cmd_fnc_friendly
 			}
 		};
 	};
