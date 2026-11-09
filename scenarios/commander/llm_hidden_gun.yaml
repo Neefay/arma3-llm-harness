@@ -1,0 +1,55 @@
+# Commander test 2, "The hidden gun" (docs/COMMANDER_SCENARIOS.md): recon before the assault, and a threat nobody
+# mentioned. The briefing speaks of a section in the camp. An HMG also covers the obvious approach from the south, from
+# one of three firing positions, each checked on the terrain to see more than half of it; sometimes a second, lower gun
+# covers it too.
+name: llm_hidden_gun
+mission: commander_stratis
+time_limit: "30:00"
+ao: { at: "032 026", radius: 600 }
+objective: Take Camp Maxwell, on the hill around grid 032 029.
+text: >
+  An enemy section holds Camp Maxwell, on the hilltop around grid 032 029, about 800 m north of Agios Ioannis. Alpha and
+  Bravo are at Agios Ioannis, around grid 030 021. Recon, a scout team trained to correct fire, is at grid 031 022.
+  Hammer has a mortar at grid 030 022 with 12 HE and 4 smoke rounds, and no resupply. Take the camp.
+vehicles:
+  - { id: V1, class: B_Mortar_01_F, at: "030 022", ammo: { HE: 12, SMOKE: 4 } }
+stations:
+  - callsign: Alpha
+    role: infantry squad
+    capabilities: [MOVE, HOLD, SEARCH, CLEAR, OCCUPY, CORDON, ATTACK, DEFEND, PATROL_AREA, SWEEP, SENTRY, PATROL, HALT, POSTURE, CARRY, TREAT]
+    at: "030 021"
+    units: 8
+    medics: 1
+  - callsign: Bravo
+    role: infantry squad
+    capabilities: [MOVE, HOLD, SEARCH, CLEAR, OCCUPY, CORDON, ATTACK, DEFEND, PATROL_AREA, SWEEP, SENTRY, PATROL, HALT, POSTURE, CARRY, TREAT]
+    at: "031 021"
+    units: 8
+    medics: 1
+  - callsign: Recon
+    role: scout team, small and easily lost, trained to correct fire
+    capabilities: [MOVE, HOLD, SENTRY, PATROL, PATROL_AREA, CORDON, HALT, POSTURE]
+    at: "031 022"
+    units: 3
+    class: B_recon_F
+    spotter: true
+  - callsign: Hammer
+    role: mortar section
+    capabilities: [HOLD, FIRE_MISSION, CHECK_FIRE, HALT, POSTURE]
+    at: "030 022"
+    units: 3
+    crew: { V1: gunner }
+enemies:
+  - { id: East Section, at: "032 029", units: 6, mode: garrison, radius: 120 }
+  - { id: East Gun, at: { one_of: ["032 027", "033 028", "033 027"] }, vehicle: O_HMG_01_high_F, dir: 190, mode: hold }
+variant:
+  one_of:
+    - enemies: []
+    - enemies: []
+    - enemies: [{ id: East Second Gun, at: { one_of: ["032 028", "031 028"] }, vehicle: O_HMG_01_F, dir: 180, mode: hold }]
+markers:
+  - { id: O1, kind: objective, label: Camp Maxwell, at: "032 029" }
+success:
+  enemy_cleared: true
+failure: { casualties_pct: 50 }
+mid_turn_messages: hold

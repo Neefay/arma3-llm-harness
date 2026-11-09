@@ -24,7 +24,8 @@ def run(code: str):
 
 failed = []
 for name in [arg for arg in sys.argv[1:] if not arg.startswith("--")]:
-    for seed in (5, 6):
+    seeds = next((arg.split("=", 1)[1] for arg in sys.argv if arg.startswith("--seeds=")), "5,6")
+    for seed in (int(one) for one in seeds.split(",")):
         started = time.time()
         try:
             out = operator.start(name, None, harness, seed=seed)
@@ -37,7 +38,8 @@ for name in [arg for arg in sys.argv[1:] if not arg.startswith("--")]:
         [brmh_cmd_stations toArray false apply { [_x # 0, count units (_x # 1)] },
          brmh_cmd_enemies apply { [groupId _x, count units _x] },
          brmh_cmd_vehicles toArray false apply {
-             [_x # 0, typeOf (_x # 1), count crew (_x # 1), round ((getPosATL (_x # 1)) # 2)] }]
+             [_x # 0, typeOf (_x # 1), count crew (_x # 1), round ((getPosATL (_x # 1)) # 2),
+              round (((vectorUp (_x # 1)) # 2) * 100) / 100, mapGridPosition (_x # 1)] }]
         """)
         print(f"ok {name} seed {seed} in {time.time() - started:.0f} s; drawn {battle['drawn']}", flush=True)
         print("   stations", placed[0], "\n   enemies", placed[1], "\n   vehicles", placed[2], flush=True)

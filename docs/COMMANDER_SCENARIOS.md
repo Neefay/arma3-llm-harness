@@ -13,7 +13,7 @@ Rules for all of them:
 | # | Scenario | What it tests | Map | Harness today |
 |---|---|---|---|---|
 | 1 | Hold the crossroads | Early warning and repositioning against an attack from an unknown direction | Stratis | Needs a timed enemy assault and a "hold" objective |
-| 2 | The hidden gun | Recon before the assault, and dealing with a threat nobody mentioned | Stratis | Needs crewed enemy weapons |
+| 2 | The hidden gun | Recon before the assault, and dealing with a threat nobody mentioned | Stratis | Built: `llm_hidden_gun` |
 | 3 | Two roads | Route choice from the ground, scouting a defile | Stratis | Built: `llm_two_roads` |
 | 4 | Pinned in the open | Saving the wounded under fire, smoke, and timing | VR or Stratis | Needs a "casualties evacuated" objective |
 | 5 | The decoy | Not overcommitting to the first contact | Stratis | Built: `llm_decoy` |
@@ -249,7 +249,7 @@ In order of how many scenarios each one unlocks:
 | More objective kinds: hold an area until a time, a vehicle destroyed, named casualties evacuated, one enemy group cleared, objectives in order | 1, 4, 6, 7 | medium |
 | CAS talk-on | 10 | small |
 
-Scenarios 3, 5, 8, 9 and 10 are built. The rest wait on the needs above.
+Scenarios 2, 3, 5, 8, 9 and 10 are built. The rest wait on the needs above.
 
 ## Measuring
 
