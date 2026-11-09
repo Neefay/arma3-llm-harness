@@ -176,6 +176,8 @@ def build(raw: dict) -> Scenario:
             "at": station["at"], "units": station.get("units", 4), "class": station.get("class", "B_Soldier_F"),
             "spotter": bool(station.get("spotter")), "crew": station.get("crew") or {},
             "medics": int(station.get("medics") or 0),
+            # An aircraft's fuel: when it's on station until, after which it leaves. None stays all battle.
+            "on_station_s": parse_time(station["on_station"]) if station.get("on_station") else None,
         }
     debounce = raw.get("debounce") or {}
     mode = raw.get("mid_turn_messages", HOLD)

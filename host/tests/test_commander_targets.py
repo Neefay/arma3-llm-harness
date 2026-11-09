@@ -108,3 +108,34 @@ def test_a_gun_destroyed_mid_fight_is_said_then(tmp_path):
                                                                ["U9", "Offroad", "031031", True]])
     assert "T1 is destroyed, grid 032 033." in heard
     assert not any("Offroad" in line for line in heard)  # an empty car can wait till the shooting stops
+
+
+HAWG = {"callsign": "Hawg", "role": "attack helicopter", "capabilities": ["CAS"], "at": "025 018",
+        "on_station": "2:00"}
+
+
+def test_a_pilot_gives_contacts_from_the_grid_he_was_sent_to(tmp_path):
+    b = Battle(tmp_path, stations=[HAWG], success={"station": "Hawg", "within_m": 50, "of": "060 060"},
+               time_limit="20:00")
+    b.start()
+    b.runtime.order({"to": "Hawg", "legs": [{"type": "CAS", "at": "037 024"}]})
+    infantry = {"pos": [3850.0, 2550.0], "kind": "infantry", "age_s": 1.0, "accuracy_m": 5}
+    heard = settle(b, 102, callsign="Hawg", pos=[2550.0, 1850.0], contacts=[infantry])
+    contact = next(line for line in heard if line.startswith("Contact,"))
+    assert "one infantry, roughly 150 metres north-east of your grid" in contact, contact
+    assert "bearing" not in contact
+
+
+def test_an_aircraft_leaves_when_its_time_on_station_is_up(tmp_path):
+    from arma_harness.commander.runtime import LEAVE_CODE
+
+    b = Battle(tmp_path, stations=[HAWG], success={"station": "Hawg", "within_m": 50, "of": "060 060"},
+               time_limit="20:00")
+    b.start()
+    assert b.runtime.roster()["stations"][0]["on_station_until"] == "T+02:00"
+    b.advance(230, callsign="Hawg", pos=[2550.0, 1850.0])  # 2:10 into the battle
+    assert "Bingo fuel, leaving the area." in said(b)
+    assert any(call[0] == LEAVE_CODE and call[1] == ["Hawg"] for call in b.game.calls)
+    assert b.runtime.roster()["stations"][0]["left_the_area"]
+    with pytest.raises(Invalid, match="Hawg has left the area"):
+        b.runtime.order({"to": "Hawg", "legs": [{"type": "CAS", "at": "037 024"}]})

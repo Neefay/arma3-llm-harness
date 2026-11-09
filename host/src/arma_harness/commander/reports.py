@@ -130,7 +130,9 @@ def ammo_band(rounds: float, baseline: float) -> str:
 def contact_groups(packet: dict, max_age: float = CONTACT_FORGOTTEN_S) -> list[dict]:
     """Group contacts by compass sector from this group, newest knowledge first. The sector only decides what counts as
     one report. What gets said is a bearing to the nearest contact in it."""
-    x, y = packet["pos"]
+    # A pilot speaks from the grid he was sent to, which means something on the ground; his own position doesn't.
+    ref = packet.get("contact_ref")
+    x, y = (ref[0], ref[1]) if ref else packet["pos"]
     groups: dict[str, dict] = {}
     for contact in packet.get("contacts") or []:
         if contact["age_s"] > max_age:
@@ -140,7 +142,7 @@ def contact_groups(packet: dict, max_age: float = CONTACT_FORGOTTEN_S) -> list[d
         entry = groups.setdefault(direction, {"direction": direction, "count": 0, "kinds": {}, "range": math.inf,
                                               "age_s": math.inf, "nearest": contact["pos"], "offset": (dx, dy),
                                               "accuracy_m": contact.get("accuracy_m", 0), "names": {}, "ids": [],
-                                              "ids_by_kind": {}})
+                                              "ids_by_kind": {}, "from_grid": bool(ref)})
         entry["count"] += 1
         entry["kinds"][contact["kind"]] = entry["kinds"].get(contact["kind"], 0) + 1
         if contact.get("name"):
@@ -182,8 +184,13 @@ def contact_phrase(group: dict, buildings: list[dict] | None = None, known: set 
                          sorted((one for one in by_kind.get(kind, []) if known is None or one in known),
                                 key=lambda one: (len(one), one)))
              for kind in kinds]
-    bearing = spoken_bearing(*group["offset"], group["accuracy_m"])
-    words = f"{' and '.join(parts)}, {bearing}, {rough_range(group['range'])}"
+    if group.get("from_grid"):
+        place = ("on your grid" if group["range"] < 50 else
+                 f"{rough_range(group['range'])} {compass(*group['offset'])} of your grid")
+        words = f"{' and '.join(parts)}, {place}"
+    else:
+        bearing = spoken_bearing(*group["offset"], group["accuracy_m"])
+        words = f"{' and '.join(parts)}, {bearing}, {rough_range(group['range'])}"
     nearby = _nearest_building(group.get("nearest"), buildings)
     return f"{words}, near {nearby}" if nearby else words
 

@@ -41,6 +41,7 @@ ORDER_CODE = "_this call brmh_cmd_fnc_order"
 DELETE_CODE = "_this call brmh_cmd_fnc_deleteStation"
 KNOCK_DOWN_CODE = "_this call brmh_cmd_fnc_knockDown"
 KILL_CODE = "_this call brmh_cmd_fnc_killStation"
+LEAVE_CODE = "_this call brmh_cmd_fnc_airLeave"
 SHOW_CODE = "_this call brmh_cmd_fnc_show"
 MIRROR_CODE = "_this call brmh_cmd_fnc_mirror"
 
@@ -58,7 +59,7 @@ PACKET_FIELDS = (
     "placed", "contacts", "suppression", "ruined", "blocked", "seen_vehicles", "seen_ruins", "mounted", "mount",
     "missions",
     "gun_ammo", "limping", "casualties", "up", "medical")
-PACKET_HOST_FIELDS = ("t", "under_way", "targets_listed")  # added here, after the game's report arrives
+PACKET_HOST_FIELDS = ("t", "under_way", "targets_listed", "contact_ref")  # added here, after the game's report arrives
 # Each group in the truth record, as brmh_cmd_fnc_truth builds it. Only the review and the objectives read it.
 TRUTH_GROUP_FIELDS = ("group", "side", "able", "down", "mounted", "limping", "leader_limping", "units", "pos")
 
@@ -117,6 +118,8 @@ class Runtime:
         self.last_heard: dict[str, float] = saved.get("last_heard", {})
         self.positions: dict[str, dict] = saved.get("positions", {})
         self.events_done: list[int] = saved.get("events_done", [])
+        self.left: dict[str, float] = saved.get("left", {})  # aircraft gone off station, and when
+        self.cas_grids: dict[str, list] = saved.get("cas_grids", {})  # the grid each pilot was last sent to
         self.turn_row: dict | None = saved.get("turn_row")
         # A battle saved by an older version may have fields that have since been renamed: start those afresh.
         known = Tracker.__dataclass_fields__
@@ -349,6 +352,8 @@ class Runtime:
         packet["t"] = float(event.get("t", 0))
         self._casualty_rows(callsign, packet)
         self._target_rows(callsign, packet)
+        if callsign in self.cas_grids:
+            packet["contact_ref"] = self.cas_grids[callsign]
         self.packets[callsign] = packet
         if self.t0 is None or self.ended:
             return
@@ -595,6 +600,10 @@ class Runtime:
                 if index not in self.events_done and rel >= event["at_s"]:
                     self.events_done.append(index)
                     self._scenario_event(event)
+            for callsign, station in self.scenario.stations.items():
+                due = station.get("on_station_s")
+                if due is not None and callsign not in self.left and rel >= due and not self.ended:
+                    self._leave(callsign)
             if not self.ended:
                 self._complete_objectives(rel)
             if not self.ended and rel >= self.scenario.time_limit_s:
@@ -618,6 +627,13 @@ class Runtime:
         self.records.operator_log(f"{format_time(self.rel())} scenario event: {event['action']} {event['station']}")
         self.records.append("radio_events", {"t": round(self.rel(), 1),
                                              "scenario_event": f"{event['action']} {event['station']}"})
+        self.dirty = True
+
+    def _leave(self, callsign: str) -> None:
+        """An aircraft at the end of its time on station: it says so, and flies off. Nothing more can be sent to it."""
+        self.left[callsign] = round(self.rel(), 1)
+        self._game_exec(LEAVE_CODE, [callsign])
+        self._say(callsign, "Bingo fuel, leaving the area.", reports.PRIORITY, None, self.now())
         self.dirty = True
 
     def _game_exec(self, code: str, args: list) -> None:
@@ -822,6 +838,7 @@ class Runtime:
             "markers": self.markers, "checked": self.checked, "last_checkin": self.last_checkin,
             "last_heard": self.last_heard,
             "positions": self.positions, "events_done": self.events_done, "turn_row": self.turn_row,
+            "left": self.left, "cas_grids": self.cas_grids,
             "trackers": {k: asdict(v) for k, v in self.trackers.items()}, "wake": asdict(self.wake),
         })
         self.dirty = False
@@ -884,6 +901,9 @@ class Runtime:
                                  "capabilities": station["capabilities"],
                                  "corrects_fire": station.get("spotter", False),
                                  "medics": station.get("medics", 0),
+                                 **({"on_station_until": format_time(station["on_station_s"])}
+                                    if station.get("on_station_s") is not None else {}),
+                                 **({"left_the_area": True} if station["callsign"] in self.left else {}),
                                  "last_heard": _ago(self.now() - heard) if heard is not None else "not yet"})
             return {"stations": stations}
 
@@ -902,6 +922,11 @@ class Runtime:
     def _send_order(self, request: dict, via: str = "") -> str:
         checked = self._validate(request)
         callsign = checked["to"]
+        if callsign in self.left:
+            raise Invalid(f"{callsign} has left the area. Nothing more can be sent to it.")
+        if checked["mode"] == "cas":
+            aim = checked["engine_legs"][0][0]
+            self.cas_grids[callsign] = [aim[0], aim[1]]
         dropping = ""
         previous = self.routes.get(callsign) or {}
         appending = checked["mode"] == "append" and previous.get("kind") == "route"
