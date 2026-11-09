@@ -1,0 +1,40 @@
+# Commander test 3, "Two roads" (docs/COMMANDER_SCENARIOS.md): route choice from the ground, and scouting a defile.
+# Hidden: an ambush over the western valley track, over the eastern one, or none, drawn when the battle starts. Both
+# ambush sites were checked on the terrain to overlook their track.
+name: llm_two_roads
+mission: commander_stratis
+time_limit: "25:00"
+ao: { at: "032 024", radius: 900 }
+objective: At least 10 men at the rendezvous, grid 036 029, by the time limit.
+text: >
+  Alpha and Bravo are at Agios Cephas, around grid 027 017, each with a truck. Get them to the rendezvous at grid
+  036 029, about 1.8 km to the north-east, by T+25. Enemy activity has been reported in the area, nothing more precise.
+  Your map shows the tracks: the route is your choice.
+vehicles:
+  - { id: V1, class: B_Truck_01_transport_F, at: "027 017" }
+  - { id: V2, class: B_Truck_01_transport_F, at: "028 017" }
+stations:
+  - callsign: Alpha
+    role: infantry squad with a truck
+    capabilities: [MOVE, HOLD, SEARCH, ATTACK, SENTRY, HALT, POSTURE, MOUNT, DISMOUNT, CARRY, TREAT, UNLOAD]
+    at: "027 017"
+    units: 8
+    medics: 1
+    crew: { V1: driver }
+  - callsign: Bravo
+    role: infantry squad with a truck
+    capabilities: [MOVE, HOLD, SEARCH, ATTACK, SENTRY, HALT, POSTURE, MOUNT, DISMOUNT, CARRY, TREAT, UNLOAD]
+    at: "028 018"
+    units: 8
+    medics: 1
+    crew: { V2: driver }
+variant:
+  one_of:
+    - enemies: [{ id: East Ambush, at: "031 023", units: 6, mode: hold, radius: 40 }]
+    - enemies: [{ id: East Ambush, at: "037 026", units: 6, mode: hold, radius: 40 }]
+    - enemies: []
+markers:
+  - { id: O1, kind: objective, label: Rendezvous, at: "036 029" }
+success: { men: 10, within_m: 150, of: "036 029" }
+failure: { casualties_pct: 50 }
+mid_turn_messages: hold

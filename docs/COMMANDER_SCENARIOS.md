@@ -14,14 +14,14 @@ Rules for all of them:
 |---|---|---|---|---|
 | 1 | Hold the crossroads | Early warning and repositioning against an attack from an unknown direction | Stratis | Needs a timed enemy assault and a "hold" objective |
 | 2 | The hidden gun | Recon before the assault, and dealing with a threat nobody mentioned | Stratis | Needs crewed enemy weapons |
-| 3 | Two roads | Route choice from the ground, scouting a defile | Stratis | Ready, apart from a convoy-arrival objective |
+| 3 | Two roads | Route choice from the ground, scouting a defile | Stratis | Built: `llm_two_roads` |
 | 4 | Pinned in the open | Saving the wounded under fire, smoke, and timing | VR or Stratis | Needs a "casualties evacuated" objective |
-| 5 | The decoy | Not overcommitting to the first contact | Stratis | Ready |
+| 5 | The decoy | Not overcommitting to the first contact | Stratis | Built: `llm_decoy` |
 | 6 | In and out | Tempo, and pulling out on time before enemy reinforcements arrive | Stratis | Needs timed reinforcements and a "destroy, then extract" objective |
 | 7 | Two villages, one platoon | Using recon to choose where to commit, rather than splitting forces | Stratis | Needs objectives tied to one enemy group |
-| 8 | Silence on the net | Noticing a station that's gone quiet, and acting on it | Stratis | Ready |
-| 9 | Guns only | Fire control: grids, adjusting fire, ammunition economy | VR or Stratis | Ready |
-| 10 | Danger close | Air support with friendly troops near the target | Stratis | Ready; better with the CAS talk-on |
+| 8 | Silence on the net | Noticing a station that's gone quiet, and acting on it | Stratis | Built: `llm_silence` |
+| 9 | Guns only | Fire control: grids, adjusting fire, ammunition economy | Stratis | Built: `llm_guns_only` |
+| 10 | Danger close | Air support with friendly troops near the target | Stratis | Built: `llm_danger_close`; better with the CAS talk-on |
 
 ---
 
@@ -231,19 +231,25 @@ Rules for all of them:
 
 ---
 
+## Built so far
+
+- **Random draws** (`scenario.draw`): any value may be `{one_of: [...]}`, `{between: [lo, hi]}` (numbers or times) or `{around: grid, within_m: m}`. Things drawn together go under `variant: {one_of: [...]}`, where each choice is a bundle of entries added to the scenario's lists. They are drawn once when the battle starts, from a seed (`commander start --seed N` replays a battle), and the seed and every draw are kept in `battle.json`.
+- **Losing conditions**: `failure: {casualties_pct: 40}` (that share of the starting strength dead or down at once), `failure: {critical: [Recon, V1]}` (a station with every man dead, or a vehicle destroyed), alongside `all_stations_lost`. The briefing states them under "THE MISSION FAILS IF", and `commander_mission` lists them as `fails_if`, written from the same settings the harness checks. A failure ends the battle with "MISSION END. Mission failed: ..." to the commander.
+- **Men at a place**: `success: {men: 10, within_m: 150, of: grid}`, counting soldiers rather than squads.
+- **Positions checked on the terrain**: every observer, ambush site and hiding place in the built scenarios was checked with the terrain sample (line of sight, water) before it was written.
+
 ## What these need from the harness
 
 In order of how many scenarios each one unlocks:
 
 | Need | Unlocks | Size |
 |---|---|---|
-| Random draws when a scenario starts: one of several positions, directions or times per element, recorded with the battle | all | small |
 | Timed or triggered enemy movement: appear at a time or on first contact, at one of several points, and attack a place | 1, 6, 8 | medium |
 | Crewed enemy weapons: a static gun or vehicle with its own crew | 2, 7 | small |
-| More objective kinds: hold an area until a time, a vehicle destroyed, named casualties evacuated, men (not squads) at a place, one enemy group cleared, objectives in order | 1, 3, 4, 6, 7 | medium |
+| More objective kinds: hold an area until a time, a vehicle destroyed, named casualties evacuated, one enemy group cleared, objectives in order | 1, 4, 6, 7 | medium |
 | CAS talk-on | 10 | small |
 
-Five scenarios (3 with a small objective change, 5, 8, 9 and 10) can be written as YAML today.
+Scenarios 3, 5, 8, 9 and 10 are built. The rest wait on the needs above.
 
 ## Measuring
 

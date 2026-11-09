@@ -1,0 +1,39 @@
+# Commander test 5, "The decoy": hypotheses, and not chasing the first contact.
+# Hidden: the main body garrisons Girna (only where soldiers can reach), and a patrol walks the fields to its east,
+# where it's the first thing anyone sees.
+name: llm_decoy
+mission: commander_stratis
+time_limit: "30:00"
+ao: { at: "020 027", radius: 500 }
+objective: Clear the enemy from Girna and the ground around it.
+text: >
+  An enemy platoon is believed to be in the area of Girna, the village around grid 019 027 on the west coast. Your
+  force is around grid 026 022, about 1 km to the south-east. Recon is on the hill at grid 024 024. Clear them.
+stations:
+  - callsign: Alpha
+    role: infantry squad
+    capabilities: [MOVE, HOLD, SEARCH, CLEAR, OCCUPY, CORDON, ATTACK, DEFEND, PATROL_AREA, SWEEP, SENTRY, PATROL, HALT, POSTURE, CARRY, TREAT]
+    at: "026 022"
+    units: 8
+    medics: 1
+  - callsign: Bravo
+    role: infantry squad
+    capabilities: [MOVE, HOLD, SEARCH, CLEAR, OCCUPY, CORDON, ATTACK, DEFEND, PATROL_AREA, SWEEP, SENTRY, PATROL, HALT, POSTURE, CARRY, TREAT]
+    at: "027 022"
+    units: 8
+    medics: 1
+  - callsign: Recon
+    role: scout team, small and easily lost
+    capabilities: [MOVE, HOLD, SENTRY, PATROL, PATROL_AREA, CORDON, HALT, POSTURE]
+    at: "024 024"
+    units: 3
+    class: B_recon_F
+enemies:
+  - { id: East Garrison, at: "019 027", units: 8, mode: garrison, radius: 150 }
+  - { id: East Patrol, at: { around: "023 027", within_m: 200 }, units: 5, mode: patrol, radius: 150 }
+markers:
+  - { id: O1, kind: objective, label: Girna, at: "019 027" }
+success:
+  enemy_cleared: true
+failure: { casualties_pct: 50 }
+mid_turn_messages: hold

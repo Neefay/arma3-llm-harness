@@ -752,7 +752,13 @@ brmh_cmd_fnc_truth = {
 			}]
 		]
 	};
-	["evt", createHashMapFromArray [["type", "cmd_truth"], ["groups", _groups]]] call BRMH_fnc_emit;
+	private _vehicles = [];
+	{
+		if (_y getVariable ["brmh_cmd_spawned", false]) then {
+			_vehicles pushBack [_x, alive _y];
+		};
+	} forEach brmh_cmd_vehicles;
+	["evt", createHashMapFromArray [["type", "cmd_truth"], ["groups", _groups], ["vehicles", _vehicles]]] call BRMH_fnc_emit;
 };
 
 // Commander orders that aren't waypoints work from here, on each monitor step.
@@ -1327,7 +1333,8 @@ brmh_cmd_fnc_killStation = {
 	NAME: brmh_cmd_fnc_probePositions
 	DESCRIPTION: Finds the building positions AI can really get to, by sending a soldier to each. The engine's own path
 		planner says every one is reachable, and on Stratis soldiers stopped 3 m outside cargo houses it had planned paths
-		into. A garrison placed where nobody can reach can't be cleared, so garrisons only go where these got. The walkers
+		into. A garrison placed where nobody can reach can't be cleared, so garrisons only go where these got, and only in
+		buildings where they got to two positions or more. The walkers
 		are hidden, captive and can't be hurt, and are deleted when done. Operator action, before anyone else is placed.
 	PARAMETERS:
 		0 - Centre [x, y] (ARRAY)
@@ -1352,7 +1359,7 @@ brmh_cmd_fnc_probePositions = {
 			_man allowDamage false;
 			hideObjectGlobal _man;
 			// Those for one building set off a few seconds apart, so they don't jam its doorway.
-			brmh_cmd_probeWalkers pushBack (createHashMapFromArray [["MAN", _man], ["SPOT", _x], ["START", time + 4 * _forEachIndex], ["BEST", 1e9], ["GAIN", time + 4 * _forEachIndex]]);
+			brmh_cmd_probeWalkers pushBack (createHashMapFromArray [["MAN", _man], ["HOUSE", _house], ["SPOT", _x], ["START", time + 4 * _forEachIndex], ["BEST", 1e9], ["GAIN", time + 4 * _forEachIndex]]);
 		} forEach (_house buildingPos -1);
 	} forEach (nearestObjects [_centre + [0], ["House"], _radius] select {
 		count (_x buildingPos -1) > 0
@@ -1403,8 +1410,16 @@ brmh_cmd_fnc_stepProbe = {
 	if ((brmh_cmd_probeWalkers findIf {
 		not ("RESULT" in _x)
 	}) < 0) then {
-		brmh_cmd_probe = [true, (brmh_cmd_probeWalkers select {
+		// Only buildings with two or more reached positions. A man alone in a one-room building can't be fought for: a
+		// clearer stops at the door, neither can see the other, and he outlasts the battle (Camp Maxwell, B5).
+		private _reached = brmh_cmd_probeWalkers select {
 			_x get "RESULT"
+		};
+		brmh_cmd_probe = [true, (_reached select {
+			private _house = _x get "HOUSE";
+			({
+				(_x get "HOUSE") isEqualTo _house
+			} count _reached) >= 2
 		}) apply {
 			_x get "SPOT"
 		}];

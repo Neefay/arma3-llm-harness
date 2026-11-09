@@ -17,6 +17,7 @@ from typing import Protocol
 from . import map as map_mod
 from . import orders as orders_mod
 from . import reports
+from . import scenario as scenario_mod
 from .orders import Invalid, format_time, parse_grid, parse_time
 from .records import Records
 from .reports import Tracker, format_grid
@@ -415,9 +416,10 @@ class Runtime:
     def _truth(self, event: dict) -> None:
         if not self._in_battle(float(event.get("t", 0))):
             return
-        self.records.truth({"t": round(self.rel(float(event.get("t", 0))), 1), "groups": event.get("groups")})
+        self.records.truth({"t": round(self.rel(float(event.get("t", 0))), 1), "groups": event.get("groups"),
+                            "vehicles": event.get("vehicles") or []})
         if not self.ended:
-            self._judge(event.get("groups") or [])
+            self._judge(event.get("groups") or [], event.get("vehicles") or [])
 
     def _kill(self, event: dict) -> None:
         """For the after-action review only. It's written to its own file, and nothing the commander sees reads it."""
@@ -427,9 +429,13 @@ class Runtime:
                            **{key: event.get(key) for key in ("victim", "side", "victimPos", "killer", "killerSide",
                                                               "weapon", "distance")}})
 
-    def _judge(self, groups: list[dict]) -> None:
+    def _judge(self, groups: list[dict], vehicles: list | None = None) -> None:
         """The harness alone decides how a battle ends. The commander only hears the result."""
         able = {group.get("group"): group.get("able", 0) for group in groups}
+        lost = self._failed(groups, able, vehicles or [])
+        if lost:
+            self._end(f"Mission failed: {lost}")
+            return
         if self.scenario.failure.get("all_stations_lost") and all(
                 able.get(callsign, 1) == 0 for callsign in self.scenario.stations):
             self._end("All stations have been lost.")
@@ -445,6 +451,30 @@ class Runtime:
             elif key not in self.objectives_due:
                 # True position can get there seconds before the group reports arriving. Let its last words through.
                 self.objectives_due[key] = {"at": self.rel() + SUCCESS_GRACE_S, "met": met}
+
+    def _fails_if(self) -> list[str]:
+        return scenario_mod.failure_words(self.scenario.failure, self.scenario.stations, self.scenario.vehicles)
+
+    def _failed(self, groups: list[dict], able: dict, vehicles: list) -> str:
+        """Why the battle is lost, if one of the scenario's failure conditions holds now. From truth: what happened,
+        whatever anyone has reported."""
+        failure = self.scenario.failure
+        stations = self.scenario.stations
+        seen = {group.get("group"): group for group in groups if group.get("group") in stations}
+        pct = failure.get("casualties_pct")
+        if pct and seen:
+            start = sum(station.get("units", 1) for station in stations.values())
+            standing = sum(able.get(callsign, station.get("units", 1)) for callsign, station in stations.items())
+            if start and (start - standing) * 100 >= pct * start:
+                return f"{start - standing} of your {start} men are dead or down."
+        alive = {key: up for key, up in vehicles}
+        for item in failure.get("critical") or []:
+            group = seen.get(item)
+            if group is not None and not group.get("able") and not group.get("down"):
+                return f"{item} has been lost."
+            if item in alive and not alive[item]:
+                return f"{item} has been destroyed."
+        return ""
 
     def _met(self, success: dict, groups: list[dict], able: dict) -> str | None:
         """What's been achieved, if this objective's condition holds now."""
@@ -468,6 +498,13 @@ class Runtime:
                 how = "on foot at" if success.get("on_foot") else "at"
                 names = " and ".join(success["stations"])
                 return f"{names} {'are' if len(success['stations']) > 1 else 'is'} {how} grid {spoken}"
+        elif "men" in success:
+            # Men, not squads: a convoy that gets there with too few hasn't got there.
+            target, spoken = parse_grid(success["of"], self.world_size)
+            there = sum(1 for group in groups if group.get("group") in self.scenario.stations
+                        for unit in group.get("units") or [] if math.dist(unit[:2], target) <= success["within_m"])
+            if there >= success["men"]:
+                return f"{there} men are at grid {spoken}"
         elif "station" in success:
             target, _ = parse_grid(success["of"], self.world_size)
             for group in groups:
@@ -620,6 +657,9 @@ class Runtime:
             lines += ["", f"{'OBJECTIVES' if many else 'OBJECTIVE'}, {left // 60:02d}:{left % 60:02d} left"]
             lines += [("Done: " if objective["id"] in self.objectives_done else "") + objective["text"]
                       for objective in self.scenario.objectives]
+            failing = self._fails_if()
+            if failing:
+                lines += ["", "THE MISSION FAILS IF", *failing]
         if wake and wake.notices:
             lines += ["", "NOTICE", *wake.notices]
         if wake and wake.timers:
@@ -761,6 +801,7 @@ class Runtime:
             return {
                 "time": format_time(self.rel()), "mission": self.scenario.text,
                 "time_limit": format_time(self.scenario.time_limit_s),
+                "fails_if": self._fails_if(),
                 "objectives": [{"text": objective["text"], "done": objective["id"] in self.objectives_done}
                                for objective in self.scenario.objectives],
                 "roster": self.roster()["stations"],

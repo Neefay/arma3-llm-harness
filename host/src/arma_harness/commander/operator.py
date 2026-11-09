@@ -64,10 +64,11 @@ def launch_command(folder: Path) -> str:
             f"claude --dangerously-load-development-channels server:{SERVER_NAME}")
 
 
-def start(path: str, mode: str | None = None, harness: Harness | None = None, watch: bool = False) -> dict:
+def start(path: str, mode: str | None = None, harness: Harness | None = None, watch: bool = False,
+          seed: int | None = None) -> dict:
     """Boot the scenario's mission if needed, put the stations on the net, and prepare the commander's records."""
     h = harness or Harness()
-    raw = _read_raw(path)
+    raw, seed, drawn = scenario_mod.draw(_read_raw(path), seed)
     if mode:
         raw["mid_turn_messages"] = mode
     scenario = scenario_mod.build(raw)
@@ -124,7 +125,8 @@ def start(path: str, mode: str | None = None, harness: Harness | None = None, wa
     records_folder.mkdir(parents=True, exist_ok=True)
     # What the battle was, kept with its records so a replay still works after later battles have replaced current.json.
     (records_folder.parent / "battle.json").write_text(json.dumps(
-        {"scenario": raw, "buildings": buildings, "vehicles": vehicles, "world_size": world_size, "run": state.run_id,
+        {"scenario": raw, "seed": seed, "drawn": drawn, "buildings": buildings, "vehicles": vehicles,
+         "world_size": world_size, "run": state.run_id,
          "attempt": attempt}, indent=2), encoding="utf-8")
     terrain_file = None
     if terrain:
@@ -139,7 +141,7 @@ def start(path: str, mode: str | None = None, harness: Harness | None = None, wa
     if watch and not any(proc.kind == "client" for proc in state.procs):
         observer = h.client_start()
     return {"observer": observer, "scenario": scenario.name, "mode": scenario.mid_turn_messages, "run": state.run_id,
-            "attempt": attempt,
+            "attempt": attempt, "seed": seed, "drawn": len(drawn),
             "records": str(records_folder), "workspace": str(workspace), "launch": launch_command(workspace),
             "then": 'Accept the prompts, then type: start'}
 

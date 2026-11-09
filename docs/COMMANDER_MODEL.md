@@ -279,7 +279,13 @@ Objective = Text × Predicate(Truth)
 | `Eliminated` | `Able(Enemies) = ∅` |
 | `Reached(s, p, r)` | `d(pos(s), p) ≤ r`, where `pos(s)` is the position of an `Able` member of `s` |
 | `Lost` | `∀ s: Able(s) = ∅` |
+| `Casualties(k)` | `Σ_s (n₀(s) − |Able(s)|) ≥ k · Σ_s n₀(s)`, where `n₀(s)` is the starting strength |
+| `Dead(s)` | `Living(s) = ∅` |
+| `Destroyed(v)` | `v` is not alive |
 
+`Failure` is a disjunction of `Lost`, `Casualties(k)`, and `Dead(s)` or `Destroyed(v)` for each critical station `s` or vehicle `v`. Any of them ends the battle as failed.
+
+- **O0.** The briefing states every failure condition, generated from the same settings the harness checks.
 - **O1.** An objective is confirmed when its predicate holds at the end of a grace period, and is re-evaluated until then.
 - **O2.** Predicates count own members by `Living`, and enemies by `Able`: an enemy who is down is out, and an own member who is down is not.
 

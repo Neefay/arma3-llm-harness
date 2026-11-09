@@ -1,0 +1,34 @@
+# Commander test 10, "Danger close": air support with a friendly squad 200 m from the target.
+# Hidden: a second group behind the crest. Bravo starts on the one spot south of the hill that can see its top
+# (checked on the terrain).
+name: llm_danger_close
+mission: commander_stratis
+time_limit: "20:00"
+ao: { at: "030 027", radius: 500 }
+objective: Clear the enemy from the hill around grid 031 027.
+text: >
+  Bravo, at grid 029 026, is in contact with an enemy section on the hilltop around grid 031 027, about 200 m to its
+  east-north-east. Hawg, an AH-99 Blackfoot, is on call, holding over grid 025 018. Break the enemy on the hill.
+vehicles:
+  - { id: V1, class: B_Heli_Attack_01_dynamicLoadout_F, at: "025 018", fly: 150 }
+stations:
+  - callsign: Bravo
+    role: infantry squad
+    capabilities: [MOVE, HOLD, SEARCH, ATTACK, DEFEND, SWEEP, SENTRY, HALT, POSTURE, CARRY, TREAT]
+    at: "029 026"
+    units: 8
+    medics: 1
+  - callsign: Hawg
+    role: attack helicopter, one AH-99 Blackfoot
+    capabilities: [CAS]
+    at: "025 018"
+    units: 2
+    class: B_Helipilot_F
+    crew: { V1: [driver, gunner] }
+enemies:
+  - { id: Hill Section, at: "031 027", units: 6, mode: hold, radius: 30 }
+  - { id: Crest Group, at: "031 028", units: 4, mode: hold, radius: 30 }
+success:
+  enemy_cleared: true
+failure: { casualties_pct: 40 }
+mid_turn_messages: hold

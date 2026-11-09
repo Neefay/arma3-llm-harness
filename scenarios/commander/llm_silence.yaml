@@ -1,0 +1,49 @@
+# Commander test 8, "Silence on the net": noticing a station that has stopped talking, and acting on it.
+# Hidden: one post is silently wiped out between T+6 and T+10, and an enemy squad waits near it in ground that post
+# can't see (checked on the terrain).
+name: llm_silence
+mission: commander_stratis
+time_limit: "30:00"
+ao: { at: "027 029", radius: 900 }
+objective: Keep the area under watch, and destroy any enemy force that enters it.
+text: >
+  Kilo, Lima and Mike are three-man observation posts on the hills at grids 024 024, 027 033 and 033 037. Reserve, an
+  infantry squad, is at Agios Ioannis, grid 030 021. Things have been quiet. Higher expects to hear from each post at
+  least every 10 minutes.
+stations:
+  - callsign: Kilo
+    role: observation post
+    capabilities: [MOVE, HOLD, SENTRY, HALT, POSTURE]
+    at: "024 024"
+    units: 3
+    class: B_recon_F
+  - callsign: Lima
+    role: observation post
+    capabilities: [MOVE, HOLD, SENTRY, HALT, POSTURE]
+    at: "027 033"
+    units: 3
+    class: B_recon_F
+  - callsign: Mike
+    role: observation post
+    capabilities: [MOVE, HOLD, SENTRY, HALT, POSTURE]
+    at: "033 037"
+    units: 3
+    class: B_recon_F
+  - callsign: Reserve
+    role: infantry squad
+    capabilities: [MOVE, HOLD, SEARCH, CLEAR, ATTACK, DEFEND, SWEEP, SENTRY, PATROL, PATROL_AREA, HALT, POSTURE, CARRY, TREAT]
+    at: "030 021"
+    units: 8
+    medics: 1
+variant:
+  one_of:
+    - events: [{ at: { between: ["6:00", "10:00"] }, action: kill_station, station: Kilo }]
+      enemies: [{ id: East Raiders, at: "019 024", units: 6, mode: hold, radius: 40 }]
+    - events: [{ at: { between: ["6:00", "10:00"] }, action: kill_station, station: Lima }]
+      enemies: [{ id: East Raiders, at: "021 031", units: 6, mode: hold, radius: 40 }]
+    - events: [{ at: { between: ["6:00", "10:00"] }, action: kill_station, station: Mike }]
+      enemies: [{ id: East Raiders, at: "026 036", units: 6, mode: hold, radius: 40 }]
+success:
+  enemy_cleared: true
+failure: { casualties_pct: 50 }
+mid_turn_messages: hold

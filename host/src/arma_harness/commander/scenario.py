@@ -1,13 +1,15 @@
 """Commander scenario files: who is on the net, the mission, when it ends. In scenarios/commander/."""
 from __future__ import annotations
 
+import math
+import random
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
 
 from ..config import REPO_ROOT
-from .orders import ORDER_TYPES, parse_time
+from .orders import ORDER_TYPES, parse_grid, parse_time
 from .wake import DELIVER, HOLD
 
 SCENARIO_DIR = REPO_ROOT / "scenarios" / "commander"
@@ -44,6 +46,42 @@ def load(path: str | Path) -> Scenario:
     return build(raw)
 
 
+FAILURE_KEYS = {"all_stations_lost", "casualties_pct", "critical"}
+
+
+def _failure(failure: dict, stations: dict, vehicles: list[dict]) -> dict:
+    """How the battle can be lost, besides running out of time: all stations lost, casualties over a share of the
+    starting strength, or a critical station (all its men dead) or vehicle (destroyed) lost."""
+    unknown = set(failure) - FAILURE_KEYS
+    if unknown:
+        raise ValueError(f"unknown failure conditions {sorted(unknown)}: use {sorted(FAILURE_KEYS)}")
+    pct = failure.get("casualties_pct")
+    if pct is not None and not (isinstance(pct, (int, float)) and not isinstance(pct, bool) and 0 < pct <= 100):
+        raise ValueError(f"casualties_pct must be a percentage above 0, up to 100: {pct!r}")
+    critical = failure.get("critical") or []
+    known = set(stations) | {vehicle["id"] for vehicle in vehicles}
+    if not isinstance(critical, list) or set(critical) - known:
+        raise ValueError(f"critical must list stations or vehicles of this scenario: {critical!r}")
+    return failure
+
+
+def failure_words(failure: dict, stations: dict, vehicles: list[dict]) -> list[str]:
+    """The failure conditions as the briefing states them. Made from the same settings the harness checks."""
+    words = []
+    if failure.get("casualties_pct"):
+        start = sum(station.get("units", 1) for station in stations.values())
+        words.append(f"{failure['casualties_pct']:g}% or more of your men are dead or down at the same time, out of "
+                     f"the {start} you start with.")
+    for item in failure.get("critical") or []:
+        if item in stations:
+            words.append(f"{item} is lost: every one of its men dead.")
+        else:
+            words.append(f"{item} is destroyed.")
+    if failure.get("all_stations_lost"):
+        words.append("Every station is lost.")
+    return words
+
+
 def _objectives(raw: dict) -> list[dict]:
     """A list under `objectives`, or the one a simple scenario describes with `objective` and `success`."""
     if raw.get("objectives") and (raw.get("success") or raw.get("objective")):
@@ -55,9 +93,9 @@ def _objectives(raw: dict) -> list[dict]:
         if not item.get("id") or not item.get("text"):
             raise ValueError(f"an objective needs an id and text: {item}")
         success = item.get("success") or {}
-        if success and not {"enemy_cleared", "stations", "station"} & set(success):
+        if success and not {"enemy_cleared", "stations", "station", "men"} & set(success):
             raise ValueError(f"{item['id']}: unknown success {success}")
-        if ({"stations", "station"} & set(success)) and not {"of", "within_m"} <= set(success):
+        if ({"stations", "station", "men"} & set(success)) and not {"of", "within_m"} <= set(success):
             raise ValueError(f"{item['id']}: a station's success needs of and within_m: {success}")
         out.append({"id": item["id"], "text": str(item["text"]).strip(), "success": success})
     ids = [item["id"] for item in out]
@@ -66,7 +104,68 @@ def _objectives(raw: dict) -> list[dict]:
     return out
 
 
+def draw(raw: dict, seed: int | None = None) -> tuple[dict, int, list[list]]:
+    """Resolves the scenario's random draws, so each battle can differ while staying one battle once it starts. Any
+    value may instead be:
+
+        {one_of: [a, b, c]}                  one of these, which may be grids, times or whole entries
+        {between: [lo, hi]}                  a whole number, or a time such as "8:00", in that range
+        {around: "032 029", within_m: 300}   a grid somewhere within that distance of a place
+
+    Things that have to be drawn together, such as which post goes silent and where the enemy comes through, go under
+    `variant: {one_of: [...]}`: the one drawn is a bundle of entries, added to the scenario's own lists.
+
+    Returns the resolved scenario, the seed, and what was drawn as [where, value] rows for the record."""
+    seed = random.randrange(1 << 31) if seed is None else seed
+    rng, drawn = random.Random(seed), []
+    resolved = _draw(raw, rng, "", drawn)
+    variant = resolved.pop("variant", None)
+    if variant is not None:
+        if not isinstance(variant, dict):
+            raise ValueError("variant must be a bundle of entries, such as {enemies: [...], events: [...]}")
+        for key, value in variant.items():
+            resolved[key] = (resolved.get(key) or []) + value if isinstance(value, list) else value
+    return resolved, seed, drawn
+
+
+def _draw(node, rng: random.Random, where: str, drawn: list):
+    if isinstance(node, list):
+        return [_draw(item, rng, f"{where}[{index}]", drawn) for index, item in enumerate(node)]
+    if not isinstance(node, dict):
+        return node
+    if set(node) == {"one_of"}:
+        options = node["one_of"]
+        if not isinstance(options, list) or not options:
+            raise ValueError(f"{where}: one_of needs a list to choose from")
+        value = _draw(rng.choice(options), rng, where, drawn)
+    elif set(node) == {"between"}:
+        value = _between(node["between"], rng, where)
+    elif set(node) == {"around", "within_m"}:
+        (x, y), _ = parse_grid(node["around"], 0)
+        distance, bearing = node["within_m"] * math.sqrt(rng.random()), rng.uniform(0, 2 * math.pi)
+        x, y = x + distance * math.sin(bearing), y + distance * math.cos(bearing)
+        value = f"{int(x // 100):03d} {int(y // 100):03d}"
+    else:
+        return {key: _draw(value, rng, f"{where}.{key}" if where else key, drawn) for key, value in node.items()}
+    drawn.append([where, value])
+    return value
+
+
+def _between(bounds, rng: random.Random, where: str):
+    if not (isinstance(bounds, list) and len(bounds) == 2):
+        raise ValueError(f"{where}: between needs [lowest, highest]")
+    low, high = bounds
+    if isinstance(low, str) and isinstance(high, str):  # times
+        seconds = rng.randint(parse_time(low), parse_time(high))
+        return f"{seconds // 60}:{seconds % 60:02d}"
+    if isinstance(low, int) and isinstance(high, int):
+        return rng.randint(low, high)
+    return round(rng.uniform(float(low), float(high)), 1)
+
+
 def build(raw: dict) -> Scenario:
+    # Draws left in it are resolved here, for anything that only needs its shape: a battle resolves them once, on start.
+    raw, _, _ = draw(raw)
     stations = {}
     for station in raw["stations"]:
         unknown = set(station.get("capabilities", [])) - ORDER_TYPES
@@ -110,7 +209,8 @@ def build(raw: dict) -> Scenario:
         name=raw["name"], mission=raw["mission"], text=raw["text"].strip(),
         time_limit_s=parse_time(raw["time_limit"]), stations=stations, side=raw.get("side", "west"),
         markers={m["id"]: m for m in raw.get("markers") or []}, events=events,
-        failure=raw.get("failure") or {}, enemies=enemies, spectator=bool(raw.get("spectator")),
+        failure=_failure(raw.get("failure") or {}, stations, vehicles), enemies=enemies,
+        spectator=bool(raw.get("spectator")),
         ao=raw.get("ao") or {},
         quiet_s=debounce.get("quiet_s", 3.0), ceiling_s=debounce.get("ceiling_s", 15.0), mid_turn_messages=mode,
     )

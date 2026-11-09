@@ -1,0 +1,33 @@
+# Commander test 9, "Guns only": fire control alone. Grids from bearings, one round to adjust, ammunition kept.
+# Hidden: which of three spots at the hamlet's edge the section holds. Eyes can see all three (checked on the terrain).
+name: llm_guns_only
+mission: commander_stratis
+time_limit: "20:00"
+ao: { at: "039 028", radius: 500 }
+objective: Destroy the enemy section at Tsoukalia with the mortar.
+text: >
+  An enemy section is dug in at Tsoukalia, the hamlet around grid 042 027 on the east coast. You have no infantry to
+  assault it. Eyes, a two-man observation team on the hilltop at grid 036 030, overlooks the hamlet and is trained to
+  correct fire. Hammer has a mortar at grid 033 027 with 12 HE and 4 smoke rounds, and no resupply.
+vehicles:
+  - { id: V1, class: B_Mortar_01_F, at: "033 027", ammo: { HE: 12, SMOKE: 4 } }
+stations:
+  - callsign: Eyes
+    role: observation team, trained to correct fire
+    capabilities: [MOVE, HOLD, SENTRY, HALT, POSTURE]
+    at: "036 030"
+    units: 2
+    class: B_recon_F
+    spotter: true
+  - callsign: Hammer
+    role: mortar section
+    capabilities: [HOLD, FIRE_MISSION, CHECK_FIRE, HALT, POSTURE]
+    at: "033 027"
+    units: 3
+    crew: { V1: gunner }
+enemies:
+  - { id: East Section, at: { one_of: ["042 027", "043 027", "043 026"] }, units: 6, mode: hold, radius: 30 }
+success:
+  enemy_cleared: true
+failure: { critical: [Eyes] }
+mid_turn_messages: hold
