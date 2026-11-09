@@ -89,6 +89,8 @@ What this corrects in the spikes above:
 
 My recommendation is 1 for close support, where the pilot attacks what he finds, and 2a or 2b for "bomb this grid". They'd be two order types, or two modes of `CAS`.
 
+**Option 1 is built** (the owner chose it, 2026-11-09). While the aircraft is over the grid or engaging, the sortie machine's `EVERY` step runs `brmh_cmd_fnc_sortieSearch`. Each enemy within the order's radius of the grid, with no terrain or object between it and the aircraft, is seen with a chance per second of `0.05 × camouflage × stance × e^(−distance from the grid / 500) × e^(−distance from the aircraft / 3000)`. That's Antistasi's model; the stance factor (prone 0.3, crouching 0.6) is ours. Whoever is seen is revealed to the crew. Live, against the same squad lying in grass that three sorties had missed, the Blackfoot reported contact 15 s after reaching the grid and its gunner killed all six in under five minutes.
+
 ## Questions for the owner
 
 1. **A bare-grid strike.** It isn't possible with unscripted AI. The options above replace my earlier (a) to (c). The options are:

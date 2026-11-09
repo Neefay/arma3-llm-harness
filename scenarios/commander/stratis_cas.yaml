@@ -1,4 +1,5 @@
-# Close air support, first cut: a Blackfoot holding south-west of Agios Ioannis, and an enemy squad patrolling in the open.
+# Close air support: a Blackfoot holding south-west of Agios Ioannis, and an enemy squad in the open that goes to ground
+# when it sees the helicopter, which the engine's own spotting misses. The pilot's search is what finds them.
 # The pilot attacks only what he finds himself around the grid he's given (docs/COMMANDER_CAS.md).
 name: stratis_cas
 mission: commander_stratis
@@ -25,7 +26,7 @@ stations:
     units: 3
     class: B_recon_F
 enemies:
-  - { id: East Squad, at: "037 024", units: 6, mode: patrol, radius: 150 }
+  - { id: East Squad, at: "037 024", units: 6, mode: hold, radius: 40 }
 success:
   enemy_cleared: true
 failure:
