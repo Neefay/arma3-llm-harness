@@ -128,6 +128,15 @@ def draw(raw: dict, seed: int | None = None) -> tuple[dict, int, list[list]]:
     return resolved, seed, drawn
 
 
+def hidden(resolved: dict) -> str:
+    """What a battle hid from its commander, as drawn: where each enemy is, and what happens when. Two battles with the
+    same seed and scenario hide the same, so this is what a benchmark compares like with like on."""
+    enemies = [f"{enemy.get('id', '?')} {enemy.get('at', '?')}" for enemy in resolved.get("enemies") or []]
+    events = [f"{event.get('action', '?')} {event.get('station', '?')} at {event.get('at', '?')}"
+              for event in resolved.get("events") or []]
+    return "; ".join(enemies + events)
+
+
 def _draw(node, rng: random.Random, where: str, drawn: list):
     if isinstance(node, list):
         return [_draw(item, rng, f"{where}[{index}]", drawn) for index, item in enumerate(node)]

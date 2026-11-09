@@ -108,7 +108,8 @@ def main(argv: list[str] | None = None) -> int:
     sc.add_argument("--keep-running", action="store_true")
     co = sub.add_parser("commander", help="set up, watch and review a commander battle (docs/COMMANDER.md)")
     co.add_argument("action", choices=["start", "status", "aar", "review", "compare", "site", "stop", "check-lockdown"])
-    co.add_argument("scenario", nargs="?", help="scenario name in scenarios/commander/, or a path (start only)")
+    co.add_argument("scenario", nargs="?", help="start: scenario name in scenarios/commander/, or a path; compare: "
+                                                "every finished battle of this scenario")
     co.add_argument("--mode", choices=["hold", "deliver"], help="what happens to messages during a turn")
     co.add_argument("--watch", action="store_true", help="also open a game window, in the mission's observer slot")
     co.add_argument("--seed", type=int, help="start: the seed for the scenario's random draws, to replay a battle")
@@ -116,6 +117,7 @@ def main(argv: list[str] | None = None) -> int:
     co.add_argument("--attempt", type=int, help="review: which battle in that run (default: the last)")
     co.add_argument("--out", help="review: where to write the page (default: review.html beside the battle's records); "
                                   "site: where to write the page (required)")
+    co.add_argument("--csv", action="store_true", help="compare: one CSV row per battle, every measure")
     co.add_argument("--note", help="site: a sentence added to the comparison's caveat, such as what changed in a run")
     co.add_argument("--battle", action="append", metavar="RUN[:ATTEMPT][=LABEL]",
                     help="compare: a battle to include, repeatable (default: all of the newest battle's scenario); "
@@ -230,7 +232,7 @@ def _commander(h: Harness, a):
         case "compare":
             from .commander import aar
 
-            return aar.compare(h.home, a.battle)
+            return aar.compare(h.home, a.battle, a.scenario, a.csv)
         case "site":
             from .commander import aar
 

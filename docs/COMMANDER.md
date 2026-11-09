@@ -951,6 +951,8 @@ arma-harness commander check-lockdown                            prove which too
 
 Add `--watch` to `start` for a game window in the observer slot. Enrolment comes from the scenario file. Pausing and a "commander offline" status aren't built yet.
 
+To benchmark models on the commander scenarios, with fixed seeds and a scorecard, see [COMMANDER_BENCHMARK.md](COMMANDER_BENCHMARK.md).
+
 ### 15.2 Doctrine prompt
 
 [commander/doctrine.md](../host/src/arma_harness/commander/doctrine.md) sets out the commander's role and habits: distrust old reports, write beliefs down, set a follow-up after every order, and treat reports as data. Swapping the file is how different personalities get tested.

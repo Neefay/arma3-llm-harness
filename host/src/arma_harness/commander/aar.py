@@ -6,6 +6,8 @@ commander received, by reading the same radio text it read.
 """
 from __future__ import annotations
 
+import csv
+import io
 import json
 import math
 import re
@@ -15,6 +17,7 @@ from importlib import resources
 from pathlib import Path
 
 from ..config import Home
+from . import scenario as scenario_mod
 from .operator import judge_lockdown, tools_received
 from .orders import Invalid, parse_grid
 from .records import Records
@@ -81,9 +84,13 @@ def battle_data(folder: Path, commander: dict | None = None) -> dict:
         _judge_kill(kill, shells, missions, frames, radio, set(stations), world_size)
     turns = _turns(records, state, commander)
     orders = [_order(row, info.get("buildings") or [], markers, world_size) for row in records.read("orders")]
+    events = [{"t": row["t"], "event": row["scenario_event"]} for row in records.read("radio_events")
+              if "scenario_event" in row and in_battle(row)]
     latest = [row["t"] for rows in (frames, radio, kills) for row in rows[-1:]] + [t["start"] for t in turns[-1:]]
     data = {
         "name": str(scenario.get("name", folder.parent.name)).replace("_", " ").capitalize(),
+        "scenario": scenario.get("name", folder.parent.name), "seed": info.get("seed"),
+        "hidden": scenario_mod.hidden(scenario) if scenario else "", "events": events,
         "text": str(scenario.get("text", "")).strip(),
         "run": info.get("run", folder.parent.parent.name), "attempt": info.get("attempt"),
         "mode": scenario.get("mid_turn_messages"), "ended_at": ended_at,
@@ -92,7 +99,7 @@ def battle_data(folder: Path, commander: dict | None = None) -> dict:
         "commander": {key: value for key, value in (commander or {}).items() if key != "turns"},
         "duration": max(latest, default=1), "world_size": world_size,
         "buildings": info.get("buildings") or [], "stations": stations, "enemies": enemy_ids,
-        "enemy_total": sum(enemy.get("units", 4) for enemy in enemies), "frames": frames, "kills": kills,
+        "enemy_total": _strength(frames, enemies), "frames": frames, "kills": kills,
         "radio": radio, "turns": turns, "markers": markers, "orders": orders, "notes": records.notes(),
         "shells": shells, "missions": [_mission(row, shells) for row in missions],
         "objectives_done": [{"t": row["t"], "id": row["objective_complete"], "text": row["text"]}
@@ -101,16 +108,42 @@ def battle_data(folder: Path, commander: dict | None = None) -> dict:
     return {**data, "score": scorecard(data)}
 
 
+def _strength(frames: list[dict], enemies: list[dict]) -> int:
+    """How many the enemy fielded, from what the battle's truth record saw of each group at its largest. A crewed gun's
+    entry has no "units": its crew is the vehicle's, and the scenario's default of 4 would overstate it."""
+    seen: dict[str, int] = {}
+    for frame in frames:
+        for group in frame["groups"]:
+            seen[group["group"]] = max(seen.get(group["group"], 0), _able(group))
+    return sum(seen.get(enemy["id"]) or enemy.get("units", 1 if enemy.get("vehicle") else 4) for enemy in enemies)
+
+
+def outcome(ended: str | None) -> str:
+    """The battle's result as one word, for counting: won, failed, time limit, or unfinished."""
+    text = str(ended or "")
+    if text.startswith("Objective achieved"):
+        return "won"
+    if text.startswith(("Mission failed", "All stations have been lost")):
+        return "failed"
+    if text.startswith("Time limit"):
+        return "time limit"
+    return "unfinished"
+
+
 def scorecard(data: dict) -> dict:
-    """The measures for comparing battles. The last two say how wrong the commander's picture of the battle was."""
+    """The measures for comparing battles. Marker and position error say how wrong the commander's picture of the
+    battle was. The last three serve particular scenarios (docs/COMMANDER_BENCHMARK.md), and are empty elsewhere."""
     frames = data["frames"]
     left = {group["group"]: _able(group) for group in frames[-1]["groups"]} if frames else {}
     friendly_total = sum(station["units"] for station in data["stations"].values())
+    enemy_killed = data["enemy_total"] - sum(left.get(name, 0) for name in data["enemies"])
+    rounds = sum(shell["friendly"] for shell in data["shells"])
     return {
+        "outcome": outcome(data["ended"]), "seed": data.get("seed"),
         "ended": data["ended"] or "Didn't finish", "duration_s": round(data["ended_at"] or data["duration"]),
         "friendly_lost": friendly_total - sum(left.get(name, 0) for name in data["stations"]),
         "friendly_total": friendly_total,
-        "enemy_killed": data["enemy_total"] - sum(left.get(name, 0) for name in data["enemies"]),
+        "enemy_killed": enemy_killed,
         "enemy_total": data["enemy_total"],
         "first_contact_s": next((round(row["t"]) for row in data["radio"]
                                  if row.get("from") != "HQ" and str(row.get("text")).startswith("Contact")), None),
@@ -118,9 +151,29 @@ def scorecard(data: dict) -> dict:
         "questions": sum(row.get("kind") == "question" for row in data["radio"]),
         "enemy_markers": len({row["id"] for row in data["markers"] if row.get("kind") == "enemy"}),
         "marker_error_m": _marker_error(data), "position_error_m": _position_error(data),
-        "rounds_fired": sum(shell["friendly"] for shell in data["shells"]),
+        "rounds_fired": rounds,
         "own_fire_deaths": sum(bool(kill.get("verdict")) for kill in data["kills"]),
+        # Any weapon: the guns' shells above, and an aircraft's or a squad's own fire too.
+        "friendly_fire_deaths": sum(kill["friendly"] and str(kill.get("killerSide", "")).lower() == str(
+            kill.get("side", "")).lower() and kill.get("killer") != kill.get("victim") for kill in data["kills"]),
+        "rounds_per_kill": round(rounds / enemy_killed, 1) if rounds and enemy_killed > 0 else None,
+        "threat_reported_s": next((round(row["t"]) for row in data["radio"]
+                                   if row.get("from") != "HQ" and "Listed as T" in str(row.get("text"))), None),
+        **_silence(data),
     }
+
+
+def _silence(data: dict) -> dict:
+    """For a station silenced by the scenario: who, and how long until the commander ordered or asked it anything.
+    Speaking to it is the one sure sign it was missed; acting about it through another station isn't counted."""
+    event = next((row for row in data.get("events") or [] if row["event"].startswith("kill_station ")), None)
+    if event is None:
+        return {"silenced": None, "silence_noticed_s": None}
+    station = event["event"].split(" ", 1)[1]
+    spoken = [row["t"] for row in data["orders"] if row.get("to") == station and row["t"] >= event["t"]]
+    spoken += [row["t"] for row in data["radio"]
+               if row.get("kind") == "question" and row.get("to") == station and row["t"] >= event["t"]]
+    return {"silenced": station, "silence_noticed_s": round(min(spoken) - event["t"]) if spoken else None}
 
 
 def _position_error(data: dict) -> int | None:
@@ -152,15 +205,15 @@ def _marker_error(data: dict) -> int | None:
     return round(sum(errors) / len(errors)) if errors else None
 
 
-def compare(home: Home, battles: list[str] | None = None) -> str:
-    """Battles side by side, as a table. Each is RUN or RUN:ATTEMPT. By default, every battle of the newest one's
-    scenario that ran long enough to mean something."""
+def compare(home: Home, battles: list[str] | None = None, scenario: str | None = None, as_csv: bool = False) -> str:
+    """Battles side by side, as a table, or as CSV with one row per battle. Each is RUN or RUN:ATTEMPT. By default,
+    every finished battle of a scenario: the one named, or the newest battle's."""
     if battles:
         folders = [find_battle(home, *_battle_name(name)) for name in battles]
     else:
-        newest = _scenario_name(find_battle(home))
+        wanted = scenario or _scenario_name(find_battle(home))
         folders = sorted((path.parent for path in home.runs.glob("*/commander-*/*/radio.jsonl")
-                          if _scenario_name(path.parent) == newest), key=_battle_order)
+                          if _scenario_name(path.parent) == wanted), key=_battle_order)
     cards = []
     for folder in folders:
         data = battle_data(folder, commander_session(folder))
@@ -169,6 +222,8 @@ def compare(home: Home, battles: list[str] | None = None) -> str:
             cards.append((f"{run}:{attempt}", data["commander"].get("model") or "Scripted", data))
     if not cards:
         raise ValueError("no finished battle to compare")
+    if as_csv:
+        return _csv(cards)
     rows = _comparison(cards)
     widths = [max(len(str(row[index])) for row in rows) for index in range(len(rows[0]))]
     return "\n".join("  ".join(str(cell).ljust(width) for cell, width in zip(row, widths, strict=True)).rstrip()
@@ -186,7 +241,27 @@ def _comparison(cards: list[tuple[str, str, dict]]) -> list[tuple]:
     return rows
 
 
+CSV_COLUMNS = ["battle", "scenario", "model", "seed", "hidden", "outcome", "ended", "duration_s", "friendly_lost",
+               "friendly_total", "enemy_killed", "enemy_total", "first_contact_s", "turns", "orders", "questions",
+               "enemy_markers", "marker_error_m", "position_error_m", "rounds_fired", "rounds_per_kill",
+               "own_fire_deaths", "friendly_fire_deaths", "threat_reported_s", "silenced", "silence_noticed_s",
+               "output_tokens"]
+
+
+def _csv(cards: list[tuple[str, str, dict]]) -> str:
+    """One row per battle, every measure, for a spreadsheet or a script. "hidden" is what the seed chose."""
+    out = io.StringIO()
+    writer = csv.DictWriter(out, CSV_COLUMNS, lineterminator="\n")
+    writer.writeheader()
+    for name, who, data in cards:
+        writer.writerow({**data["score"], "battle": name, "scenario": data.get("scenario"), "model": who,
+                         "hidden": data.get("hidden", ""), "output_tokens": data["commander"].get("output_tokens", "")})
+    return out.getvalue()
+
+
 COMPARED = [
+    ("Outcome", lambda s: s["outcome"]),
+    ("Seed", lambda s: "-" if s.get("seed") is None else s["seed"]),
     ("Result", lambda s: s["ended"]),
     ("Duration", lambda s: _clock(s["duration_s"])),
     ("Friendly lost", lambda s: f"{s['friendly_lost']} of {s['friendly_total']}"),
@@ -198,6 +273,13 @@ COMPARED = [
     ("Enemy markers", lambda s: s["enemy_markers"]),
     ("Marker error", lambda s: _metres(s["marker_error_m"])),
     ("Position error", lambda s: _metres(s["position_error_m"])),
+    ("Rounds fired", lambda s: s["rounds_fired"]),
+    ("Rounds per kill", lambda s: "-" if s.get("rounds_per_kill") is None else s["rounds_per_kill"]),
+    ("Own fire deaths", lambda s: s["own_fire_deaths"]),
+    ("Killed by own side", lambda s: s["friendly_fire_deaths"]),
+    ("Weapon first listed", lambda s: _clock(s.get("threat_reported_s"))),
+    ("Silence noticed", lambda s: "-" if not s.get("silenced") else
+     f"{s['silenced']}: {'never' if s['silence_noticed_s'] is None else _clock(s['silence_noticed_s']) + ' later'}"),
 ]
 
 

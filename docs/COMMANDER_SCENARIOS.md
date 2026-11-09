@@ -249,17 +249,18 @@ In order of how many scenarios each one unlocks:
 | More objective kinds: hold an area until a time, a vehicle destroyed, named casualties evacuated, one enemy group cleared, objectives in order | 1, 4, 6, 7 | medium |
 | CAS talk-on | 10 | small |
 
-Scenarios 2, 3, 5, 8, 9 and 10 are built. The rest wait on the needs above.
+Scenarios 2, 3, 5, 8, 9 and 10 are built. The rest wait on the needs above. Where a built scenario differs from its design here (two roads asks for 10 men by T+25; silence, the decoy and danger close are won by clearing the enemy), the scenario file is what's played. [COMMANDER_BENCHMARK.md](COMMANDER_BENCHMARK.md) lists each as built, with the seeds every model plays and how to run and score them.
 
 ## Measuring
 
-Beyond win or lose, the records already hold what's needed to score the decisions above:
+How to run these with a real LLM and score them is in [COMMANDER_BENCHMARK.md](COMMANDER_BENCHMARK.md). Beyond win or lose, the scorecard (`commander compare`, and `--csv`) now measures:
 
-- **Time to first eyes on each enemy group:** contact reports matched to truth.
+- **When a weapon was first listed** (`threat_reported_s`): a station naming an enemy weapon or vehicle as T1, T2...
+- **Silence noticed** (`silence_noticed_s`): from a post going silent to the commander's first order or question to it.
+- **Rounds per kill** (`rounds_per_kill`), and **friendly fire** by any weapon (`friendly_fire_deaths`), alongside the judged shell deaths (`own_fire_deaths`).
+
+Still read from the review page rather than counted:
+
 - **Whether recon came before the main effort:** order times per station.
 - **Losses before and after a threat was found:** the kill log against the time of the first report of it.
-- **Rounds per hit:** fire missions, splash reports and kills.
-- **Silence noticed:** the time from a missed check-in to the commander's first order or question about that station.
 - **Hypotheses kept honest:** markers created and retired, against what was true.
-
-A short per-scenario rubric in the review page, built from these, would let runs be compared across models and doctrine changes.

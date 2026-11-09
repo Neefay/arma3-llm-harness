@@ -402,6 +402,77 @@ def test_scorecard(battle):
     assert score["marker_error_m"] == 0  # marker E1 is on the patrol the first truth frame after it shows
 
 
+def test_the_enemy_is_counted_from_truth_so_a_crewed_gun_is_its_crew():
+    """A gun's entry has no units: the scenario's default of 4 would count one gunner as four men."""
+    frames = [{"t": 5, "groups": [{"group": "East Gun", "alive": 1}, {"group": "East Section", "alive": 6}]},
+              {"t": 10, "groups": [{"group": "East Gun", "alive": 0}, {"group": "East Section", "alive": 5}]}]
+    enemies = [{"id": "East Gun", "vehicle": "O_HMG_01_high_F"}, {"id": "East Section", "units": 6},
+               {"id": "Never Seen", "units": 3}, {"id": "Unseen Gun", "vehicle": "O_HMG_01_F"}]
+    assert aar._strength(frames, enemies) == 1 + 6 + 3 + 1
+
+
+@pytest.mark.parametrize("ended, word", [
+    ("Objective achieved: the enemy has been cleared.", "won"),
+    ("Mission failed: 9 of your 17 men are dead or down.", "failed"),
+    ("All stations have been lost.", "failed"),
+    ("Time limit reached.", "time limit"),
+    (None, "unfinished"),
+    ("", "unfinished"),
+])
+def test_each_ending_is_one_outcome(ended, word):
+    assert aar.outcome(ended) == word
+
+
+def test_a_silenced_station_is_noticed_when_the_commander_speaks_to_it():
+    data = {"events": [{"t": 400, "event": "kill_station Kilo"}],
+            "orders": [{"t": 300, "to": "Kilo"}, {"t": 520, "to": "Reserve"}, {"t": 700, "to": "Kilo"}],
+            "radio": [{"t": 650, "kind": "question", "to": "Kilo"}, {"t": 410, "kind": "report", "from": "Kilo"}]}
+    assert aar._silence(data) == {"silenced": "Kilo", "silence_noticed_s": 250}
+    assert aar._silence({**data, "orders": [], "radio": []}) == {"silenced": "Kilo", "silence_noticed_s": None}
+    assert aar._silence({"events": [], "orders": [], "radio": []}) == {"silenced": None, "silence_noticed_s": None}
+
+
+def test_the_scorecard_has_each_benchmark_measure(battle):
+    radio = (battle / "radio.jsonl").read_text(encoding="utf-8")
+    (battle / "radio.jsonl").write_text(radio + json.dumps(
+        {"t": 70, "from": "Alpha", "to": "HQ", "text": "Contact, one emplacement, north, roughly 300 metres. Listed as "
+         "T1.", "kind": "report"}) + "\n", encoding="utf-8")
+    info = json.loads((battle.parent / "battle.json").read_text(encoding="utf-8"))
+    drawn = [["enemies[1].at", "033 027"]]
+    (battle.parent / "battle.json").write_text(json.dumps({**info, "seed": 116, "drawn": drawn}))
+    data = aar.battle_data(battle)
+    score = data["score"]
+    assert score["outcome"] == "won" and score["seed"] == 116
+    assert score["threat_reported_s"] == 70 and score["rounds_per_kill"] is None and score["silenced"] is None
+    # 8 killed: the garrison is gone from the last frame, and the patrol's 6 are still standing.
+    assert aar.scorecard({**data, "shells": [{"friendly": True}] * 9})["rounds_per_kill"] == 1.1
+
+
+def test_a_friendly_killed_by_his_own_side_counts_whatever_the_weapon(battle):
+    rows(battle.parent / "kills.jsonl",
+         {"t": 20, "victim": "Owen King", "side": "WEST", "victimPos": [4100, 3700, 0], "killer": "Hawg gunner",
+          "killerSide": "WEST", "weapon": "gatling_30mm", "distance": 900},
+         {"t": 30, "victim": "Sam Reed", "side": "WEST", "victimPos": [4100, 3700, 0], "killer": "Khalil Amani",
+          "killerSide": "EAST", "weapon": "AK", "distance": 208},
+         {"t": 40, "victim": "Leo Hart", "side": "WEST", "victimPos": [4100, 3700, 0], "killer": "Leo Hart",
+          "killerSide": "WEST", "weapon": "", "distance": 0},
+         {"t": 50, "victim": "Habib Noori", "side": "EAST", "victimPos": [4250, 3950, 0], "killer": "Kyle Smith",
+          "killerSide": "WEST", "weapon": "MX", "distance": 337})
+    assert aar.battle_data(battle)["score"]["friendly_fire_deaths"] == 1  # not the enemy's, not his own fall
+
+
+def test_compare_writes_one_csv_row_per_battle_with_its_seed_and_what_it_hid(battle, tmp_path):
+    info = json.loads((battle.parent / "battle.json").read_text(encoding="utf-8"))
+    scenario = {**info["scenario"], "enemies": [{"id": "East Gun", "at": "033 028", "vehicle": "O_HMG_01_high_F"}],
+                "events": [{"action": "kill_station", "station": "Kilo", "at": "8:25"}]}
+    (battle.parent / "battle.json").write_text(json.dumps({**info, "seed": 7, "scenario": scenario}))
+    lines = aar.compare(Home(tmp_path), scenario="take_the_village", as_csv=True).splitlines()
+    assert lines[0].split(",")[:6] == ["battle", "scenario", "model", "seed", "hidden", "outcome"]
+    row = dict(zip(lines[0].split(","), lines[1].split(","), strict=True))
+    assert row["battle"] == "20261105-043541:2" and row["seed"] == "7" and row["model"] == "Scripted"
+    assert row["hidden"] == "East Gun 033 028; kill_station Kilo at 8:25" and row["enemy_total"] == "1"
+
+
 def test_position_error_compares_the_last_report_with_where_the_station_was(tmp_path):
     data = {"radio": [{"t": 10, "from": "Alpha", "pos": [100.0, 100.0]}], "markers": [], "stations": {}, "enemies": [],
             "frames": [
