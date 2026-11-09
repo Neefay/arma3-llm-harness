@@ -2408,13 +2408,8 @@ brmh_cmd_fnc_callOffCare = {
 		private _treat = _x;
 		if ((_treat get "group") isEqualTo _group) then {
 			{
-				[_group, _treat get "order", "treat", _x get "casualty", "called off"] call brmh_cmd_fnc_careSay;
-				[_x] call brmh_cmd_fnc_treatRelease;
-			} forEach (_treat get "jobs");
-			{
 				[_group, _treat get "order", "treat", _x, "called off"] call brmh_cmd_fnc_careSay;
 			} forEach (_treat get "queue");
-			_treat set ["jobs", []];
 			_treat set ["queue", []];
 		};
 	} forEach brmh_cmd_treats;
@@ -2773,43 +2768,107 @@ brmh_cmd_fnc_treatOrder = {
 			_x set ["queue", (_x get "queue") - _queue];
 		};
 	} forEach brmh_cmd_treats;
-	brmh_cmd_treats pushBack (createHashMapFromArray [["group", _group], ["order", _order], ["queue", _queue], ["jobs", []]]);
+	brmh_cmd_treats pushBack (createHashMapFromArray [["group", _group], ["order", _order], ["queue", _queue]]);
 };
 
+// A medic's job, one casualty: he goes to him, then works on him until he's up. Its words are the radio's.
+brmh_cmd_treatMachine = [
+	["KIND", "treat"],
+	["INITIAL", "going"],
+	["ALWAYS", [
+		[{
+			not ([_this get "MEDIC"] call brmh_cmd_fnc_able)
+		}, {
+			// Back in the queue, for another medic.
+			((_this get "TREAT") get "queue") pushBack (_this get "SUBJECT");
+		}, "", "medic down"],
+		[{
+			not alive (_this get "SUBJECT")
+		}, {}, "", "he died"]
+	]],
+	["STATES", [
+		["going", [
+			["EVERY", {
+				if (((_this get "MEDIC") distance2D (_this get "LAST")) >= 1) then {
+					_this set ["LAST", getPosATL (_this get "MEDIC")];
+					_this set ["MOVED", time];
+				};
+			}],
+			["ON", [
+				[{
+					[_this] call brmh_cmd_fnc_treatArrived
+				}, {
+					[_this] call brmh_cmd_fnc_treatStart
+				}, "working", "treating"],
+				// As with a carry: as close as he can get. He works for a while, and the man is then with him.
+				[{
+					not ([_this] call brmh_cmd_fnc_treatAboard) and {
+						[_this] call brmh_cmd_fnc_treatReady
+					} and {
+						((_this get "MEDIC") distance (_this get "SUBJECT")) <= 35
+					}
+				}, {
+					[_this] call brmh_cmd_fnc_treatPull;
+					[_this] call brmh_cmd_fnc_treatStart
+				}, "working", "treating"],
+				[{
+					[_this] call brmh_cmd_fnc_treatStuck and {
+						[_this] call brmh_cmd_fnc_treatTriesLeft
+					}
+				}, {
+					[_this] call brmh_cmd_fnc_treatApproach;
+				}, "going", ""],
+				// The owner's way, as a last resort: he was close, and now the man's with him.
+				[{
+					[_this] call brmh_cmd_fnc_treatStuck and {
+						not ([_this] call brmh_cmd_fnc_treatAboard)
+					} and {
+						((_this get "MEDIC") distance (_this get "SUBJECT")) <= 60
+					}
+				}, {
+					[_this] call brmh_cmd_fnc_treatPull;
+					[_this] call brmh_cmd_fnc_treatStart
+				}, "working", "treating"],
+				[{
+					[_this] call brmh_cmd_fnc_treatStuck
+				}, {}, "", "can't reach"]
+			]],
+			["DEADLINE", [600, {}, "", "can't reach"]]
+		]],
+		["working", [
+			["EVERY", {
+				[_this] call brmh_cmd_fnc_treatWork
+			}],
+			["ON", [
+				[{
+					[_this get "SUBJECT"] call brmh_cmd_fnc_able
+				}, {}, "", "up"],
+				[{
+					(time - (_this get "SINCE")) >= (_this get "NEED")
+				}, {
+					[_this] call brmh_cmd_fnc_treatDone
+				}, "", "up"]
+			]],
+			["DEADLINE", [{
+				(_this get "NEED") + 5
+			}, {
+				[_this] call brmh_cmd_fnc_treatDone
+			}, "", "up"]]
+		]]
+	]],
+	["RELEASE", {
+		[_this] call brmh_cmd_fnc_treatRelease
+	}]
+];
+
+// Each step: casualties waiting on a TREAT order go to the squad's free medics, one each. The medics' jobs are
+// brmh_cmd_treatMachine, stepped with the other machines.
 brmh_cmd_fnc_stepTreats = {
 	{
 		private _treat = _x;
 		private _group = _treat get "group";
 		private _order = _treat get "order";
 		private _queue = _treat get "queue";
-		// A finished job frees a medic for the next man in the queue.
-		private _jobs = (_treat get "jobs") select {
-			private _job = _x;
-			private _medic = _job get "medic";
-			private _man = _job get "casualty";
-			private _left = true;
-			switch (true) do {
-				case (not ([_medic] call brmh_cmd_fnc_able)): {
-					[_group, _order, "treat", _man, "medic down"] call brmh_cmd_fnc_careSay;
-					[_job] call brmh_cmd_fnc_treatRelease;
-					_queue pushBack _man;
-					_left = false;
-				};
-				case (not alive _man): {
-					[_group, _order, "treat", _man, "he died"] call brmh_cmd_fnc_careSay;
-					[_job] call brmh_cmd_fnc_treatRelease;
-					_left = false;
-				};
-				case ((_job get "state") isEqualTo "going"): {
-					_left = [_job, _group, _order] call brmh_cmd_fnc_treatGo;
-				};
-				default {
-					_left = [_job, _group, _order] call brmh_cmd_fnc_treatWork;
-				};
-			};
-			_left
-		};
-		_treat set ["jobs", _jobs];
 		private _free = (units _group) select {
 			[_x] call brmh_cmd_fnc_able and {
 				[_x] call brmh_cmd_fnc_isMedic
@@ -2855,32 +2914,41 @@ brmh_cmd_fnc_stepTreats = {
 		} do {
 			private _medic = _free deleteAt 0;
 			private _man = _queue deleteAt 0;
-			private _job = createHashMapFromArray [["medic", _medic], ["casualty", _man], ["state", "going"], ["tries", 0], ["last", getPosATL _medic], ["moved", time], ["ordered", time], ["since", time]];
 			_medic setVariable ["brmh_cmd_busy", true];
 			_medic enableAI "PATH";
 			_man setVariable ["brmh_cmd_handled", "treated"];
 			if (vehicle _medic isNotEqualTo _medic) then {
 				[_medic] call brmh_cmd_fnc_getOff;
 			};
+			private _job = [brmh_cmd_treatMachine, [["GROUP", _group], ["ORDER", _order], ["SUBJECT", _man], ["MEDIC", _medic], ["TREAT", _treat], ["TRIES", 0], ["LAST", getPosATL _medic], ["MOVED", time], ["ORDERED", time], ["NEED", 0], ["STABLE", false], ["ANIM", time]]] call brmh_cmd_fnc_newMachine;
 			[_job] call brmh_cmd_fnc_treatApproach;
-			_jobs pushBack _job;
+			brmh_cmd_builds pushBack _job;
 			[_group, _order, "treat", _man, "going"] call brmh_cmd_fnc_careSay;
 		};
 		_treat set ["queue", _queue + _waiting];
-		_treat set ["jobs", _jobs];
 	} forEach brmh_cmd_treats;
+	// An order is done when nobody's waiting on it and none of its medics is still at work.
 	brmh_cmd_treats = brmh_cmd_treats select {
-		(_x get "jobs") isNotEqualTo [] or {
-			(_x get "queue") isNotEqualTo []
+		private _treat = _x;
+		(_treat get "queue") isNotEqualTo [] or {
+			(brmh_cmd_builds findIf {
+				((_x get "SPEC") get "KIND") isEqualTo "treat" and {
+					(_x get "STATE") isNotEqualTo ""
+				} and {
+					((_x get "TREAT") get "order") isEqualTo (_treat get "order")
+				} and {
+					(_x get "GROUP") isEqualTo (_treat get "group")
+				}
+			}) >= 0
 		}
 	};
 };
 
 brmh_cmd_fnc_treatRelease = {
 	params ["_job"];
-	private _medic = _job get "medic";
+	private _medic = _job get "MEDIC";
 	_medic setVariable ["brmh_cmd_busy", nil];
-	(_job get "casualty") setVariable ["brmh_cmd_handled", nil];
+	(_job get "SUBJECT") setVariable ["brmh_cmd_handled", nil];
 	// Down or not: a medic left with his animations off would be frozen when he wakes.
 	if (alive _medic) then {
 		_medic enableAI "ANIM";
@@ -2891,131 +2959,103 @@ brmh_cmd_fnc_treatRelease = {
 	};
 };
 
+brmh_cmd_fnc_treatAboard = {
+	params ["_job"];
+	private _man = _job get "SUBJECT";
+	vehicle _man isNotEqualTo _man
+};
+
+// Places he can go to reach the man: around a vehicle he's in, or the spots beside the body.
+brmh_cmd_fnc_treatTriesLeft = {
+	params ["_job"];
+	if ([_job] call brmh_cmd_fnc_treatAboard) exitWith {
+		(_job get "TRIES") < 4
+	};
+	(_job get "TRIES") < count ([_job get "SUBJECT", getPosATL (_job get "MEDIC")] call brmh_cmd_fnc_nearBody)
+};
+
+// The medic heads for the next place he could reach the man from.
 brmh_cmd_fnc_treatApproach = {
 	params ["_job"];
-	private _man = _job get "casualty";
-	private _medic = _job get "medic";
-	private _tries = _job get "tries";
-	if (vehicle _man isNotEqualTo _man) exitWith {
+	private _man = _job get "SUBJECT";
+	private _medic = _job get "MEDIC";
+	private _tries = _job get "TRIES";
+	if ([_job] call brmh_cmd_fnc_treatAboard) then {
 		_medic doMove ((vehicle _man) getPos [4, random 360]);
-		_job set ["tries", _tries + 1];
-		_job set ["ordered", time];
-		_job set ["moved", time];
-		_tries < 4
+	} else {
+		private _spots = [_man, getPosATL _medic] call brmh_cmd_fnc_nearBody;
+		if (_tries < count _spots) then {
+			_medic doMove (_spots # _tries);
+		};
 	};
-	private _spots = [_man, getPosATL _medic] call brmh_cmd_fnc_nearBody;
-	if (_tries >= count _spots) exitWith {
-		false
-	};
-	_medic doMove (_spots # _tries);
-	_job set ["tries", _tries + 1];
-	_job set ["ordered", time];
-	_job set ["moved", time];
-	true
+	_job set ["TRIES", _tries + 1];
+	_job set ["ORDERED", time];
+	_job set ["MOVED", time];
 };
 
-// True while he's still getting there, or starts working.
-brmh_cmd_fnc_treatGo = {
-	params ["_job", "_group", "_order"];
-	private _medic = _job get "medic";
-	private _man = _job get "casualty";
-	private _away = _medic distance (vehicle _man);
-	private _aboard = vehicle _man isNotEqualTo _man;
-	private _ready = unitReady _medic and {
-		(time - (_job get "ordered")) >= 3
-	};
-	private _stalled = _ready or {
-		(time - (_job get "moved")) >= 8
-	};
-	if (_away <= ([3, 8] select _aboard) or {
-		_stalled and {
-			_away <= 8
-		}
-	}) exitWith {
-		[_job, _group, _order] call brmh_cmd_fnc_treatStart;
-		true
-	};
-	if (not _aboard and {
-		_ready
-	} and {
-		_away <= 35
-	}) exitWith {
-		// As with a carry: as close as he can get. He works for a while, and the man is then with him.
-		_man setPosATL (_medic getPos [1.2, getDir _medic]);
-		[_man, "UnconsciousReviveDefault"] call brmh_cmd_fnc_carryPose;
-		[_job, _group, _order] call brmh_cmd_fnc_treatStart;
-		true
-	};
-	if ((_medic distance2D (_job get "last")) >= 1) then {
-		_job set ["last", getPosATL _medic];
-		_job set ["moved", time];
-	};
-	if (_ready or {
-		(time - (_job get "moved")) >= 20
-	}) exitWith {
-		if ([_job] call brmh_cmd_fnc_treatApproach) then {
-			true
-		} else {
-			// The owner's way, as a last resort: he was close, and now the man's with him.
-			if (not _aboard and {
-				_away <= 60
-			}) then {
-				_man setPosATL (_medic getPos [1.2, getDir _medic]);
-				[_man, "UnconsciousReviveDefault"] call brmh_cmd_fnc_carryPose;
-				[_job, _group, _order] call brmh_cmd_fnc_treatStart;
-				true
-			} else {
-				[_group, _order, "treat", _man, "can't reach"] call brmh_cmd_fnc_careSay;
-				[_job] call brmh_cmd_fnc_treatRelease;
-				false
+// He's stopped where he was sent, at least 3 s after being sent.
+brmh_cmd_fnc_treatReady = {
+	params ["_job"];
+	unitReady (_job get "MEDIC") and {
+		(time - (_job get "ORDERED")) >= 3
+	}
+};
+
+// Close enough to start: beside him, or at the vehicle he's in, or stopped within 8 m.
+brmh_cmd_fnc_treatArrived = {
+	params ["_job"];
+	private _away = (_job get "MEDIC") distance (vehicle (_job get "SUBJECT"));
+	_away <= ([3, 8] select ([_job] call brmh_cmd_fnc_treatAboard)) or {
+		_away <= 8 and {
+			[_job] call brmh_cmd_fnc_treatReady or {
+				(time - (_job get "MOVED")) >= 8
 			}
 		}
-	};
-	true
+	}
 };
 
+// He's stopped short, or hasn't moved in 20 s: time for another way in.
+brmh_cmd_fnc_treatStuck = {
+	params ["_job"];
+	[_job] call brmh_cmd_fnc_treatReady or {
+		(time - (_job get "MOVED")) >= 20
+	}
+};
+
+// The man is put beside the medic, as if he'd been dragged the last few metres.
+brmh_cmd_fnc_treatPull = {
+	params ["_job"];
+	private _medic = _job get "MEDIC";
+	private _man = _job get "SUBJECT";
+	_man setPosATL (_medic getPos [1.2, getDir _medic]);
+	[_man, "UnconsciousReviveDefault"] call brmh_cmd_fnc_carryPose;
+};
+
+// To work: how long it takes depends on where he is (brmh_cmd_careTimes). Returns where, for the radio.
 brmh_cmd_fnc_treatStart = {
-	params ["_job", "_group", "_order"];
-	private _medic = _job get "medic";
-	private _man = _job get "casualty";
+	params ["_job"];
+	private _medic = _job get "MEDIC";
+	private _man = _job get "SUBJECT";
 	private _fast = [_man] call brmh_cmd_fnc_atFacility;
-	private _need = brmh_cmd_careTimes get (["field_s", "facility_s"] select _fast);
 	doStop _medic;
 	_medic setDir (_medic getDir _man);
 	_medic disableAI "ANIM";
 	[_medic, "AinvPknlMstpSlayWrflDnon_medicOther"] call brmh_cmd_fnc_carryPose;
-	_job set ["state", "working"];
-	_job set ["since", time];
-	_job set ["need", _need];
-	_job set ["stable", false];
-	_job set ["anim", time];
-	[_group, _order, "treat", _man, "treating", ["field", "facility"] select _fast] call brmh_cmd_fnc_careSay;
+	_job set ["NEED", brmh_cmd_careTimes get (["field_s", "facility_s"] select _fast)];
+	_job set ["STABLE", false];
+	_job set ["ANIM", time];
+	["field", "facility"] select _fast
 };
 
-// False when it's over.
+// While he works: the man stops getting worse once they've got to work on him, the same as ACE's own treatments
+// without the items, and the medic keeps at it.
 brmh_cmd_fnc_treatWork = {
-	params ["_job", "_group", "_order"];
-	private _medic = _job get "medic";
-	private _man = _job get "casualty";
-	private _in = time - (_job get "since");
-	private _need = _job get "need";
-	if ([_man] call brmh_cmd_fnc_able) exitWith {
-		[_group, _order, "treat", _man, "up"] call brmh_cmd_fnc_careSay;
-		[_job] call brmh_cmd_fnc_treatRelease;
-		false
-	};
-	if (_in >= _need) exitWith {
-		[_man] call ace_medical_fnc_fullHeal;
-		[_man, _group] call brmh_cmd_fnc_treated;
-		[_group, _order, "treat", _man, "up"] call brmh_cmd_fnc_careSay;
-		[_job] call brmh_cmd_fnc_treatRelease;
-		false
-	};
-	// He stops getting worse once they've got to work on him. It's the same as ACE's own treatments, without the items.
-	if (not (_job get "stable") and {
-		_in >= (5 min (_need / 2))
+	params ["_job"];
+	private _man = _job get "SUBJECT";
+	if (not (_job get "STABLE") and {
+		(time - (_job get "SINCE")) >= (5 min ((_job get "NEED") / 2))
 	}) then {
-		_job set ["stable", true];
+		_job set ["STABLE", true];
 		_man setVariable ["ace_medical_openWounds", createHashMap, true];
 		_man setVariable ["ace_medical_woundBleeding", 0, true];
 		_man setVariable ["ace_medical_bloodVolume", (_man getVariable ["ace_medical_bloodVolume", 6]) max 4.5, true];
@@ -3023,11 +3063,16 @@ brmh_cmd_fnc_treatWork = {
 			["ace_medical_CPRSucceeded", _man] call CBA_fnc_localEvent;
 		};
 	};
-	if ((time - (_job get "anim")) >= 8) then {
-		_job set ["anim", time];
-		[_medic, "AinvPknlMstpSlayWrflDnon_medicOther"] call brmh_cmd_fnc_carryPose;
+	if ((time - (_job get "ANIM")) >= 8) then {
+		_job set ["ANIM", time];
+		[_job get "MEDIC", "AinvPknlMstpSlayWrflDnon_medicOther"] call brmh_cmd_fnc_carryPose;
 	};
-	true
+};
+
+brmh_cmd_fnc_treatDone = {
+	params ["_job"];
+	[_job get "SUBJECT"] call ace_medical_fnc_fullHeal;
+	[_job get "SUBJECT", _job get "GROUP"] call brmh_cmd_fnc_treated;
 };
 
 // If he's nobody left to go back to, he stays with whoever saved him.
