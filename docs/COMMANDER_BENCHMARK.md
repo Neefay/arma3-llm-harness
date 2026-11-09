@@ -72,7 +72,7 @@ The rules that make runs comparable:
 To see every scenario, with the benchmark's first and their seeds:
 
 ```powershell
-& "C:\projects\otherrma-harness\host\.venv\Scriptsrma-harness.exe" commander list
+& "C:\projects\other\arma-harness\host\.venv\Scripts\arma-harness.exe" commander list
 ```
 
 1. **Set it up.** This boots the game if it isn't running, places everything, and prints the launch command:
