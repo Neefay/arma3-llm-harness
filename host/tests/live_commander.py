@@ -1199,7 +1199,9 @@ def play_village(client: Client) -> list[str]:
     assert "Contact," in text, "no contact report in the whole battle"
     assert "E1  enemy First contact  grid 041 040" in text or marked == 0
     assert "H1  hypothesis Enemy in village  grid 041 041  low" in text
-    assert "checked, " in text, "no squad reported checking a building"
+    # Clearing is only sent once a squad has finished searching, and the fight can be won before it reports a room.
+    won = "Objective achieved" in text
+    assert "checked, " in text or not clearing or won, "no squad reported checking a building"
     gridded = [line for line in text.splitlines() if "Contact" in line and "grid" in line.lower()]
     assert not gridded, f"contact reports stating a grid: {gridded[:3]}"
     return seen

@@ -307,6 +307,14 @@ brmh_cmd_fnc_onSeat = {
 		gunner _vehicle isEqualTo _man
 	}) then {
 		_man disableAI "TARGET";
+		if (isNil {
+			_man getVariable "brmh_cmd_offGunHandler"
+		}) then {
+			_man setVariable ["brmh_cmd_offGunHandler", _man addEventHandler ["GetOutMan", {
+				params ["_unit"];
+				_unit enableAI "TARGET";
+			}]];
+		};
 	};
 };
 
@@ -601,11 +609,14 @@ brmh_cmd_fnc_casualties = {
 			not ([_x] call brmh_cmd_fnc_able)
 		}
 	};
+	// Within sight, as the comment above says: near isn't enough, and a man down behind a wall can't be reported.
 	private _others = brmh_cmd_down select {
 		alive _x and {
 			group _x isNotEqualTo _group
 		} and {
 			(_x distance2D _leader) < 30
+		} and {
+			[[_leader], vehicle _x, (getPosASL _x) vectorAdd [0, 0, 0.4]] call brmh_cmd_fnc_canSee
 		}
 	};
 	(_down + _others) apply {
@@ -791,9 +802,22 @@ brmh_cmd_fnc_stepClearing = {
 			_group setVariable ["brmh_cmd_clearReached", (_group getVariable ["brmh_cmd_clearReached", 0]) + 1];
 			_soldier setVariable ["brmh_cmd_clearSpot", nil];
 		};
-		// A position can be unreachable, so nobody waits for one for long. Men on a job aren't sent to one.
+		// A position can be unreachable, so nobody waits for one for long: not past his deadline, and not once he's at
+		// the building and has stopped getting closer, as when another squad's cordon stands in the doorway. Further off,
+		// stopping is fighting or taking cover, and he still has his deadline. Men on a job aren't sent to one.
+		if (not isNil "_spot") then {
+			private _away = _soldier distance _spot;
+			if (_away > 15 or {
+				_away < (_soldier getVariable ["brmh_cmd_clearBest", 1e9]) - 1
+			}) then {
+				_soldier setVariable ["brmh_cmd_clearBest", _away];
+				_soldier setVariable ["brmh_cmd_clearGain", time];
+			};
+		};
 		if (time < (_soldier getVariable ["brmh_cmd_clearBy", 0]) and {
 			not unitReady _soldier
+		} and {
+			(time - (_soldier getVariable ["brmh_cmd_clearGain", time])) < 20
 		}) then {
 			_busy = _busy + 1;
 		} else {
@@ -804,6 +828,8 @@ brmh_cmd_fnc_stepClearing = {
 				_soldier setVariable ["brmh_cmd_clearSpot", _next];
 				// 45 s once he's there: a squad given CLEAR from 500 m away has the walk to make first.
 				_soldier setVariable ["brmh_cmd_clearBy", time + 45 + (_soldier distance _next) / 1.5];
+				_soldier setVariable ["brmh_cmd_clearBest", _soldier distance _next];
+				_soldier setVariable ["brmh_cmd_clearGain", time];
 				_busy = _busy + 1;
 			};
 		};
@@ -1135,14 +1161,22 @@ brmh_cmd_fnc_order = {
 		([_group, _order] + (_legs # 0)) call (missionNamespace getVariable format ["brmh_cmd_fnc_%1Order", _mode]);
 		true
 	};
-	if (_mode isNotEqualTo "posture") then {
+	private _oneSeat = _mode isEqualTo "mount" and {
+		(_legs # 0 # 1) isNotEqualTo ""
+	};
+	if (_mode isNotEqualTo "posture" and {
+		not _oneSeat
+	}) then {
 		_group setVariable ["brmh_cmd_clearQueue", nil];
 		_group setVariable ["brmh_cmd_clearLeft", -1];
 		_group setVariable ["brmh_cmd_cleared", []];
 		_group setVariable ["brmh_cmd_blocked", []];
+		_group setVariable ["brmh_cmd_ruined", []];
 		_group setVariable ["brmh_cmd_placed", -1];
 		{
 			_x enableAI "PATH";
+			// A cordon turns each man to watch its centre, and nothing else turns him back.
+			_x doWatch objNull;
 		} forEach units _group;
 		if (_group getVariable ["brmh_cmd_task", false]) then {
 			_group setVariable ["brmh_cmd_task", false];
@@ -1158,6 +1192,7 @@ brmh_cmd_fnc_order = {
 		if ((_legs # 0 # 1) isEqualTo "") then {
 			[_group] call brmh_cmd_fnc_callOffCare;
 			[_group] call brmh_cmd_fnc_clearRoute;
+			[_group] call brmh_cmd_fnc_stopMount;
 		};
 		[_group, _legs # 0 # 0, _legs # 0 # 1] call brmh_cmd_fnc_startMount;
 		true
@@ -1341,6 +1376,7 @@ brmh_cmd_fnc_spawnEnemy = {
 brmh_cmd_fnc_spawnVehicle = {
 	params [["_key", "", [""]], ["_class", "", [""]], ["_at", [], [[]], 2], ["_ammo", [], [[]]], ["_fly", 0, [0]]];
 	private _vehicle = createVehicle [_class, _at + [0], [], 0, ["NONE", "FLY"] select (_fly > 0)];
+	_vehicle setVariable ["brmh_cmd_spawned", true];
 	if (_fly > 0) then {
 		// Airborne and already moving, so it doesn't stall in its first second.
 		_vehicle setPosASL [_at # 0, _at # 1, (getTerrainHeightASL _at) + _fly];
@@ -2308,7 +2344,7 @@ brmh_cmd_fnc_stepTreats = {
 			(vehicle _x isNotEqualTo _x and {
 				not ([vehicle _x] call brmh_cmd_fnc_isMedicalVehicle)
 			}) or {
-				(_x getVariable ["brmh_cmd_handled", ""]) isEqualTo "carried"
+				(_x getVariable ["brmh_cmd_handled", ""]) in ["carried", "treated"]
 			}
 		};
 		_queue = _queue - _waiting;
@@ -2345,8 +2381,11 @@ brmh_cmd_fnc_treatRelease = {
 	private _medic = _job get "medic";
 	_medic setVariable ["brmh_cmd_busy", nil];
 	(_job get "casualty") setVariable ["brmh_cmd_handled", nil];
-	if ([_medic] call brmh_cmd_fnc_able) then {
+	// Down or not: a medic left with his animations off would be frozen when he wakes.
+	if (alive _medic) then {
 		_medic enableAI "ANIM";
+	};
+	if ([_medic] call brmh_cmd_fnc_able) then {
 		[_medic, "AmovPknlMstpSrasWrflDnon"] call brmh_cmd_fnc_carryPose;
 		_medic doFollow leader group _medic;
 	};
@@ -2864,8 +2903,10 @@ brmh_cmd_postMachine = [
 	["RELEASE", {
 		private _medic = _this get "MEDIC";
 		_medic setVariable ["brmh_cmd_busy", nil];
-		if ([_medic] call brmh_cmd_fnc_able) then {
+		if (alive _medic) then {
 			_medic enableAI "ANIM";
+		};
+		if ([_medic] call brmh_cmd_fnc_able) then {
 			[_medic, "AmovPknlMstpSrasWrflDnon"] call brmh_cmd_fnc_carryPose;
 			_medic doFollow leader group _medic;
 		};
@@ -2886,6 +2927,7 @@ brmh_cmd_fnc_postBuilt = {
 	params ["_machine"];
 	private _medic = _machine get "MEDIC";
 	private _tent = createVehicle ["Land_MedicalTent_01_MTP_closed_F", _medic getPos [8, getDir _medic], [], 6, "NONE"];
+	_tent setVariable ["brmh_cmd_spawned", true];
 	brmh_cmd_postCount = (missionNamespace getVariable ["brmh_cmd_postCount", 0]) + 1;
 	private _key = format ["P%1", brmh_cmd_postCount];
 	_tent setVariable ["brmh_cmd_key", _key];
@@ -2908,7 +2950,13 @@ brmh_cmd_fnc_postBuilt = {
 */
 brmh_cmd_fnc_postOrder = {
 	params ["_group", "_order", "_at"];
-	if (alive (_group getVariable ["brmh_cmd_post", objNull])) exitWith {
+	if (alive (_group getVariable ["brmh_cmd_post", objNull]) or {
+		(brmh_cmd_builds findIf {
+			(_x get "GROUP") isEqualTo _group and {
+				((_x get "SPEC") get "KIND") isEqualTo "post"
+			}
+		}) >= 0
+	}) exitWith {
 		[_group, _order, "post", "post", "have one"] call brmh_cmd_fnc_careSay;
 	};
 	private _medics = (units _group) select {
@@ -3138,7 +3186,18 @@ brmh_cmd_fnc_makeMedics = {
 
 brmh_cmd_fnc_clearAll = {
 	{
-		deleteVehicle _y;
+		[_x] call brmh_cmd_fnc_carryRelease;
+	} forEach brmh_cmd_carries;
+	{
+		_x call ["#END", ["called off"]];
+	} forEach brmh_cmd_builds;
+	// Only what the harness made. A vehicle a squad merely saw is the mission's own, and stays for the next battle.
+	{
+		if (_y getVariable ["brmh_cmd_spawned", false]) then {
+			deleteVehicle _y;
+		} else {
+			_y setVariable ["brmh_cmd_key", nil];
+		};
 	} forEach brmh_cmd_vehicles;
 	brmh_cmd_vehicles = createHashMap;
 	brmh_cmd_buildings = createHashMap;
@@ -3152,6 +3211,8 @@ brmh_cmd_fnc_clearAll = {
 	{
 		[_x] call brmh_cmd_fnc_deleteStation;
 		_y setGroupIdGlobal ["Retired"];
+		// Created to outlive their men, so they'd pile up battle after battle towards the engine's cap on groups.
+		_y deleteGroupWhenEmpty true;
 	} forEach brmh_cmd_stations;
 	brmh_cmd_stations = createHashMap;
 	{
@@ -3160,6 +3221,7 @@ brmh_cmd_fnc_clearAll = {
 			deleteVehicle _x;
 		} forEach units _group;
 		_group setGroupIdGlobal ["Retired"];
+		_group deleteGroupWhenEmpty true;
 	} forEach brmh_cmd_enemies;
 	brmh_cmd_enemies = [];
 	{
