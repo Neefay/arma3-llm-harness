@@ -151,6 +151,9 @@ def test_every_declared_machine_waits_with_a_deadline_and_ends_aloud():
         states = re.split(STATE_LINE.replace("(", "(?:"), body, flags=re.M)[1:]
         assert len(states) == len(declared_states(body)) > 0, machine
         for name, state in zip(declared_states(body), states, strict=True):
-            assert '["DEADLINE", [' in state, f"{machine}: {name} waits with no deadline"
+            standing = '["STANDING", true]' in state
+            assert '["DEADLINE", [' in state or standing, f"{machine}: {name} waits with no deadline"
+        if '["SAYS", false]' in body:  # its state goes to the host in a packet field, not as words
+            continue
         silent_endings = re.findall(r'\}, "", ""\]', body)
         assert not silent_endings, f"{machine} can end without a word"

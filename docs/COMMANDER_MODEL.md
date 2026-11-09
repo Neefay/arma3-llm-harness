@@ -464,9 +464,11 @@ stateDiagram-v2
 <!-- machine: placing -->
 ```mermaid
 stateDiagram-v2
+  state "moving" as moving
+  state "placed" as placed
   [*] --> moving: OCCUPY or CORDON
   moving --> placed: all free members ready, or 90 s
-  placed --> [*]: next Course order
+  placed --> [*]: next Course order (standing)
 ```
 
 <!-- machine: cba-task -->

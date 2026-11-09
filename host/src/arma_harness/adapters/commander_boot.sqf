@@ -832,7 +832,7 @@ brmh_cmd_fnc_packet = {
 		["gun_ammo", ([_group, []] call brmh_cmd_fnc_gunsOf) apply {
 			[_x getVariable ["brmh_cmd_key", ""], [_x] call brmh_cmd_fnc_gunAmmo]
 		}],
-		["placed", _group getVariable ["brmh_cmd_placed", -1]],
+		["placed", [_group] call brmh_cmd_fnc_placedState],
 		["casualties", [_group, _leader] call brmh_cmd_fnc_casualties],
 		["up", _able apply {
 			[_x] call brmh_cmd_fnc_manKey
@@ -1037,43 +1037,91 @@ brmh_cmd_fnc_stepClearing = {
 	};
 };
 
-// OCCUPY and CORDON: each soldier gets a spot, walks there and stays.
+// OCCUPY and CORDON: each soldier gets a spot and walks there, and the squad holds when they all have, or after 90 s.
+// Its state reaches the host as the packet's "placed": -1 none, 0 moving, 1 placed.
+brmh_cmd_placingMachine = [
+	["KIND", "placing"],
+	["SAYS", false],
+	["INITIAL", "moving"],
+	["STATES", [
+		["moving", [
+			["ON", [
+				[{
+					({
+						not unitReady _x
+					} count ([_this get "GROUP"] call brmh_cmd_fnc_freeMen)) isEqualTo 0
+				}, {
+					[_this] call brmh_cmd_fnc_settlePlacing
+				}, "placed", ""]
+			]],
+			["DEADLINE", [90, {
+				[_this] call brmh_cmd_fnc_settlePlacing
+			}, "placed", ""]]
+		]],
+		["placed", [
+			["STANDING", true]
+		]]
+	]]
+];
+
 brmh_cmd_fnc_startPlacing = {
 	params ["_group", "_spots", "_watch"];
-	_group setVariable ["brmh_cmd_placeSpots", _spots];
-	_group setVariable ["brmh_cmd_placeWatch", _watch];
-	_group setVariable ["brmh_cmd_placeBy", time + 90];
-	_group setVariable ["brmh_cmd_placed", 0];
+	[_group, ["placing"]] call brmh_cmd_fnc_endMachines;
 	private _count = count _spots;
 	{
 		if (_count > 0) then {
 			_x doMove (_spots # (_forEachIndex mod _count));
 		};
-	} forEach ((units _group) select {
-		[_x] call brmh_cmd_fnc_able and {
-			not (_x getVariable ["brmh_cmd_busy", false])
-		}
-	});
+	} forEach ([_group] call brmh_cmd_fnc_freeMen);
+	brmh_cmd_builds pushBack ([brmh_cmd_placingMachine, [["GROUP", _group], ["ORDER", _group getVariable ["brmh_cmd_order", ""]], ["SUBJECT", ""], ["WATCH", _watch]]] call brmh_cmd_fnc_newMachine);
 };
 
-brmh_cmd_fnc_stepPlacing = {
+// Everyone stops where he is, facing the cordon's centre if it has one.
+brmh_cmd_fnc_settlePlacing = {
+	params ["_machine"];
+	private _soldiers = [_machine get "GROUP"] call brmh_cmd_fnc_freeMen;
+	doStop _soldiers;
+	if ((_machine get "WATCH") isNotEqualTo []) then {
+		_soldiers doWatch (_machine get "WATCH");
+	};
+};
+
+// A squad's men who can do as they're told: able, and not carrying, treating or building.
+brmh_cmd_fnc_freeMen = {
 	params ["_group"];
-	private _soldiers = (units _group) select {
+	(units _group) select {
 		[_x] call brmh_cmd_fnc_able and {
 			not (_x getVariable ["brmh_cmd_busy", false])
 		}
-	};
-	private _waiting = {
-		not unitReady _x
-	} count _soldiers;
-	if (_waiting isEqualTo 0 or time > (_group getVariable ["brmh_cmd_placeBy", 0])) then {
-		private _watch = _group getVariable ["brmh_cmd_placeWatch", []];
-		doStop _soldiers;
-		if (_watch isNotEqualTo []) then {
-			_soldiers doWatch _watch;
+	}
+};
+
+// Ends a squad's machines of these kinds, as a new order does to the old one's.
+brmh_cmd_fnc_endMachines = {
+	params ["_group", "_kinds", ["_word", "called off"]];
+	{
+		if ((_x get "GROUP") isEqualTo _group and {
+			((_x get "SPEC") get "KIND") in _kinds
+		}) then {
+			_x call ["#END", [_word]];
 		};
-		_group setVariable ["brmh_cmd_placed", 1];
+	} forEach brmh_cmd_builds;
+};
+
+// What a squad's placing machine is at, for the packet: -1 none, 0 moving, 1 placed.
+brmh_cmd_fnc_placedState = {
+	params ["_group"];
+	private _at = brmh_cmd_builds findIf {
+		(_x get "GROUP") isEqualTo _group and {
+			((_x get "SPEC") get "KIND") isEqualTo "placing"
+		} and {
+			(_x get "STATE") isNotEqualTo ""
+		}
 	};
+	if (_at < 0) exitWith {
+		-1
+	};
+	[0, 1] select (((brmh_cmd_builds # _at) get "STATE") isEqualTo "placed")
 };
 
 // CBA's tasks handle the behaviour. They run until replaced, so the commander's next order has to undo them cleanly.
@@ -1187,9 +1235,6 @@ brmh_cmd_fnc_step = {
 			_y getVariable "brmh_cmd_clearQueue"
 		}) then {
 			[_y] call brmh_cmd_fnc_stepClearing;
-		};
-		if ((_y getVariable ["brmh_cmd_placed", -1]) isEqualTo 0) then {
-			[_y] call brmh_cmd_fnc_stepPlacing;
 		};
 		[_y] call brmh_cmd_fnc_stepMount;
 		[_y] call brmh_cmd_fnc_stepDismount;
@@ -1328,7 +1373,7 @@ brmh_cmd_fnc_order = {
 		_group setVariable ["brmh_cmd_cleared", []];
 		_group setVariable ["brmh_cmd_blocked", []];
 		_group setVariable ["brmh_cmd_ruined", []];
-		_group setVariable ["brmh_cmd_placed", -1];
+		[_group, ["placing"]] call brmh_cmd_fnc_endMachines;
 		{
 			_x enableAI "PATH";
 			// A cordon turns each man to watch its centre, and nothing else turns him back.
@@ -2892,10 +2937,14 @@ brmh_cmd_fnc_treated = {
 	PARAMETERS:
 		0 - Declaration (ARRAY): [KEY, value] pairs:
 			KIND     - what the radio calls the job, as brmh_cmd_fnc_careSay takes it (STRING)
+			SAYS     - false for a machine whose state reaches the host in its own packet field, not as radio words;
+			           its words are then never said, and an ending needs none (BOOL, default true)
 			INITIAL  - the state it starts in (STRING)
 			ALWAYS   - transitions checked in every state, before the state's own (ARRAY)
 			STATES   - [[name, [["ON", transitions], ["DEADLINE", [seconds or {seconds}, action, next, word]],
-			           ["EVERY", code run each step while in the state (optional)]]], ...]
+			           ["EVERY", code run each step while in the state (optional)]]], ...]. A state that lasts
+			           until the machine is ended from outside, such as a squad holding where it was placed, has
+			           ["STANDING", true] in place of a deadline.
 			RELEASE  - run once, however it ends (CODE)
 			A transition is [guard, action, next state, word]. Guards and actions get the machine as _this, and an
 			action may return the detail its word needs. A next state of "" ends the machine, and has to have a word.
@@ -2945,16 +2994,18 @@ brmh_cmd_fnc_newMachine = {
 			if (_taken >= 0) then {
 				_self call ["#GO", _transitions # _taken];
 			} else {
-				(_here get "DEADLINE") params ["_after", "_action", "_next", "_word"];
-				private _limit = if (_after isEqualType {}) then {
-					_self call _after
-				} else {
-					_after
-				};
-				if ((time - (_self get "SINCE")) >= _limit) then {
-					_self call ["#GO", [{
-						true
-					}, _action, _next, _word]];
+				if ("DEADLINE" in _here) then {
+					(_here get "DEADLINE") params ["_after", "_action", "_next", "_word"];
+					private _limit = if (_after isEqualType {}) then {
+						_self call _after
+					} else {
+						_after
+					};
+					if ((time - (_self get "SINCE")) >= _limit) then {
+						_self call ["#GO", [{
+							true
+						}, _action, _next, _word]];
+					};
 				};
 			};
 			(_self get "STATE") isNotEqualTo ""
@@ -2965,7 +3016,9 @@ brmh_cmd_fnc_newMachine = {
 			if (isNil "_detail") then {
 				_detail = "";
 			};
-			if (_word isNotEqualTo "") then {
+			if (_word isNotEqualTo "" and {
+				(_self get "SPEC") getOrDefault ["SAYS", true]
+			}) then {
 				[_self get "GROUP", _self get "ORDER", (_self get "SPEC") get "KIND", _self get "SUBJECT", _word, _detail] call brmh_cmd_fnc_careSay;
 			};
 			_self set ["STATE", _next];
@@ -2996,10 +3049,13 @@ brmh_cmd_fnc_machineProblems = {
 	if (not ((_spec getOrDefault ["INITIAL", ""]) in _states)) then {
 		_problems pushBack "its initial state isn't declared";
 	};
+	private _says = _spec getOrDefault ["SAYS", true];
 	private _check = {
 		params ["_where", "_transition"];
 		_transition params ["", "", ["_next", ""], ["_word", ""]];
-		if (_next isEqualTo "" and {
+		if (_says and {
+			_next isEqualTo ""
+		} and {
 			_word isEqualTo ""
 		}) then {
 			_problems pushBack format ["%1 can end without a word", _where];
@@ -3015,10 +3071,13 @@ brmh_cmd_fnc_machineProblems = {
 	} forEach (_spec getOrDefault ["ALWAYS", []]);
 	{
 		private _name = _x;
-		if (not ("DEADLINE" in _y)) then {
-			_problems pushBack format ["%1 waits with no deadline", _name];
-		} else {
-			[_name + " at its deadline", _y get "DEADLINE"] call _check;
+		switch (true) do {
+			case ("DEADLINE" in _y): {
+				[_name + " at its deadline", _y get "DEADLINE"] call _check;
+			};
+			case (not (_y getOrDefault ["STANDING", false])): {
+				_problems pushBack format ["%1 waits with no deadline", _name];
+			};
 		};
 		{
 			[_name, _x] call _check;
