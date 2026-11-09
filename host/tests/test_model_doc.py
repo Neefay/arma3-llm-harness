@@ -70,9 +70,13 @@ def in_chart(machine: str) -> set[str]:
     return set(re.findall(r'^\s*state "([^"]+)" as \w+', match[1], flags=re.M))
 
 
-@pytest.mark.parametrize("machine", sorted(MACHINES))
+DECLARED = re.findall(r"^brmh_cmd_(\w+)Machine = \[$", SQF, flags=re.M)
+CHART_NAMES = {"task": "cba-task"}  # a declared machine whose chart goes by another name
+
+
+@pytest.mark.parametrize("machine", sorted(set(MACHINES) | set(DECLARED)))
 def test_the_chart_has_exactly_the_states_the_code_sets(machine):
-    code, chart = in_code(machine), in_chart(machine)
+    code, chart = in_code(machine), in_chart(CHART_NAMES.get(machine, machine))
     assert code, f"found no states in the code for {machine}: the patterns here need updating"
     only_code, only_chart = sorted(code - chart), sorted(chart - code)
     assert code == chart, f"{machine}: only in the code {only_code}, only in the chart {only_chart}"

@@ -1125,11 +1125,42 @@ brmh_cmd_fnc_placedState = {
 };
 
 // CBA's tasks handle the behaviour. They run until replaced, so the commander's next order has to undo them cleanly.
+// A CBA task runs until the next order replaces it. Then the squad is released from it: CBA's scripts keep running,
+// and DEFEND's disable each soldier's pathing as he reaches his post, so for 150 s his pathing is turned back on each
+// step. Its state isn't said: the order that replaced it is.
+brmh_cmd_taskMachine = [
+	["KIND", "task"],
+	["SAYS", false],
+	["INITIAL", "running"],
+	["STATES", [
+		["running", [
+			["ON", [
+				[{
+					_this getOrDefault ["REPLACED", false]
+				}, {
+					// ATTACK leaves a group crawling in COMBAT, and DEFEND at LIMITED speed. Both tested on a real game.
+					(_this get "GROUP") setBehaviour "AWARE";
+					(_this get "GROUP") setSpeedMode "NORMAL";
+				}, "releasing", ""]
+			]],
+			["STANDING", true]
+		]],
+		["releasing", [
+			["EVERY", {
+				{
+					_x enableAI "PATH";
+				} forEach units (_this get "GROUP");
+			}],
+			["DEADLINE", [150, {}, "", ""]]
+		]]
+	]]
+];
+
 brmh_cmd_fnc_startTask = {
 	params ["_group", "_type", "_at", "_radius"];
 	private _centre = _at + [0];
-	_group setVariable ["brmh_cmd_task", true];
-	_group setVariable ["brmh_cmd_releaseUntil", 0];
+	[_group, ["task"]] call brmh_cmd_fnc_endMachines;
+	brmh_cmd_builds pushBack ([brmh_cmd_taskMachine, [["GROUP", _group], ["ORDER", _group getVariable ["brmh_cmd_order", ""]], ["SUBJECT", ""]]] call brmh_cmd_fnc_newMachine);
 	switch (_type) do {
 		case "ATTACK": {
 			[_group, _centre, _radius, true] call CBA_fnc_taskAttack;
@@ -1238,11 +1269,6 @@ brmh_cmd_fnc_step = {
 		};
 		[_y] call brmh_cmd_fnc_stepMount;
 		[_y] call brmh_cmd_fnc_stepDismount;
-		if (time < (_y getVariable ["brmh_cmd_releaseUntil", 0])) then {
-			{
-				_x enableAI "PATH";
-			} forEach units _y;
-		};
 	} forEach brmh_cmd_stations;
 	call brmh_cmd_fnc_stepTreats;
 	call brmh_cmd_fnc_stepBuilds;
@@ -1379,14 +1405,13 @@ brmh_cmd_fnc_order = {
 			// A cordon turns each man to watch its centre, and nothing else turns him back.
 			_x doWatch objNull;
 		} forEach units _group;
-		if (_group getVariable ["brmh_cmd_task", false]) then {
-			_group setVariable ["brmh_cmd_task", false];
-			// ATTACK leaves a group crawling in COMBAT, and DEFEND at LIMITED speed. Both tested on a real game.
-			_group setBehaviour "AWARE";
-			_group setSpeedMode "NORMAL";
-			// DEFEND's scripts keep running, and disable each soldier's pathing as he reaches his post. See the monitor step.
-			_group setVariable ["brmh_cmd_releaseUntil", time + 150];
-		};
+		{
+			if ((_x get "GROUP") isEqualTo _group and {
+				((_x get "SPEC") get "KIND") isEqualTo "task"
+			}) then {
+				_x set ["REPLACED", true];
+			};
+		} forEach brmh_cmd_builds;
 	};
 	// One man sent to a named seat leaves the squad's orders alone. Otherwise, it's where the whole squad is going now.
 	if (_mode isEqualTo "mount") exitWith {
@@ -2307,7 +2332,10 @@ brmh_cmd_fnc_callOffCare = {
 		};
 	} forEach brmh_cmd_treats;
 	{
-		if ((_x get "GROUP") isEqualTo _group) then {
+		// A replaced task is still releasing the squad from CBA's scripts.
+		if ((_x get "GROUP") isEqualTo _group and {
+			((_x get "SPEC") get "KIND") isNotEqualTo "task"
+		}) then {
 			_x call ["#END", ["called off"]];
 		};
 	} forEach brmh_cmd_builds;

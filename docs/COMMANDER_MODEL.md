@@ -474,9 +474,13 @@ stateDiagram-v2
 <!-- machine: cba-task -->
 ```mermaid
 stateDiagram-v2
+  state "running" as running
+  state "releasing" as releasing
   [*] --> running: ATTACK, DEFEND, PATROL_AREA, SWEEP
-  running --> releasing: next order
+  running --> releasing: next order (standing until then)
   releasing --> [*]: 150 s
+  running --> [*]: another task
+  releasing --> [*]: another task
 ```
 
 <!-- machine: custody -->
