@@ -58,7 +58,7 @@ PACKET_FIELDS = (
     "placed", "contacts", "suppression", "ruined", "blocked", "seen_vehicles", "seen_ruins", "mounted", "mount",
     "missions",
     "gun_ammo", "limping", "casualties", "up", "medical")
-PACKET_HOST_FIELDS = ("t", "under_way")  # added here, after the game's report arrives
+PACKET_HOST_FIELDS = ("t", "under_way", "targets_listed")  # added here, after the game's report arrives
 # Each group in the truth record, as brmh_cmd_fnc_truth builds it. Only the review and the objectives read it.
 TRUTH_GROUP_FIELDS = ("group", "side", "able", "down", "mounted", "limping", "leader_limping", "units", "pos")
 
@@ -149,7 +149,7 @@ class Runtime:
     def _id(self, prefix: str) -> str:
         number = self.next_id.get(prefix, 1)
         self.next_id[prefix] = number + 1
-        return f"{prefix}{number}" if prefix in "WSMV" else f"{prefix}-{number:04d}"
+        return f"{prefix}{number}" if prefix in "WSMVT" else f"{prefix}-{number:04d}"
 
     # -- game side -------------------------------------------------------------------------------
 
@@ -209,13 +209,46 @@ class Runtime:
         """The commander's id for a game vehicle, or nothing if it hasn't been told about it."""
         return next((vehicle["id"] for vehicle in self.vehicles.values() if vehicle["key"] == key), "")
 
-    def _sightings(self, callsign: str, packet: dict) -> None:
+    def _target_rows(self, callsign: str, packet: dict) -> None:
+        """Enemy weapons and vehicles a squad sees, followed by the key the game gives each real one: one entry on the
+        commander's list per gun, however many squads report it, as the owner chose. The entry holds only what was
+        reported: kind, model once it's known, who saw it, and where from them. Never a grid."""
+        x, y = packet["pos"]
+        for contact in packet.get("contacts") or []:
+            key = contact.get("key")
+            if not key:
+                continue
+            target_id = self._vehicle_id(key)
+            entry = self.vehicles.get(target_id) if target_id else None
+            if entry is None and contact["age_s"] > reports.CONTACT_FRESH_S:
+                continue  # only what's been seen just now gets a place on the list, and an id
+            if entry is None:
+                target_id = self._unused_id("T", self.vehicles)
+                entry = self.vehicles[target_id] = {"id": target_id, "key": key, "enemy": True, "state": "active",
+                                                    "kind": contact["kind"], "model": "", "name": contact["kind"],
+                                                    "at": None, "t": None, "wrecked": False, "said": False}
+            contact["id"] = target_id
+            if contact["age_s"] <= reports.CONTACT_FRESH_S:
+                dx, dy = contact["pos"][0] - x, contact["pos"][1] - y
+                entry.update(kind=contact["kind"], seen_by=callsign, t=packet["t"],
+                             where=f"{reports.rough_range(math.hypot(dx, dy)).replace('roughly ', 'about ')} "
+                                   f"{reports.compass(dx, dy)} of {callsign}")
+                if contact.get("name"):
+                    entry.update(model=contact["name"])
+                entry["name"] = f"{entry['kind']} ({entry['model']})" if entry["model"] else entry["kind"]
+                if entry["state"] == "abandoned":  # somebody's on it again
+                    entry["state"] = "active"
+        packet["targets_listed"] = [one for one, entry in self.vehicles.items() if entry.get("said")]
+
+    def _sightings(self, callsign: str, packet: dict, enemy_only: bool = False) -> None:
         """What a squad can see, turned into news: vehicles the commander hasn't heard of, or that have changed since it
         last heard, and buildings it still thinks are standing."""
         t = packet["t"]
         for key, name, grid, alive in packet.get("seen_vehicles") or []:
             spoken = format_grid(grid)
             vehicle = self.vehicles.get(self._vehicle_id(key))
+            if enemy_only and not (vehicle and vehicle.get("enemy")):
+                continue
             if vehicle is None:
                 if not alive:
                     continue
@@ -226,13 +259,19 @@ class Runtime:
                           None, t)
                 continue
             if not alive and not vehicle.get("wrecked"):
-                vehicle.update(wrecked=True, at=spoken, t=t)
-                self._say(callsign, f"{vehicle['id']} is wrecked, grid {spoken}.", reports.ROUTINE, None, t)
-            elif alive and vehicle.get("at") != spoken:
+                vehicle.update(wrecked=True, at=spoken, t=t, state="destroyed", seen_by=callsign)
+                words = "is destroyed" if vehicle.get("enemy") else "is wrecked"
+                self._say(callsign, f"{vehicle['id']} {words}, grid {spoken}.", reports.ROUTINE, None, t)
+            elif alive and vehicle.get("enemy") and vehicle.get("state") == "active":
+                # Its crew gone: a gun nobody's on can still be manned again.
+                vehicle.update(state="abandoned", at=spoken, t=t, seen_by=callsign)
+                self._say(callsign, f"{vehicle['id']}, {vehicle['name']}, abandoned, nobody on it, grid {spoken}.",
+                          reports.ROUTINE, None, t)
+            elif alive and not vehicle.get("enemy") and vehicle.get("at") != spoken:
                 vehicle.update(at=spoken, t=t)
                 self._say(callsign, f"{vehicle['id']}, {name}, nobody on it, is at grid {spoken}.", reports.ROUTINE,
                           None, t)
-        for building in packet.get("seen_ruins") or []:
+        for building in [] if enemy_only else packet.get("seen_ruins") or []:
             if building not in self.destroyed:
                 self.destroyed[building] = t
                 self._say(callsign, f"{building} is destroyed.", reports.ROUTINE, None, t)
@@ -309,6 +348,7 @@ class Runtime:
             packet["mount"] = [self._vehicle_id(packet["mount"][0]), *packet["mount"][1:]]
         packet["t"] = float(event.get("t", 0))
         self._casualty_rows(callsign, packet)
+        self._target_rows(callsign, packet)
         self.packets[callsign] = packet
         if self.t0 is None or self.ended:
             return
@@ -319,6 +359,9 @@ class Runtime:
             entry = next((entry for entry in self.casualties.values() if entry["id"] == one), None)
             if entry and entry["squad"] == callsign:
                 entry["state"] = "gone"
+        for one in tracker.listed:
+            if one in self.vehicles:
+                self.vehicles[one]["said"] = True
         for one in tracker.located:
             entry = next((entry for entry in self.casualties.values() if entry["id"] == one), None)
             if entry:
@@ -337,8 +380,9 @@ class Runtime:
             if report.destroyed:
                 self.destroyed[report.destroyed] = packet["t"]
             self._say(callsign, report.text, report.precedence, report.grid, packet["t"])
-        if not in_combat:  # nobody takes stock of abandoned guns in a firefight
-            self._sightings(callsign, packet)
+        # Nobody takes stock of empty cars in a firefight, but the enemy's gun falling silent or going up is news then
+        # above all.
+        self._sightings(callsign, packet, enemy_only=in_combat)
         self._advance_chain(callsign, packet, tracker)
 
     def _in_battle(self, t: float) -> bool:
@@ -688,8 +732,13 @@ class Runtime:
                                 for building, t in sorted(self.checked.items(), key=lambda item: item[1]))]
         if self.destroyed:
             lines += ["", "BUILDINGS DESTROYED", "  ".join(sorted(self.destroyed))]
-        if self.vehicles:
-            lines += ["", "VEHICLES", *(self._vehicle_line(vehicle) for vehicle in self.vehicles.values())]
+        own = [vehicle for vehicle in self.vehicles.values() if not vehicle.get("enemy")]
+        if own:
+            lines += ["", "VEHICLES", *(self._vehicle_line(vehicle) for vehicle in own)]
+        # Only once a squad has said it: the list mustn't get ahead of the radio.
+        enemy = [vehicle for vehicle in self.vehicles.values() if vehicle.get("enemy") and vehicle.get("said")]
+        if enemy:
+            lines += ["", "ENEMY WEAPONS AND VEHICLES", *(self._vehicle_line(vehicle) for vehicle in enemy)]
         down = [entry for entry in self.casualties.values() if entry.get("state") == "down"]
         if down:
             lines += ["", "CASUALTIES", *(self._casualty_line(entry) for entry in down)]
@@ -740,6 +789,10 @@ class Runtime:
 
     def _vehicle_line(self, vehicle: dict) -> str:
         when = "as briefed" if vehicle.get("t") is None else f"reported {_ago(self.now() - vehicle['t'])}"
+        if vehicle.get("enemy"):
+            place = f"grid {vehicle['at']}" if vehicle.get("at") else vehicle.get("where", "")
+            return (f"{vehicle['id']}  enemy {vehicle['name']}  {vehicle['state']}, {place}, "
+                    f"by {vehicle.get('seen_by')}  {when}")
         state = "wrecked  " if vehicle.get("wrecked") else ""
         return f"{vehicle['id']}  {vehicle['name']}  {state}grid {vehicle['at']}  {when}"
 
@@ -810,7 +863,11 @@ class Runtime:
                             for m in self.markers.values()],
                 "buildings": [{"id": b["id"], "type": b["name"], "grid": b["at"], "positions": b["positions"]}
                               for b in self.buildings],
-                "vehicles": [{"id": v["id"], "type": v["name"], "grid": v["at"]} for v in self.vehicles.values()],
+                "vehicles": [{"id": v["id"], "type": v["name"], "grid": v["at"]} for v in self.vehicles.values()
+                             if not v.get("enemy")],
+                "enemy_materiel": [{"id": v["id"], "type": v["name"], "state": v["state"], "seen_by": v.get("seen_by"),
+                                    "where": f"grid {v['at']}" if v.get("at") else v.get("where")}
+                                   for v in self.vehicles.values() if v.get("enemy") and v.get("said")],
                 **({"places": self.places()} if self.terrain else {}),
                 "casualties": [{"id": entry["id"], "name": entry["name"], "squad": entry["squad"],
                                 "grid": entry.get("said_grid") or None, "on": entry.get("said_vehicle") or None}
@@ -1278,7 +1335,8 @@ class Runtime:
             # A snapshot: drawing takes half a second, and the radio shouldn't wait for it.
             drawing = (place, size, [dict(b) for b in self.buildings], [dict(m) for m in self.markers.values()],
                        positions, dict(self.checked), caption, dict(self.destroyed),
-                       [dict(v) for v in self.vehicles.values()], self.terrain)
+                       [dict(v) for v in self.vehicles.values()
+                        if v.get("at") and (v.get("said") or not v.get("enemy"))], self.terrain)
             self._used()
         return {"png": map_mod.render(*drawing), "text": caption}
 

@@ -235,6 +235,7 @@ Rules for all of them:
 
 - **Random draws** (`scenario.draw`): any value may be `{one_of: [...]}`, `{between: [lo, hi]}` (numbers or times) or `{around: grid, within_m: m}`. Things drawn together go under `variant: {one_of: [...]}`, where each choice is a bundle of entries added to the scenario's lists. They are drawn once when the battle starts, from a seed (`commander start --seed N` replays a battle), and the seed and every draw are kept in `battle.json`.
 - **Losing conditions**: `failure: {casualties_pct: 40}` (that share of the starting strength dead or down at once), `failure: {critical: [Recon, V1]}` (a station with every man dead, or a vehicle destroyed), alongside `all_stations_lost`. The briefing states them under "THE MISSION FAILS IF", and `commander_mission` lists them as `fails_if`, written from the same settings the harness checks. A failure ends the battle with "MISSION END. Mission failed: ..." to the commander.
+- **Crewed enemy weapons and vehicles**: an enemy entry with `vehicle: <class>` and `dir:` spawns it with its own crew (a gun on a tripod goes on level ground nearby). Squads report contacts by kind (emplacement, tank, armed car, ...) and by model once identified, and list each one as T1, T2, ..., with its state as seen.
 - **Men at a place**: `success: {men: 10, within_m: 150, of: grid}`, counting soldiers rather than squads.
 - **Positions checked on the terrain**: every observer, ambush site and hiding place in the built scenarios was checked with the terrain sample (line of sight, water) before it was written.
 
@@ -245,7 +246,6 @@ In order of how many scenarios each one unlocks:
 | Need | Unlocks | Size |
 |---|---|---|
 | Timed or triggered enemy movement: appear at a time or on first contact, at one of several points, and attack a place | 1, 6, 8 | medium |
-| Crewed enemy weapons: a static gun or vehicle with its own crew | 2, 7 | small |
 | More objective kinds: hold an area until a time, a vehicle destroyed, named casualties evacuated, one enemy group cleared, objectives in order | 1, 4, 6, 7 | medium |
 | CAS talk-on | 10 | small |
 

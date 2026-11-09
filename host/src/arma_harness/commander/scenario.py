@@ -190,9 +190,12 @@ def build(raw: dict) -> Scenario:
     for enemy in raw.get("enemies") or []:
         if enemy.get("mode", "hold") not in ("hold", "garrison", "patrol"):
             raise ValueError(f"{enemy['id']}: mode must be hold, garrison or patrol")
+        if enemy.get("vehicle") and enemy.get("mode", "hold") == "garrison":
+            raise ValueError(f"{enemy['id']}: a vehicle can hold or patrol, not garrison")
         enemies.append({"id": enemy["id"], "side": enemy.get("side", "east"), "at": enemy["at"],
                         "units": enemy.get("units", 4), "class": enemy.get("class", "O_Soldier_F"),
-                        "mode": enemy.get("mode", "hold"), "radius": enemy.get("radius", 100)})
+                        "mode": enemy.get("mode", "hold"), "radius": enemy.get("radius", 100),
+                        "vehicle": enemy.get("vehicle") or "", "dir": float(enemy.get("dir") or 0)})
     vehicles = [{"id": vehicle["id"], "class": vehicle["class"], "at": vehicle["at"],
                  "known": vehicle.get("known", True), "ammo": vehicle.get("ammo") or {},
                  "medical": bool(vehicle.get("medical")), "fly": float(vehicle.get("fly") or 0)}

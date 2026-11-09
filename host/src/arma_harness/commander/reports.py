@@ -139,9 +139,15 @@ def contact_groups(packet: dict, max_age: float = CONTACT_FORGOTTEN_S) -> list[d
         direction = compass(dx, dy)
         entry = groups.setdefault(direction, {"direction": direction, "count": 0, "kinds": {}, "range": math.inf,
                                               "age_s": math.inf, "nearest": contact["pos"], "offset": (dx, dy),
-                                              "accuracy_m": contact.get("accuracy_m", 0)})
+                                              "accuracy_m": contact.get("accuracy_m", 0), "names": {}, "ids": [],
+                                              "ids_by_kind": {}})
         entry["count"] += 1
         entry["kinds"][contact["kind"]] = entry["kinds"].get(contact["kind"], 0) + 1
+        if contact.get("name"):
+            entry["names"].setdefault(contact["kind"], []).append(contact["name"])
+        if contact.get("id"):
+            entry["ids"].append(contact["id"])
+            entry["ids_by_kind"].setdefault(contact["kind"], []).append(contact["id"])
         if math.hypot(dx, dy) < entry["range"]:
             entry["nearest"], entry["offset"] = contact["pos"], (dx, dy)
             entry["accuracy_m"] = contact.get("accuracy_m", 0)
@@ -150,11 +156,34 @@ def contact_groups(packet: dict, max_age: float = CONTACT_FORGOTTEN_S) -> list[d
     return sorted(groups.values(), key=lambda g: g["age_s"])
 
 
-def contact_phrase(group: dict, buildings: list[dict] | None = None) -> str:
-    kind = max(group["kinds"], key=group["kinds"].get)
-    label = ("contact" if group["count"] == 1 else "contacts") if kind == "unknown" else kind
+# Most worth saying first: what can kill the most.
+_KIND_ORDER = ["tank", "tracked vehicle", "APC", "armed car", "helicopter", "aircraft", "emplacement", "mortar", "boat",
+               "truck", "car", "vehicle", "infantry", "unknown"]
+_SAME_PLURAL = {"infantry", "aircraft"}
+
+
+def _kind_words(kind: str, n: int, names: list[str], ids: list[str]) -> str:
+    if kind == "unknown":
+        label = "contact" if n == 1 else "contacts"
+    else:
+        label = kind if n == 1 or kind in _SAME_PLURAL else f"{kind}s"
+    words = f"{count_word(n)} {label}"
+    if names:
+        words += f" ({', '.join(sorted(set(names)))})"
+    return f"{words}, {', '.join(ids)}" if ids else words
+
+
+def contact_phrase(group: dict, buildings: list[dict] | None = None, known: set | None = None) -> str:
+    """Each kind in the sector said on its own, so four infantry and a tank isn't "five infantry". Weapons and vehicles
+    already on the commander's list are named by their ids."""
+    kinds = sorted(group["kinds"], key=lambda kind: _KIND_ORDER.index(kind) if kind in _KIND_ORDER else 99)
+    by_kind = group.get("ids_by_kind") or {}
+    parts = [_kind_words(kind, group["kinds"][kind], group.get("names", {}).get(kind, []),
+                         sorted((one for one in by_kind.get(kind, []) if known is None or one in known),
+                                key=lambda one: (len(one), one)))
+             for kind in kinds]
     bearing = spoken_bearing(*group["offset"], group["accuracy_m"])
-    words = f"{count_word(group['count'])} {label}, {bearing}, {rough_range(group['range'])}"
+    words = f"{' and '.join(parts)}, {bearing}, {rough_range(group['range'])}"
     nearby = _nearest_building(group.get("nearest"), buildings)
     return f"{words}, near {nearby}" if nearby else words
 
@@ -543,6 +572,7 @@ class Tracker:
     apart: dict[str, dict] = field(default_factory=dict)
     gone: list[str] = field(default_factory=list)  # who the runtime should take off the list after this update
     located: list[str] = field(default_factory=list)  # casualties whose place the commander has just been told
+    listed: list[str] = field(default_factory=list)  # enemy weapons and vehicles just put on the commander's list
     trail: list[list] = field(default_factory=list)
     trail_leader: str = ""
 
@@ -571,6 +601,7 @@ class Tracker:
             or bool(contact_groups(packet, CONTACT_FRESH_S))
 
     def update(self, packet: dict, route: dict | None, now: float, buildings: list[dict] | None = None) -> list[Report]:
+        self.listed = []  # filled by the contact report, read by the runtime after this update
         out: list[Report] = []
         out += self._order(packet, route, now)
         out += self._contacts(packet, now, buildings)
@@ -888,17 +919,25 @@ class Tracker:
         fresh = contact_groups(packet, CONTACT_FRESH_S)
         if fresh:
             self.contact_seen = now
-            signature = ";".join(f"{g['direction']}:{count_word(g['count'])}" for g in
-                                 sorted(fresh, key=lambda g: g["direction"]))
-            summary = "; ".join(contact_phrase(g, buildings) for g in fresh)
+            # What's in each sector, down to kinds and models: a contact turning out to be a tank is news.
+            signature = ";".join(f"{g['direction']}:{count_word(g['count'])}:{sorted(g['kinds'].items())}:"
+                                 f"{sorted(sum(g['names'].values(), []))}"
+                                 for g in sorted(fresh, key=lambda g: g["direction"]))
+            known = set(packet.get("targets_listed") or [])
+            new = [one for group in fresh for one in group["ids"] if one not in known]
+            summary = "; ".join(contact_phrase(g, buildings, known) for g in fresh)
+            new = sorted(set(new), key=lambda one: (len(one), one))
+            listing = f" Listed as {', '.join(new)}." if new else ""
             action = "Engaging" if packet.get("combat_mode") in ("YELLOW", "RED") else "Holding fire"
             # No grid of their own here: working one out takes a map or a GPS, and nobody's doing that under fire.
             if not self.contact_active:
                 self.contact_active, self.contact_signature, self.contact_said = True, signature, now
-                return [Report(FLASH, f"Contact, {summary}. {action}.")]
-            if signature != self.contact_signature and now - self.contact_said >= CONTACT_UPDATE_S:
+                self.listed = new
+                return [Report(FLASH, f"Contact, {summary}. {action}.{listing}")]
+            if (signature != self.contact_signature or new) and now - self.contact_said >= CONTACT_UPDATE_S:
                 self.contact_signature, self.contact_said = signature, now
-                return [Report(PRIORITY, f"Contact update, {summary}.")]
+                self.listed = new
+                return [Report(PRIORITY, f"Contact update, {summary}.{listing}")]
             return []
         if self.contact_active and now - self.contact_seen >= CONTACT_LOST_S:
             self.contact_active, self.contact_signature = False, ""

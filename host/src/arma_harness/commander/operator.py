@@ -205,6 +205,14 @@ def _spawn_vehicles(h: Harness, scenario: scenario_mod.Scenario, world_size: flo
 def _spawn_enemies(h: Harness, scenario: scenario_mod.Scenario, world_size: float) -> None:
     for enemy in scenario.enemies:
         at, _ = parse_grid(enemy["at"], world_size)
+        if enemy.get("vehicle"):  # a weapon or vehicle with its own crew
+            crew = _result(h.exec('[_this # 0, [east, west] select (_this # 1 isEqualTo "west"), _this # 2, _this # 3, '
+                                  "_this # 4, _this # 5, _this # 6] call brmh_cmd_fnc_spawnEnemyVehicle", "server",
+                                  timeout=10, args=[enemy["id"], enemy["side"], enemy["vehicle"], at, enemy["dir"],
+                                                    enemy["mode"], enemy["radius"]]))
+            if not crew:
+                raise HarnessError(f"enemy {enemy['id']}: {enemy['vehicle']} came with no crew")
+            continue
         reachable = []
         if enemy["mode"] == "garrison":
             _wait_for_buildings(h, at, enemy["radius"])

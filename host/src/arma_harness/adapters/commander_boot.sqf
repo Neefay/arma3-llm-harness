@@ -114,50 +114,170 @@ brmh_cmd_fnc_rounds = {
 	_rounds
 };
 
+// What a squad would call a contact, from the type it believes it is. The engine names the exact model as soon as it
+// notices anything, so how much of that a squad can say is decided by how well it knows the target: see the contacts.
 brmh_cmd_fnc_kind = {
 	params ["_type"];
-	if (_type isKindOf "CAManBase") exitWith {
-		"infantry"
+	private _config = configFile >> "CfgVehicles" >> _type;
+	switch (true) do {
+		case (_type isEqualTo ""): {
+			"unknown"
+		};
+		case (_type isKindOf "CAManBase"): {
+			"infantry"
+		};
+		case (_type isKindOf "StaticMortar"): {
+			"mortar"
+		};
+		case (_type isKindOf "StaticWeapon"): {
+			"emplacement"
+		};
+		case (_type isKindOf "Tank"): {
+			// A tracked carrier has room for troops. A tank doesn't.
+			["tank", "tracked vehicle"] select (getNumber (_config >> "transportSoldier") > 0)
+		};
+		case (_type isKindOf "Wheeled_APC_F"): {
+			"APC"
+		};
+		case (_type isKindOf "Truck_F"): {
+			"truck"
+		};
+		case (_type isKindOf "Car"): {
+			["car", "armed car"] select ((getArray (_config >> "Turrets" >> "MainTurret" >> "weapons")) isNotEqualTo [])
+		};
+		case (_type isKindOf "Helicopter"): {
+			"helicopter"
+		};
+		case (_type isKindOf "Plane"): {
+			"aircraft"
+		};
+		case (_type isKindOf "Ship"): {
+			"boat"
+		};
+		case (_type isKindOf "LandVehicle"): {
+			"vehicle"
+		};
+		default {
+			"unknown"
+		};
 	};
-	if (_type isKindOf "Tank") exitWith {
-		"armour"
+};
+
+// An enemy weapon or vehicle a squad has seen, by the key the commander's list follows it by. Every squad that sees it
+// gets the same key: the owner chose one entry per real gun over k entries for k reports. It joins the vehicles, so the
+// sightings see it abandoned or wrecked, and the reset between battles takes it away.
+brmh_cmd_fnc_targetKey = {
+	params ["_object"];
+	private _key = _object getVariable ["brmh_cmd_key", ""];
+	if (_key isEqualTo "") then {
+		brmh_cmd_targetCount = (missionNamespace getVariable ["brmh_cmd_targetCount", 0]) + 1;
+		_key = format ["E%1", brmh_cmd_targetCount];
+		_object setVariable ["brmh_cmd_key", _key];
+		brmh_cmd_vehicles set [_key, _object];
 	};
-	if (_type isKindOf "Air") exitWith {
-		"aircraft"
-	};
-	if (_type isKindOf "LandVehicle" or {
-		_type isKindOf "Ship"
-	}) exitWith {
-		"vehicle"
-	};
-	"unknown"
+	_key
 };
 
 brmh_cmd_fnc_contacts = {
 	params ["_leader"];
 	private _near = _leader nearTargets 2000;
-	// A fire mission makes the engine put a hidden ArtilleryTarget at the aim point, on the other side. It isn't an enemy
-	// to anyone, and once it's gone, what's known of it is a place at the map's origin.
-	((_leader targets [true, 2000]) select {
+	// A crewman is listed as a target of his own, with no type: whoever sees him sees the vehicle he's in, so it's the
+	// vehicle that's reported, once, known as well as he is if the vehicle itself isn't known yet.
+	private _seen = [];
+	{
+		private _vehicle = vehicle _x;
+		// A gun with nobody alive on it isn't a contact any more, though the engine keeps it on the list: the sightings
+		// say it's been abandoned. As a contact it would seem manned again with every report.
+		if ((_seen findIf {
+			(_x # 0) isEqualTo _vehicle
+		}) < 0 and {
+			_vehicle isKindOf "CAManBase" or {
+				({
+					alive _x
+				} count crew _vehicle) > 0
+			}
+		}) then {
+			_seen pushBack [_vehicle, [_x, _vehicle] select ((_leader knowsAbout _vehicle) > 0)];
+		};
+	} forEach ((_leader targets [true, 2000]) select {
+		// A fire mission makes the engine put a hidden ArtilleryTarget at the aim point, on the other side. It isn't an
+		// enemy to anyone, and once it's gone, what's known of it is a place at the map's origin.
 		not isNull _x and {
 			not ("ArtilleryTarget" in typeOf _x)
 		}
-	}) apply {
-		private _object = _x;
-		private _knowledge = _leader targetKnowledge _object;
+	});
+	// When each weapon or vehicle came into the leader's sight and stayed there: a steady look identifies it.
+	private _looks = (group _leader) getVariable ["brmh_cmd_looks", createHashMap];
+	(group _leader) setVariable ["brmh_cmd_looks", _looks];
+	_seen apply {
+		_x params ["_object", "_known"];
+		private _knowledge = _leader targetKnowledge _known;
+		private _inSight = ([_leader, "VIEW", _object] checkVisibility [
+			eyePos _leader,
+			(getPosASL _object) vectorAdd [0, 0, 1]
+		]) > 0.3;
 		private _entry = _near findIf {
 			(_x # 4) isEqualTo _object
 		};
-		private _type = if (_entry < 0) then {
-			""
-		} else {
-			(_near # _entry) # 1
+		private _type = switch (true) do {
+			case (_entry >= 0): {
+				(_near # _entry) # 1
+			};
+			case (_object isNotEqualTo _known): {
+				typeOf _object
+			};
+			default {
+				""
+			};
 		};
-		// Position and type here are what the group believes. The true object must not leave this function.
+		// Position and type here are what the group believes. The true object must not leave this function, only the key
+		// that the commander's list follows a weapon or vehicle by. Its model is said once the group knows it well.
+		private _kind = [_type] call brmh_cmd_fnc_kind;
+		private _materiel = not (_kind in ["unknown", "infantry"]);
+		// Its model, once the leader knows it well (a fight does that fast) or has had a steady look within the range a
+		// man with binoculars could tell: farther for a tank than for a gun on a tripod.
+		private _since = if (_materiel and {
+			_inSight
+		}) then {
+			_looks getOrDefault [hashValue _object, time]
+		} else {
+			-1
+		};
+		if (_since >= 0) then {
+			_looks set [hashValue _object, _since];
+		} else {
+			_looks deleteAt (hashValue _object);
+		};
+		private _identifies = [400, 800] select (_kind in ["tank", "tracked vehicle", "APC", "helicopter", "aircraft", "boat"]);
+		private _identified = _materiel and {
+			(_leader knowsAbout _known) >= 2 or {
+				_since >= 0 and {
+					(time - _since) >= 20
+				} and {
+					(_leader distance _object) <= _identifies
+				}
+			}
+		};
 		createHashMapFromArray [
 			["pos", [(_knowledge # 6) # 0, (_knowledge # 6) # 1]],
-			["kind", [_type] call brmh_cmd_fnc_kind],
-			["age_s", (time - (_knowledge # 2)) max 0],
+			["kind", _kind],
+			["name", if (_identified) then {
+				getText (configFile >> "CfgVehicles" >> _type >> "displayName")
+			} else {
+				""
+			}],
+			["key", if (_materiel) then {
+				[_object] call brmh_cmd_fnc_targetKey
+			} else {
+				""
+			}],
+			// The engine stops renewing when a target that keeps still was last seen, so a gun in plain view went stale
+			// within half a minute. In sight from the leader's eyes now, it's seen now.
+			["age_s", if (_inSight) then {
+				0
+			} else {
+				(time - (_knowledge # 2)) max 0
+			}],
 			["accuracy_m", if (_entry < 0) then {
 				-1
 			} else {
@@ -1430,6 +1550,71 @@ brmh_cmd_fnc_stepProbe = {
 		[brmh_cmd_probePfh] call CBA_fnc_removePerFrameHandler;
 		brmh_cmd_probePfh = nil;
 	};
+};
+
+/*
+	NAME: brmh_cmd_fnc_spawnEnemyVehicle
+	DESCRIPTION: An enemy weapon or vehicle with its own crew, for a scenario: an HMG on a tripod facing an approach, an
+		armed car, a tank. Operator action. Its crew is an enemy group like any other, so clearing the enemy means them
+		too. The vehicle is the harness's own, so the reset between battles deletes it.
+	PARAMETERS:
+		0 - Group id (STRING)
+		1 - Side (SIDE)
+		2 - Vehicle class (STRING)
+		3 - Position [x, y] (ARRAY)
+		4 - Facing, degrees (NUMBER)
+		5 - Mode: "hold" stays put, "patrol" drives around the area (STRING)
+		6 - Radius in metres, for a patrol (NUMBER)
+	USAGE:
+		["East Gun", east, "O_HMG_01_high_F", [3700, 2400], 210, "hold", 0] call brmh_cmd_fnc_spawnEnemyVehicle;
+	RETURNS: How many crew it has (NUMBER)
+	ENVIRONMENT: Server
+*/
+brmh_cmd_fnc_spawnEnemyVehicle = {
+	params [["_id", "", [""]], ["_side", east, [east]], ["_class", "", [""]], ["_at", [], [[]], 2], ["_dir", 0, [0]], ["_mode", "hold", [""]], ["_radius", 100, [0]]];
+	// A gun on a tripod goes on level ground near the place: on Stratis one on a slope tipped over within seconds and threw
+	// off its gunner. Vehicles sit on slopes well enough, and stay where they're put.
+	private _tries = [[0, 0]];
+	{
+		private _distance = _x;
+		{
+			_tries pushBack [_distance, _x];
+		} forEach [0, 45, 90, 135, 180, 225, 270, 315];
+	} forEach [5, 10, 20, 30, 40];
+	private _spot = _at + [0];
+	if (_class isKindOf "StaticWeapon") then {
+		{
+			private _try = (_at + [0]) getPos _x;
+			if ((_try isFlatEmpty [-1, -1, 0.15, 5, 0, false, objNull]) isNotEqualTo []) exitWith {
+				_spot = _try;
+			};
+		} forEach _tries;
+	};
+	private _vehicle = createVehicle [_class, _spot, [], 0, ["NONE", "CAN_COLLIDE"] select (_class isKindOf "StaticWeapon")];
+	_vehicle setDir _dir;
+	if (_class isKindOf "StaticWeapon") then {
+		_vehicle setVectorUp (surfaceNormal _spot);
+	};
+	_vehicle setVariable ["brmh_cmd_spawned", true];
+	private _group = createVehicleCrew _vehicle;
+	if (side _group isNotEqualTo _side) then {
+		private _crew = crew _vehicle;
+		_group = createGroup [_side, false];
+		_crew joinSilent _group;
+	};
+	_group setGroupIdGlobal [_id];
+	brmh_cmd_enemies pushBack _group;
+	// It's what a squad will see first, so it gets its key now: the list follows it whoever reports it.
+	[_vehicle] call brmh_cmd_fnc_targetKey;
+	if (_mode isEqualTo "hold") then {
+		{
+			_x disableAI "PATH";
+		} forEach crew _vehicle;
+	};
+	if (_mode isEqualTo "patrol") then {
+		[_group, _at + [0], _radius] call BIS_fnc_taskPatrol;
+	};
+	count crew _vehicle
 };
 
 /*

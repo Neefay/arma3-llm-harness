@@ -1,0 +1,21 @@
+# Plumbing: what a squad says about enemy weapons and vehicles it can see, and the list it puts them on.
+# On VR, flat and bare, so nothing but range decides how well the squad comes to know each one: an HMG on a tripod at
+# about 280 m, an armed car at about 420 m and a tank at about 570 m, each crewed.
+name: contacts_check
+mission: commander
+time_limit: "15:00"
+objective: Watch, and report what you see.
+text: >
+  Alpha is at grid 030 030, watching the ground to the north-east. Report what's there.
+stations:
+  - callsign: Alpha
+    role: infantry fire team
+    capabilities: [MOVE, HOLD, HALT, POSTURE, MOUNT]
+    at: "030 030"
+    units: 4
+enemies:
+  - { id: East Gun, at: "032 032", vehicle: O_HMG_01_high_F, dir: 225, mode: hold }
+  - { id: East Car, at: "033 033", vehicle: O_MRAP_02_hmg_F, dir: 225, mode: hold }
+  - { id: East Tank, at: "034 034", vehicle: O_MBT_02_cannon_F, dir: 225, mode: hold }
+success: { station: Alpha, within_m: 20, of: "010 010" }
+mid_turn_messages: hold

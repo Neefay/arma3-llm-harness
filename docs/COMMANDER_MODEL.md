@@ -107,9 +107,11 @@ Listing(T) = Handle(T) × Belief(T) × Time
 | `C1` | Casualty | Reported down |
 | `A1` | Facility | Built |
 | `O1` | Marker | Commander, or scenario |
+| `T1` | Enemy weapon or vehicle | First reported, one per real object whoever reports it |
 
 - **N1.** A listing holds what was last said, and its time.
 - **N2.** Fire is directed by `Grid` only.
+- **N3.** An enemy weapon or vehicle's state (active, abandoned, destroyed) changes only by a station seeing it. Its listing holds the reporter's relative position, never a grid, until it is seen abandoned or destroyed.
 
 ## 6. Speech
 

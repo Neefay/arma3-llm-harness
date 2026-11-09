@@ -170,6 +170,12 @@ def validate(request: dict, stations: dict[str, dict], markers: dict[str, dict],
         if kind not in stations[to]["capabilities"]:
             raise Invalid(f"{to} can't do {kind}. See commander_roster.")
         types.append(kind)
+    for leg in legs:  # the enemy's weapons and vehicles are on the commander's list too, but not for its own orders
+        guns = leg.get("guns") if isinstance(leg.get("guns"), list) else []
+        named = [leg.get("vehicle"), leg.get("at"), *guns]
+        enemy = [one for one in named if isinstance(one, str) and (vehicles or {}).get(one, {}).get("enemy")]
+        if enemy:
+            raise Invalid(f"{enemy[0]} is the enemy's. Give a grid to send anyone there.")
     if mode == "append" and set(types) - APPENDABLE:  # anything else used to replace the route, without a word
         raise Invalid("Only MOVE, HOLD, SEARCH and SENTRY can be appended. To do more, send the whole task as one "
                       "order.")

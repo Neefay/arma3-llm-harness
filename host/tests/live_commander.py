@@ -1207,6 +1207,41 @@ def play_village(client: Client) -> list[str]:
     return seen
 
 
+def play_contacts(client: Client) -> list[str]:
+    """Enemy weapons and vehicles: said by kind, then by model as the squad comes to know them, listed as T ids, and
+    marked abandoned and then destroyed only as the squad sees it. The squad holds fire and the enemy ignores it, so
+    the operator decides what happens to the gun."""
+    harness = Harness()
+    begin(client)
+    client.tool("commander_order", to="Alpha", legs=[{"type": "POSTURE"}], combat_mode="BLUE")
+    # Holding fire in sight of a tank, the squad withdraws, as it should. Here it has to stay and watch.
+    in_game(harness, 'private _g = brmh_cmd_stations get "Alpha"; _g allowFleeing 0; '
+                     '{ _x setCaptive true; _x disableAI "PATH" } forEach units _g; true')
+    text = heard(client, "Listed as T", 240)
+    text += heard(client, "Mk30", 300) if "Mk30" not in text else ""
+    print("    materiel:", client.tool("commander_mission")["enemy_materiel"], flush=True)
+    gun = next(row for row in client.tool("commander_mission")["enemy_materiel"] if "Mk30" in row["type"])
+    assert gun["type"].startswith("emplacement (Mk30 HMG .50") and gun["state"] == "active", gun
+    refused = client.request("tools/call", {"name": "commander_order", "arguments": {
+        "to": "Alpha", "legs": [{"type": "MOUNT", "vehicle": gun["id"]}]}})
+    assert refused.get("isError") and "is the enemy's" in refused["content"][0]["text"], refused
+    in_game(harness, """
+    private _gun = (values brmh_cmd_vehicles) select { typeOf _x isEqualTo "O_HMG_01_high_F" };
+    { _x setDamage 1 } forEach crew (_gun # 0); true
+    """)
+    text += heard(client, f"{gun['id']}, {gun['type']}, abandoned, nobody on it", 240)
+    in_game(harness, """
+    private _gun = (values brmh_cmd_vehicles) select { typeOf _x isEqualTo "O_HMG_01_high_F" };
+    (_gun # 0) setDamage 1; true
+    """)
+    text += heard(client, f"{gun['id']} is destroyed", 240)
+    assert "ENEMY WEAPONS AND VEHICLES" in client.tool("commander_brief")
+    contact_lines = [line for line in text.splitlines() if "Contact" in line]
+    assert not [line for line in contact_lines if "grid" in line.lower()], contact_lines
+    assert not [line for line in contact_lines if "one vehicle" in line], contact_lines
+    return [text]
+
+
 def play_cas(client: Client) -> list[str]:
     """Close air support on a real game: the pilot flies to the grid, attacks what he finds, and says so."""
     harness = Harness()
@@ -1343,7 +1378,8 @@ def main() -> None:
                ("combat: take the village", "take_the_village", "hold", play_village, True),
                ("stratis: Camp Maxwell", "stratis_maxwell", "hold", play_stratis),
                ("stratis: clearing the camp", "stratis_clear_check", "hold", play_stratis_clear),
-               ("stratis: close air support", "stratis_cas", "hold", play_cas)]
+               ("stratis: close air support", "stratis_cas", "hold", play_cas),
+               ("enemy weapons and vehicles", "contacts_check", "hold", play_contacts)]
     wanted = sys.argv[1:]  # words to match in battle names; none means all of them
     try:
         for battle in battles:
