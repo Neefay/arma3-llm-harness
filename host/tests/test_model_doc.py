@@ -21,10 +21,10 @@ MACHINES = {
     "treat": (r"treat\w+|stepTreats", [STATE_PAIR]),
     "post": (r"postOrder|stepBuilds", [STATE_PAIR]),
     "sortie": (r"casOrder", [STATE_PAIR]),
-    "fire": (r"startFire|stepFire|checkFire|fireChunk|trackGun", [STATE_PAIR, r'_finish = "([a-z]+)"']),
-    "boarding": (r"startMount|stepMount|stopMount|startDismount|stepDismount",
-                 [r'brmh_cmd_mount", \[_key, "([a-z ]+)"', r'\["([a-z ]+)", (?:\[\]|_names)\] call _stop',
-                  r'\["none", "going off"\]', r'_status set \[1, "([a-z ]+)"\]']),
+    "fire": (r"startFire|checkFire", [STATE_PAIR, r'\[_(?:this|x), "([a-z]+)"\] call brmh_cmd_fnc_fireFinish']),
+    "boarding": (r"startMount|stopMount|startDismount",
+                 [r'brmh_cmd_mount", \[_key, "([a-z ]+)"', r'\[_(?:this|machine), "([a-z ]+)", ',
+                  r'\["none", "going off"\]', r'\) set \[1, "([a-z ]+)"\]', r'_status set \[1, "([a-z ]+)"\]']),
 }
 
 
@@ -50,17 +50,19 @@ def declared_states(body: str) -> list[str]:
 
 
 def in_code(machine: str) -> set[str]:
+    """A declared machine's states, plus, for one that also writes how it ended into a record of its own (a fire
+    mission's, a boarding's), the states its code writes there."""
     body = declaration(machine)
-    if body is not None:
-        return set(declared_states(body))
+    states = set(declared_states(body)) if body is not None else set()
+    if machine not in MACHINES:
+        return states
     pattern, setters = MACHINES[machine]
-    body = functions(pattern)
-    states = set()
+    code = functions(pattern) + "\n" + (body or "")
     for setter in setters:
         if "going off" in setter:
-            states |= {"none", "going off"} if re.search(setter, body) else set()
+            states |= {"none", "going off"} if re.search(setter, code) else set()
         else:
-            states |= set(re.findall(setter, body))
+            states |= set(re.findall(setter, code))
     return states
 
 

@@ -445,10 +445,85 @@ brmh_cmd_fnc_onSeat = {
 	};
 };
 
+// MOUNT and DISMOUNT: the squad's men going to their seats, or getting off. Its state reaches the host in the packet's
+// "mount" record, [vehicle id, state, seat, names, spare men], which keeps how it ended until the next one. A boarding
+// that can't start at all (no vehicle, seat or man) is a record and no machine.
+brmh_cmd_boardingMachine = [
+	["KIND", "boarding"],
+	["SAYS", false],
+	["INITIAL", "going"],
+	["STATES", [
+		["going", [
+			["EVERY", {
+				{
+					if (vehicle (_x # 0) isEqualTo (_this get "VEHICLE")) then {
+						[_x # 0, _this get "VEHICLE"] call brmh_cmd_fnc_onSeat;
+					};
+				} forEach (_this get "LIST");
+			}],
+			["ON", [
+				[{
+					not alive (_this get "VEHICLE")
+				}, {
+					[_this, "wrecked", []] call brmh_cmd_fnc_boardFinish
+				}, "", ""],
+				[{
+					([_this] call brmh_cmd_fnc_boardWaiting) isEqualTo [] and {
+						([_this] call brmh_cmd_fnc_boardOn) isEqualTo []
+					}
+				}, {
+					[_this, "nobody", []] call brmh_cmd_fnc_boardFinish
+				}, "", ""],
+				[{
+					([_this] call brmh_cmd_fnc_boardWaiting) isEqualTo []
+				}, {
+					[_this, "on", ([_this] call brmh_cmd_fnc_boardOn) apply {
+						name _x
+					}] call brmh_cmd_fnc_boardFinish
+				}, "", ""],
+				// The engine has a man wait beside a seat someone else has taken, with no error.
+				[{
+					[_this] call brmh_cmd_fnc_boardTaken
+				}, {
+					[_this, "taken", ([_this] call brmh_cmd_fnc_boardOn) apply {
+						name _x
+					}] call brmh_cmd_fnc_boardFinish
+				}, "", ""]
+			]],
+			["DEADLINE", [{
+				_this get "WITHIN"
+			}, {
+				[_this, "unreachable", ([_this] call brmh_cmd_fnc_boardOn) apply {
+					name _x
+				}] call brmh_cmd_fnc_boardFinish
+			}, "", ""]]
+		]],
+		["going off", [
+			["ON", [
+				[{
+					([_this] call brmh_cmd_fnc_stillAboard) isEqualTo []
+				}, {
+					((_this get "GROUP") getVariable ["brmh_cmd_mount", []]) set [1, "off"];
+				}, "", ""]
+			]],
+			// Something's keeping them in. Waiting on it for good would leave a chained order hanging, with nobody
+			// saying why.
+			["DEADLINE", [30, {
+				private _status = (_this get "GROUP") getVariable ["brmh_cmd_mount", []];
+				_status set [1, "stuck"];
+				_status set [3, ([_this] call brmh_cmd_fnc_stillAboard) apply {
+					name _x
+				}];
+			}, "", ""]]
+		]]
+	]]
+];
+
 brmh_cmd_fnc_startMount = {
 	params ["_group", "_key", "_kind"];
 	private _vehicle = brmh_cmd_vehicles getOrDefault [_key, objNull];
-	_group setVariable ["brmh_cmd_mountList", []];
+	// One man sent to a seat while others are still boarding: they're no longer watched, as before.
+	[_group, ["boarding"]] call brmh_cmd_fnc_endMachines;
 	_group setVariable ["brmh_cmd_mount", []];
 	if (isNull _vehicle or {
 		not alive _vehicle
@@ -524,85 +599,54 @@ brmh_cmd_fnc_startMount = {
 	(_list apply {
 		_x # 0
 	}) orderGetIn true;
-	_group setVariable ["brmh_cmd_mountList", _list];
-	_group setVariable ["brmh_cmd_mountBy", time + 60 + ((_leader distance2D _vehicle) / 1.5)];
-	// Only when it asked for everyone who fits. A named seat is for one man.
-	_group setVariable ["brmh_cmd_mountSpare", [0, ((count _free) - (count _seats)) max 0] select (_kind isEqualTo "")];
-	_group setVariable ["brmh_cmd_mountVehicle", _vehicle];
 	_group setVariable ["brmh_cmd_mount", [_key, "going", _kind, []]];
+	// Only when it asked for everyone who fits. A named seat is for one man.
+	private _spare = [0, ((count _free) - (count _seats)) max 0] select (_kind isEqualTo "");
+	brmh_cmd_builds pushBack ([brmh_cmd_boardingMachine, [["GROUP", _group], ["ORDER", _group getVariable ["brmh_cmd_order", ""]], ["SUBJECT", _key], ["VEHICLE", _vehicle], ["KEY", _key], ["SEAT", _kind], ["LIST", _list], ["SPARE", _spare], ["WITHIN", 60 + ((_leader distance2D _vehicle) / 1.5)]]] call brmh_cmd_fnc_newMachine);
 };
 
-// Those still on their way to a seat stop. Anyone already in it stays there. A boarding stopped partway is said to have been.
-brmh_cmd_fnc_stopMount = {
+// A squad's boarding machine that's still running, or nothing.
+brmh_cmd_fnc_boarding = {
 	params ["_group"];
-	private _vehicle = _group getVariable ["brmh_cmd_mountVehicle", objNull];
-	private _list = _group getVariable ["brmh_cmd_mountList", []];
-	private _key = (_group getVariable ["brmh_cmd_mount", []]) param [0, ""];
-	private _kind = (_group getVariable ["brmh_cmd_mount", []]) param [2, ""];
-	{
-		if (alive (_x # 0) and {
-			vehicle (_x # 0) isNotEqualTo _vehicle
-		}) then {
-			unassignVehicle (_x # 0);
-			[_x # 0] orderGetIn false;
-		};
-	} forEach _list;
-	_group setVariable ["brmh_cmd_mountList", []];
-	if (_list isNotEqualTo []) then {
-		_group setVariable ["brmh_cmd_mount", [_key, "stopped", _kind, []]];
+	private _at = brmh_cmd_builds findIf {
+		(_x get "GROUP") isEqualTo _group and {
+			((_x get "SPEC") get "KIND") isEqualTo "boarding"
+		} and {
+			(_x get "STATE") isNotEqualTo ""
+		}
+	};
+	if (_at < 0) then {
+		nil
 	} else {
-		_group setVariable ["brmh_cmd_mount", []];
-	};
+		brmh_cmd_builds # _at
+	}
 };
 
-brmh_cmd_fnc_stepMount = {
-	params ["_group"];
-	private _list = _group getVariable ["brmh_cmd_mountList", []];
-	if (_list isEqualTo []) exitWith {};
-	private _vehicle = _group getVariable ["brmh_cmd_mountVehicle", objNull];
-	private _status = _group getVariable ["brmh_cmd_mount", []];
-	_status params ["_key", "", "_kind"];
-	private _stop = {
-		params ["_word", "_names"];
-		{
-			if (alive (_x # 0) and {
-				vehicle (_x # 0) isNotEqualTo _vehicle
-			}) then {
-				unassignVehicle (_x # 0);
-				[_x # 0] orderGetIn false;
-			};
-		} forEach _list;
-		_group setVariable ["brmh_cmd_mountList", []];
-		_group setVariable ["brmh_cmd_mount", [_key, _word, _kind, _names, _group getVariable ["brmh_cmd_mountSpare", 0]]];
-	};
-	if (not alive _vehicle) exitWith {
-		["wrecked", []] call _stop;
-	};
-	private _on = [];
-	private _waiting = [];
-	{
-		_x params ["_man", "_role", "_cargo", "_turret"];
-		if (alive _man) then {
-			if (vehicle _man isEqualTo _vehicle) then {
-				[_man, _vehicle] call brmh_cmd_fnc_onSeat;
-				_on pushBack _man;
-			} else {
-				_waiting pushBack _x;
-			};
-		};
-	} forEach _list;
-	private _names = _on apply {
-		name _x
-	};
-	if (_waiting isEqualTo []) exitWith {
-		if (_on isEqualTo []) then {
-			["nobody", []] call _stop;
-		} else {
-			["on", _names] call _stop;
-		};
-	};
-	// The engine has a man wait beside a seat someone else has taken, with no error.
-	private _taken = (_waiting findIf {
+// Those boarding who are in the vehicle, and those still on their way.
+brmh_cmd_fnc_boardOn = {
+	params ["_machine"];
+	((_machine get "LIST") apply {
+		_x # 0
+	}) select {
+		alive _x and {
+			vehicle _x isEqualTo (_machine get "VEHICLE")
+		}
+	}
+};
+
+brmh_cmd_fnc_boardWaiting = {
+	params ["_machine"];
+	(_machine get "LIST") select {
+		alive (_x # 0) and {
+			vehicle (_x # 0) isNotEqualTo (_machine get "VEHICLE")
+		}
+	}
+};
+
+brmh_cmd_fnc_boardTaken = {
+	params ["_machine"];
+	private _vehicle = _machine get "VEHICLE";
+	([_machine] call brmh_cmd_fnc_boardWaiting) findIf {
 		_x params ["_man", "_role", "_cargo", "_turret"];
 		((fullCrew [_vehicle, "", true]) findIf {
 			alive (_x # 0) and {
@@ -615,13 +659,33 @@ brmh_cmd_fnc_stepMount = {
 				(_x # 3) isEqualTo _turret
 			}
 		}) >= 0
-	}) >= 0;
-	if (_taken) exitWith {
-		["taken", _names] call _stop;
+	} >= 0
+};
+
+// Those still on their way to a seat stop, and the record says how it ended. Anyone already in his seat stays there.
+brmh_cmd_fnc_boardFinish = {
+	params ["_machine", "_word", "_names"];
+	{
+		unassignVehicle (_x # 0);
+		[_x # 0] orderGetIn false;
+	} forEach ([_machine] call brmh_cmd_fnc_boardWaiting);
+	(_machine get "GROUP") setVariable ["brmh_cmd_mount", [_machine get "KEY", _word, _machine get "SEAT", _names, _machine get "SPARE"]];
+};
+
+// A new order stops a boarding partway, and says so. With none under way, the last one's record goes.
+brmh_cmd_fnc_stopMount = {
+	params ["_group"];
+	private _machine = [_group] call brmh_cmd_fnc_boarding;
+	if (isNil "_machine") exitWith {
+		_group setVariable ["brmh_cmd_mount", []];
 	};
-	if (time > (_group getVariable ["brmh_cmd_mountBy", 0])) exitWith {
-		["unreachable", _names] call _stop;
+	if ((_machine get "STATE") isEqualTo "going") then {
+		[_machine, "stopped", []] call brmh_cmd_fnc_boardFinish;
+		((_group getVariable ["brmh_cmd_mount", []]) resize 4);
+	} else {
+		_group setVariable ["brmh_cmd_mount", []];
 	};
+	_machine call ["#END", []];
 };
 
 brmh_cmd_fnc_getOff = {
@@ -654,32 +718,24 @@ brmh_cmd_fnc_startDismount = {
 	_group setVariable ["brmh_cmd_mount", [_key, ["none", "going off"] select (_men isNotEqualTo []), "", _men apply {
 		name _x
 	}]];
-	_group setVariable ["brmh_cmd_dismountBy", time + 30];
+	if (_men isNotEqualTo []) then {
+		brmh_cmd_builds pushBack ([brmh_cmd_boardingMachine, [["GROUP", _group], ["ORDER", _group getVariable ["brmh_cmd_order", ""]], ["SUBJECT", _key], ["KEY", _key], ["START", "going off"]]] call brmh_cmd_fnc_newMachine);
+	};
 };
 
-brmh_cmd_fnc_stepDismount = {
-	params ["_group"];
-	private _status = _group getVariable ["brmh_cmd_mount", []];
-	if ((_status param [1, ""]) isNotEqualTo "going off") exitWith {};
-	private _still = (units _group) select {
+// Those of the squad still aboard what it's getting off.
+brmh_cmd_fnc_stillAboard = {
+	params ["_machine"];
+	private _key = _machine get "KEY";
+	(units (_machine get "GROUP")) select {
 		[_x] call brmh_cmd_fnc_able and {
 			vehicle _x isNotEqualTo _x
 		} and {
-			(_status # 0) isEqualTo "" or {
-				(vehicle _x getVariable ["brmh_cmd_key", ""]) isEqualTo (_status # 0)
+			_key isEqualTo "" or {
+				(vehicle _x getVariable ["brmh_cmd_key", ""]) isEqualTo _key
 			}
 		}
-	};
-	if (_still isEqualTo []) exitWith {
-		_status set [1, "off"];
-	};
-	// Something's keeping them in. Waiting on it for good would leave a chained order hanging, with nobody saying why.
-	if (time > (_group getVariable ["brmh_cmd_dismountBy", 0])) then {
-		_status set [1, "stuck"];
-		_status set [3, _still apply {
-			name _x
-		}];
-	};
+	}
 };
 
 /*
@@ -1308,8 +1364,6 @@ brmh_cmd_fnc_listBuildings = {
 brmh_cmd_fnc_step = {
 	["evt", createHashMapFromArray [["type", "cmd_tick"]]] call BRMH_fnc_emit;
 	{
-		[_y] call brmh_cmd_fnc_stepMount;
-		[_y] call brmh_cmd_fnc_stepDismount;
 	} forEach brmh_cmd_stations;
 	call brmh_cmd_fnc_stepTreats;
 	call brmh_cmd_fnc_stepBuilds;
@@ -1917,9 +1971,6 @@ brmh_cmd_fnc_trackGun = {
 			_mission set ["fired", (_mission getOrDefault ["fired", 0]) + 1];
 			_mission set ["inAir", (_mission getOrDefault ["inAir", 0]) + 1];
 			_mission set ["lastShot", time];
-			if ((_mission getOrDefault ["state", ""]) isEqualTo "holding") then {
-				_mission set ["state", "firing"];
-			};
 		};
 		_shell setVariable ["brmh_cmd_from", [_gun getVariable ["brmh_cmd_key", ""], _mission getOrDefault ["order", ""], side group gunner _gun]];
 		_shell setVariable ["brmh_cmd_mission", _mission];
@@ -2368,9 +2419,9 @@ brmh_cmd_fnc_callOffCare = {
 		};
 	} forEach brmh_cmd_treats;
 	{
-		// A replaced task is still releasing the squad from CBA's scripts.
+		// A replaced task is still releasing the squad from CBA's scripts, and stopMount says how a boarding was stopped.
 		if ((_x get "GROUP") isEqualTo _group and {
-			((_x get "SPEC") get "KIND") isNotEqualTo "task"
+			not (((_x get "SPEC") get "KIND") in ["task", "boarding"])
 		}) then {
 			_x call ["#END", ["called off"]];
 		};
@@ -3012,7 +3063,8 @@ brmh_cmd_fnc_treated = {
 			RELEASE  - run once, however it ends (CODE)
 			A transition is [guard, action, next state, word]. Guards and actions get the machine as _this, and an
 			action may return the detail its word needs. A next state of "" ends the machine, and has to have a word.
-		1 - Data: [KEY, value] pairs, such as GROUP, ORDER, SUBJECT and whatever its code reads (ARRAY)
+		1 - Data: [KEY, value] pairs, such as GROUP, ORDER, SUBJECT and whatever its code reads. START, if given, is the
+		    state it starts in instead of INITIAL (ARRAY)
 	USAGE:
 		private _job = [brmh_cmd_postMachine, [["GROUP", _group], ["ORDER", _order], ["SUBJECT", "post"]]] call brmh_cmd_fnc_newMachine;
 		brmh_cmd_builds = brmh_cmd_builds select { _x call ["#STEP", []] };
@@ -3039,7 +3091,8 @@ brmh_cmd_fnc_newMachine = {
 			{
 				_self set [_x # 0, _x # 1];
 			} forEach _data;
-			_self set ["STATE", _spec get "INITIAL"];
+			// A machine with more than one way in, such as boarding's getting on and getting off, names where it starts.
+			_self set ["STATE", _self getOrDefault ["START", _spec get "INITIAL"]];
 			_self set ["SINCE", time];
 		}],
 		["#STEP", {
@@ -3907,6 +3960,130 @@ brmh_cmd_fnc_stepBuilds = {
 	};
 };
 
+// A gun's fire mission, one per gun, stepped every half second while any is running. Its state is the mission
+// record's, which the packet carries for the host to word: firing or holding while it lasts, then how it ended.
+brmh_cmd_fireMachine = [
+	["KIND", "fire"],
+	["SAYS", false],
+	["INITIAL", "firing"],
+	["ALWAYS", [
+		[{
+			not alive (_this get "GUN")
+		}, {
+			[_this, "destroyed"] call brmh_cmd_fnc_fireFinish
+		}, "", ""],
+		// Down under ACE, he's alive and still in the seat, and the gun just doesn't fire.
+		[{
+			private _crew = gunner (_this get "GUN");
+			isNull _crew or {
+				not ([_crew] call brmh_cmd_fnc_able)
+			}
+		}, {
+			[_this, "gunner"] call brmh_cmd_fnc_fireFinish
+		}, "", ""],
+		[{
+			((_this get "MISSION") getOrDefault ["fired", 0]) >= ((_this get "MISSION") get "want")
+		}, {
+			[_this, "done"] call brmh_cmd_fnc_fireFinish
+		}, "", ""],
+		// That order's rounds are away. If that's all this type has, it's out; if not, the next order goes.
+		[{
+			[_this] call brmh_cmd_fnc_fireReady and {
+				[_this] call brmh_cmd_fnc_fireAway
+			} and {
+				[_this] call brmh_cmd_fnc_fireOut
+			}
+		}, {
+			[_this, "out"] call brmh_cmd_fnc_fireFinish
+		}, "", ""],
+		[{
+			[_this] call brmh_cmd_fnc_fireReady and {
+				[_this] call brmh_cmd_fnc_fireAway
+			}
+		}, {
+			[_this get "MISSION"] call brmh_cmd_fnc_fireChunk;
+			(_this get "MISSION") set ["state", "firing"];
+		}, "firing", ""],
+		// The engine says it can reach, and it doesn't fire. A Scorcher did this at 2,000 m, every time.
+		[{
+			[_this] call brmh_cmd_fnc_fireReady and {
+				not ([_this] call brmh_cmd_fnc_fireAway)
+			} and {
+				([_this] call brmh_cmd_fnc_sinceShot) >= 15
+			}
+		}, {
+			[_this, "cantlay"] call brmh_cmd_fnc_fireFinish
+		}, "", ""]
+	]],
+	["STATES", [
+		["firing", [
+			["ON", [
+				[{
+					([_this] call brmh_cmd_fnc_sinceShot) >= 10 and {
+						not ([_this] call brmh_cmd_fnc_fireAway)
+					} and {
+						(currentCommand gunner (_this get "GUN")) isEqualTo "FIRE AT POSITION"
+					}
+				}, {
+					(_this get "MISSION") set ["state", "holding"];
+				}, "holding", ""]
+			]],
+			// Each order to the gun is watched above; this is only a backstop for a mission that never ends.
+			["DEADLINE", [600, {
+				[_this, "cantlay"] call brmh_cmd_fnc_fireFinish
+			}, "", ""]]
+		]],
+		["holding", [
+			["ON", [
+				[{
+					((_this get "MISSION") getOrDefault ["lastShot", -1]) > (_this get "SINCE")
+				}, {
+					(_this get "MISSION") set ["state", "firing"];
+				}, "firing", ""]
+			]],
+			["DEADLINE", [600, {
+				[_this, "cantlay"] call brmh_cmd_fnc_fireFinish
+			}, "", ""]]
+		]]
+	]]
+];
+
+brmh_cmd_fnc_fireFinish = {
+	params ["_machine", "_state"];
+	(_machine get "MISSION") set ["state", _state];
+};
+
+// The gun has had its last order for at least a second, and has nothing left of it to do.
+brmh_cmd_fnc_fireReady = {
+	params ["_machine"];
+	unitReady (_machine get "GUN") and {
+		(time - ((_machine get "MISSION") get "issued")) >= 1
+	}
+};
+
+// Some of the last order's rounds have gone.
+brmh_cmd_fnc_fireAway = {
+	params ["_machine"];
+	private _mission = _machine get "MISSION";
+	(_mission getOrDefault ["fired", 0]) > (_mission get "firedAtIssue")
+};
+
+brmh_cmd_fnc_fireOut = {
+	params ["_machine"];
+	(([_machine get "GUN"] call brmh_cmd_fnc_gunAmmo) findIf {
+		(_x # 0) isEqualTo ((_machine get "MISSION") get "word") and {
+			(_x # 1) > 0
+		}
+	}) < 0
+};
+
+// Seconds since the gun last fired, or was last ordered to.
+brmh_cmd_fnc_sinceShot = {
+	params ["_machine"];
+	private _mission = _machine get "MISSION";
+	time - ((_mission getOrDefault ["lastShot", -1]) max (_mission get "issued"))
+};
+
 /*
 	NAME: brmh_cmd_fnc_startFire
 	DESCRIPTION: Starts a station's fire mission on its guns. Every way this can silently do nothing is checked first or
@@ -3963,9 +4140,9 @@ brmh_cmd_fnc_startFire = {
 		_gun doWatch (_mission get "aim");
 		[_mission] call brmh_cmd_fnc_fireChunk;
 		brmh_cmd_fireActive = brmh_cmd_fireActive select {
-			(_x get "gun") isNotEqualTo _gun
+			(_x get "GUN") isNotEqualTo _gun
 		};
-		brmh_cmd_fireActive pushBack _mission;
+		brmh_cmd_fireActive pushBack ([brmh_cmd_fireMachine, [["GROUP", _group], ["ORDER", _order], ["SUBJECT", _mission get "key"], ["GUN", _gun], ["MISSION", _mission]]] call brmh_cmd_fnc_newMachine);
 	} forEach _guns;
 	private _kept = (_group getVariable ["brmh_cmd_missions", []]) select {
 		private _key = _x get "key";
@@ -3984,61 +4161,8 @@ brmh_cmd_fnc_startFire = {
 };
 
 brmh_cmd_fnc_stepFire = {
-	{
-		private _mission = _x;
-		private _gun = _mission get "gun";
-		private _crew = gunner _gun;
-		private _fired = _mission getOrDefault ["fired", 0];
-		private _finish = "";
-		private _sinceShot = time - ((_mission getOrDefault ["lastShot", -1]) max (_mission get "issued"));
-		switch (true) do {
-			case (not alive _gun): {
-				_finish = "destroyed";
-			};
-			// Down under ACE, he's alive and still in the seat, and the gun just doesn't fire.
-			case (isNull _crew or {
-				not ([_crew] call brmh_cmd_fnc_able)
-			}): {
-				_finish = "gunner";
-			};
-			case (_fired >= (_mission get "want")): {
-				_finish = "done";
-			};
-			case (unitReady _gun and {
-				(time - (_mission get "issued")) >= 1
-			}): {
-				if (_fired > (_mission get "firedAtIssue")) then {
-					// That order's rounds are away. If that's all this type has, it's out.
-					if ((([_gun] call brmh_cmd_fnc_gunAmmo) findIf {
-						(_x # 0) isEqualTo (_mission get "word") and {
-							(_x # 1) > 0
-						}
-					}) < 0) then {
-						_finish = "out";
-					} else {
-						[_mission] call brmh_cmd_fnc_fireChunk;
-					};
-				} else {
-					// The engine says it can reach, and it doesn't fire. A Scorcher did this at 2,000 m, every time.
-					if (_sinceShot >= 15) then {
-						_finish = "cantlay";
-					};
-				};
-			};
-			case (_sinceShot >= 10 and {
-				_fired isEqualTo (_mission get "firedAtIssue")
-			} and {
-				(currentCommand _crew) isEqualTo "FIRE AT POSITION"
-			}): {
-				_mission set ["state", "holding"];
-			};
-		};
-		if (_finish isNotEqualTo "") then {
-			_mission set ["state", _finish];
-		};
-	} forEach brmh_cmd_fireActive;
 	brmh_cmd_fireActive = brmh_cmd_fireActive select {
-		(_x get "state") in ["firing", "holding"]
+		_x call ["#STEP", []]
 	};
 	if (brmh_cmd_fireActive isEqualTo [] and {
 		not isNil "brmh_cmd_firePfh"
@@ -4059,11 +4183,16 @@ brmh_cmd_fnc_checkFire = {
 			doStop _gun;
 		};
 		private _mission = _gun getVariable ["brmh_cmd_mission", createHashMap];
-		_mission set ["state", "stopped"];
+		{
+			if ((_x get "GUN") isEqualTo _gun) then {
+				[_x, "stopped"] call brmh_cmd_fnc_fireFinish;
+				_x call ["#END", []];
+			};
+		} forEach brmh_cmd_fireActive;
 		_rows pushBack (createHashMapFromArray [["key", _gun getVariable ["brmh_cmd_key", ""]], ["order", _order], ["state", "checked"], ["word", ""], ["want", 0], ["fired", _mission getOrDefault ["fired", 0]], ["inAir", _mission getOrDefault ["inAir", 0]]]);
 	} forEach _guns;
 	brmh_cmd_fireActive = brmh_cmd_fireActive select {
-		(_x get "state") in ["firing", "holding"]
+		(_x get "STATE") isNotEqualTo ""
 	};
 	if (_rows isEqualTo []) then {
 		_rows pushBack (createHashMapFromArray [["key", ""], ["order", _order], ["state", "checked"], ["word", ""], ["want", 0], ["fired", 0], ["inAir", 0]]);
@@ -4111,7 +4240,7 @@ brmh_cmd_fnc_clearAll = {
 	} forEach brmh_cmd_carries;
 	{
 		_x call ["#END", ["called off"]];
-	} forEach brmh_cmd_builds;
+	} forEach (brmh_cmd_builds + brmh_cmd_fireActive);
 	// Only what the harness made. A vehicle a squad merely saw is the mission's own, and stays for the next battle.
 	{
 		if (_y getVariable ["brmh_cmd_spawned", false]) then {
