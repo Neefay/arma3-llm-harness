@@ -194,7 +194,8 @@ def _spawn_vehicles(h: Harness, scenario: scenario_mod.Scenario, world_size: flo
         at, grid = parse_grid(vehicle["at"], world_size)
         ammo = [[word.upper(), rounds] for word, rounds in vehicle["ammo"].items()]
         name = _result(h.exec("_this call brmh_cmd_fnc_spawnVehicle", "server", timeout=10,
-                              args=[vehicle["id"], vehicle["class"], at, ammo, vehicle.get("fly", 0)]))
+                              args=[vehicle["id"], vehicle["class"], at, ammo, vehicle.get("fly", 0),
+                                    vehicle.get("pylons", [])]))
         if vehicle["medical"]:
             code = '(brmh_cmd_vehicles get _this # 0) setVariable ["ace_medical_isMedicalVehicle", true, true]; true'
             _result(h.exec(code, "server", timeout=10, args=[vehicle["id"]]))

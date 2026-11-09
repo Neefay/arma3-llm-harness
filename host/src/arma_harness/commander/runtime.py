@@ -67,6 +67,21 @@ TRUTH_GROUP_FIELDS = ("group", "side", "able", "down", "mounted", "limping", "le
 # wounded leave it running, as they leave everything else.
 CANCELS_A_CHAIN = {"replace", "halt", "mount", "dismount", "chain"}
 AIR_PACE = 60  # m/s, about a Blackfoot's cruise; only for the "minutes out" a pilot gives
+STRIKE_PACE = 125  # m/s, an A-164 out to its run-in point and back in, as flown on Stratis
+RUN_IN_M = 9000  # BRMH_CMD_RUN_IN_M in commander_boot.sqf: where a strike's run starts
+
+
+def strike_route(start: list, aim: list, heading: float) -> float:
+    """How far a strike flies before its bombs land: to the run-in point on the heading, or straight at the grid from
+    far enough out when no heading was given (brmh_cmd_fnc_strikeOrder)."""
+    away = math.dist(start, aim)
+    if heading < 0:
+        if away > RUN_IN_M - 1000:
+            return away
+        heading = math.degrees(math.atan2(aim[0] - start[0], aim[1] - start[1]))
+    back = math.radians(heading + 180)
+    run_in = [aim[0] + RUN_IN_M * math.sin(back), aim[1] + RUN_IN_M * math.cos(back)]
+    return math.dist(start, run_in) + RUN_IN_M
 
 
 class Runtime:
@@ -924,7 +939,7 @@ class Runtime:
         callsign = checked["to"]
         if callsign in self.left:
             raise Invalid(f"{callsign} has left the area. Nothing more can be sent to it.")
-        if checked["mode"] == "cas":
+        if checked["mode"] in ("cas", "strike"):
             aim = checked["engine_legs"][0][0]
             self.cas_grids[callsign] = [aim[0], aim[1]]
         dropping = ""
@@ -1033,7 +1048,7 @@ class Runtime:
         if mode == "posture":
             base = previous or {"kind": "posture", "legs": []}
             route = {**base, "keeps_progress": order_id, "acknowledge": "Copy.", "keeps_done": True}
-        elif mode in ("fire", "checkfire", "cas", "carry", "unload", "treat", "post"):
+        elif mode in ("fire", "checkfire", "cas", "strike", "carry", "unload", "treat", "post"):
             # About the gun, or the wounded, alone: the rest of the squad carries on with whatever it was doing.
             base = previous or {"kind": "posture", "legs": []}
             words = says or checked["words"] + self._care_estimate(mode, request, checked, callsign)
@@ -1076,6 +1091,10 @@ class Runtime:
         if mode == "cas" and packet:  # an aircraft's own last report, at a helicopter's cruising speed
             away = math.dist(packet["pos"], checked["engine_legs"][0][0])
             return f" {reports._sentence(reports._time_words(max(away / AIR_PACE, 30)))} out."
+        if mode == "strike" and packet:  # out to the run-in point, then the run, as the game side flies it
+            aim, _bombs, heading = checked["engine_legs"][0]
+            flight = strike_route(packet["pos"], aim, heading) / STRIKE_PACE
+            return f" {reports._sentence(reports._time_words(flight))} out."
         if mode not in ("carry", "treat", "post") or not packet:
             return ""
         in_combat = self._in_combat(callsign)

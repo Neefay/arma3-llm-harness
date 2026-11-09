@@ -200,7 +200,9 @@ def build(raw: dict) -> Scenario:
                         "vehicle": enemy.get("vehicle") or "", "dir": float(enemy.get("dir") or 0)})
     vehicles = [{"id": vehicle["id"], "class": vehicle["class"], "at": vehicle["at"],
                  "known": vehicle.get("known", True), "ammo": vehicle.get("ammo") or {},
-                 "medical": bool(vehicle.get("medical")), "fly": float(vehicle.get("fly") or 0)}
+                 "medical": bool(vehicle.get("medical")), "fly": float(vehicle.get("fly") or 0),
+                 # An aircraft's loadout, a magazine per pylon in order ("" leaves one as it comes).
+                 "pylons": [str(one or "") for one in vehicle.get("pylons") or []]}
                 for vehicle in raw.get("vehicles") or []]
     ids = {vehicle["id"] for vehicle in vehicles}
     for station in stations.values():

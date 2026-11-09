@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import io
 import json
+import math
 import time
 from pathlib import Path
 
@@ -13,7 +14,7 @@ from arma_harness.commander import orders, reports, scenario
 from arma_harness.commander.orders import Invalid
 from arma_harness.commander.records import Records
 from arma_harness.commander.reports import Tracker
-from arma_harness.commander.runtime import Runtime
+from arma_harness.commander.runtime import Runtime, strike_route
 from arma_harness.commander.server import (
     DOCTRINE,
     EARLIER_BATTLE,
@@ -1538,6 +1539,75 @@ def test_what_the_pilot_says_through_a_sortie(tmp_path):
     assert said(b) == ["Over grid 037 024, looking.", "Engaging, guns.", "Off target, returning to hold."]
     b.advance(108, medical=[["O-2", "sortie", "V1", "", "nothing seen", "037 024"]])
     assert said(b)[-1] == "Nothing seen around grid 037 024, returning to hold."
+
+
+JETS = {"Hog": {"capabilities": ["STRIKE", "CAS"]}, "Recon": {"capabilities": ["MOVE"]}}
+
+
+def strike(**leg) -> dict:
+    return orders.validate({"to": "Hog", "legs": [{"type": "STRIKE", **leg}]}, JETS, MARKERS, 8192, [], LIST)
+
+
+def test_a_strike_goes_by_grid_with_bombs_and_a_heading():
+    order = strike(at="037 024")
+    assert order["mode"] == "strike" and order["engine_legs"] == [[[3750.0, 2450.0], 1, -1]]
+    assert order["words"] == "Copy, one bomb on grid 037 024." and order["route"] is None
+    order = strike(at="0375 0245", bombs=2, heading=45)
+    assert order["engine_legs"] == [[[3755.0, 2455.0], 2, 45.0]]
+    assert order["words"] == "Copy, two bombs on grid 0375 0245, run-in heading 045."
+
+
+@pytest.mark.parametrize(("leg", "words"), [
+    ({"at": "B"}, "Markers and building ids can't be passed to a pilot"),
+    ({}, "grid reference"),
+    ({"at": "037 024", "bombs": 0}, "from 1 to 4"),
+    ({"at": "037 024", "bombs": 5}, "from 1 to 4"),
+    ({"at": "037 024", "bombs": True}, "from 1 to 4"),
+    ({"at": "037 024", "heading": 360}, "0 to 359"),
+    ({"at": "037 024", "heading": "north"}, "0 to 359"),
+])
+def test_bad_strikes_are_refused(leg, words):
+    with pytest.raises(Invalid, match=words):
+        strike(**leg)
+
+
+def test_a_strike_goes_alone_and_needs_the_capability():
+    with pytest.raises(Invalid, match="STRIKE must be the only leg"):
+        orders.validate({"to": "Hog", "legs": [{"type": "STRIKE", "at": "037 024"}, {"type": "CAS", "at": "038 024"}]},
+                        JETS, MARKERS, 8192, [], LIST)
+    with pytest.raises(Invalid, match="can't do STRIKE"):
+        orders.validate({"to": "Recon", "legs": [{"type": "STRIKE", "at": "037 024"}]}, JETS, MARKERS, 8192, [], LIST)
+
+
+def test_a_strike_is_timed_over_its_run_in(tmp_path):
+    hog = {"callsign": "Hog", "role": "attack aircraft", "capabilities": ["STRIKE"], "at": "020 015"}
+    b = Battle(tmp_path, stations=[hog], success={"station": "Hog", "within_m": 50, "of": "034 030"})
+    b.start()
+    b.advance(102, callsign="Hog", pos=[2050, 1550])
+    b.runtime.order({"to": "Hog", "legs": [{"type": "STRIKE", "at": "037 024", "bombs": 2, "heading": 0}]})
+    assert b.game.calls[-1][1][2:4] == ["strike", [[[3750.0, 2450.0], 2, 0.0]]]
+    b.advance(104, callsign="Hog", pos=[2050, 1550], order="O-0001")
+    # Out to the run-in point 9 km south of the grid, then 9 km back in: 17.3 km, flown live in 2:15.
+    assert said(b)[-1] == "Copy, two bombs on grid 037 024, run-in heading 000. About 2 minutes out."
+
+
+def test_the_strike_route_goes_by_the_run_in_point_unless_it_is_already_far_out():
+    assert strike_route([2050, 1550], [3750, 2450], 0) == pytest.approx(8276 + 9000, abs=1)
+    assert strike_route([3750, -8000], [3750, 2450], -1) == pytest.approx(10450)
+    near = strike_route([2050, 1550], [3750, 2450], -1)  # turns back to a point 9 km behind him, then in
+    assert near == pytest.approx(9000 - math.dist([2050, 1550], [3750, 2450]) + 9000, abs=1)
+
+
+def test_what_the_pilot_says_through_a_strike(tmp_path):
+    b = Battle(tmp_path)
+    b.start()
+    for t, state, detail in ((102, "in hot", "037 024"), (104, "away", "Two bombs"), (106, "off target", "")):
+        b.advance(t, medical=[["O-1", "strike", "V1", "", state, detail]])
+    assert said(b) == ["In hot, grid 037 024.", "Two bombs away.", "Off target, returning to hold."]
+    for t, state, detail in ((108, "going around", ""), (110, "no release", "037 024"), (112, "no bombs", "")):
+        b.advance(t, medical=[[f"O-{t}", "strike", "V1", "", state, detail]])
+    assert said(b)[-3:] == ["Not lined up, going around.", "Couldn't line up on grid 037 024, returning to hold.",
+                            "Unable, no bombs aboard."]
 
 
 def mission(state="firing", fired=0, want=6, reason="", word="HE", eta=27.6, in_air=0, gun="V1", order="O-1"):

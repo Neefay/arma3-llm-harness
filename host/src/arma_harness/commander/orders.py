@@ -49,6 +49,7 @@ ORDER_TABLE: dict[str, OrderType] = {
     "FIRE_MISSION": OrderType("Guns", "Finite", "Crew", "Engine"),
     "CHECK_FIRE": OrderType("Guns", "Instant", "Crew", "Engine"),
     "CAS": OrderType("Guns", "Finite", "Crew", "Engine"),
+    "STRIKE": OrderType("Guns", "Finite", "Crew", "Scripted"),
     "POSTURE": OrderType("Settings", "Instant", "None", "Engine"),
 }
 
@@ -74,6 +75,7 @@ AMMO = {"HE", "SMOKE"}
 MAX_FIRE_ROUNDS = 32
 MAX_FIRE_RADIUS_M = 150
 CAS_RADIUS_M = (50, 500, 150)  # least, most, and when none is given
+MAX_STRIKE_BOMBS = 4
 SEATS = re.compile(r"^(driver|gunner|commander|cargo|turret:\d+)$")
 
 
@@ -179,9 +181,9 @@ def validate(request: dict, stations: dict[str, dict], markers: dict[str, dict],
     if mode == "append" and set(types) - APPENDABLE:  # anything else used to replace the route, without a word
         raise Invalid("Only MOVE, HOLD, SEARCH and SENTRY can be appended. To do more, send the whole task as one "
                       "order.")
-    alone = (STANDS_ALONE | {"CAS"}) & set(types)
+    alone = (STANDS_ALONE | {"CAS", "STRIKE"}) & set(types)
     if alone and len(types) > 1:
-        raise Invalid(f"{sorted(alone)[0]} must be the only leg in an order.")
+        raise Invalid(f"{next(kind for kind in types if kind in alone)} must be the only leg in an order.")
     if "HOLD" in types[:-1]:
         raise Invalid("HOLD runs until replaced, so nothing can follow it in the same order. Put it last, or use MOVE "
                       "with hold_for to wait somewhere first.")
@@ -200,6 +202,8 @@ def validate(request: dict, stations: dict[str, dict], markers: dict[str, dict],
         return _fire(to, legs, types, posture, stations, world_size, vehicles or {})
     if types[0] == "CAS":
         return _cas(to, legs[0], posture, world_size)
+    if types[0] == "STRIKE":
+        return _strike(to, legs[0], posture, world_size)
     if CARE_ORDERS.keys() & set(types):
         return _care(to, legs, types, posture, markers, buildings, world_size, vehicles or {}, casualties or {})
     single = SINGLE_LEG & set(types)
@@ -356,6 +360,32 @@ def _cas(to, leg, posture, world_size) -> dict:
         raise Invalid(f"radius must be between {least} and {most} metres.")
     return {"to": to, "mode": "cas", "engine_legs": [[aim, radius]], "posture": posture, "route": None,
             "words": f"Copy, grid {grid}, on the way."}
+
+
+def _strike(to, leg, posture, world_size) -> dict:
+    """Bombs on a grid, whether or not anything is seen there. The pilot flies a run through it, on the heading given or
+    straight from where he is, and the bombs are released for the grid. Guided where ACE is loaded, unguided without."""
+    at = leg.get("at")
+    if not isinstance(at, str) or not (_GRID.match(at) or _FINE_GRID.match(at)):
+        raise Invalid(f"A strike needs a grid reference of six or eight figures, such as 041 041, and {at!r} isn't "
+                      f"one. Markers and building ids can't be passed to a pilot: work out the grid.")
+    aim, grid = parse_grid(at, world_size, precise=True)
+    bombs = leg.get("bombs", 1)
+    if not isinstance(bombs, int) or isinstance(bombs, bool) or not 1 <= bombs <= MAX_STRIKE_BOMBS:
+        raise Invalid(f"bombs must be a whole number from 1 to {MAX_STRIKE_BOMBS}.")
+    heading = leg.get("heading")
+    if heading is not None and (not isinstance(heading, int | float) or isinstance(heading, bool)
+                                or not 0 <= heading < 360):
+        raise Invalid("heading is the direction the aircraft flies on its run, in degrees from 0 to 359.")
+    words = f"Copy, {_count_words(bombs)} on grid {grid}"
+    if heading is not None:
+        words += f", run-in heading {round(heading) % 360:03d}"
+    return {"to": to, "mode": "strike", "engine_legs": [[aim, bombs, -1 if heading is None else float(heading)]],
+            "posture": posture, "route": None, "words": words + "."}
+
+
+def _count_words(bombs: int) -> str:
+    return f"{['one', 'two', 'three', 'four'][bombs - 1]} bomb{'s' if bombs > 1 else ''}"
 
 
 def _boarding(to, legs, types, posture, vehicles) -> dict:

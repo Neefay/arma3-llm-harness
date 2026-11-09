@@ -32,7 +32,9 @@ ORDER_TYPES_HELP = (
     "crewed guns at a grid reference of six or eight figures, and only that: markers and building ids can't be called "
     "in. CHECK_FIRE: stop firing, though rounds in the air still land. CAS: an aircraft flies to a grid, again "
     "only a grid, and attacks whatever its pilot finds within the radius (default 150 m), then returns to its hold. "
-    "The pilot only attacks what he sees himself. Fire orders leave the squad's other orders as "
+    "The pilot only attacks what he sees himself. STRIKE: an aircraft drops bombs on a grid, again only a grid, "
+    "whether anything is seen there or not, flying its run on the heading given or straight from where it is, then "
+    "returns to its hold. Nobody but an observer reports what they hit. Fire orders leave the squad's other orders as "
     "they are. CARRY: free men pick up casualties and take them to a vehicle or a place. A man carrying walks about "
     "100 m a minute, doesn't take cover and can't shoot back, so he's exposed. UNLOAD: get casualties off a stopped "
     "vehicle. TREAT: medics treat casualties where they lie, faster at an aid post or medical vehicle. "
@@ -47,7 +49,7 @@ LEGS_HELP = (
     "one at a time: the reply gives the total time, and you don't have to wake for each step, while a separate order "
     "sent too soon replaces what the squad was doing. If a step fails, the squad says so and waits for you. A "
     "FIRE_MISSION can be a step, such as MOUNT, MOVE, FIRE_MISSION for a gun that has to move first. HALT, POSTURE "
-    "CHECK_FIRE and CAS go alone. HOLD and the orders that run until replaced can only go last: use "
+    "CHECK_FIRE, CAS and STRIKE go alone. HOLD and the orders that run until replaced can only go last: use "
     "MOVE with hold_for to wait somewhere on the way.")
 _STRING = {"type": "string"}
 _LEG = {
@@ -69,6 +71,9 @@ _LEG = {
         "observer": {"type": "string",
                      "description": "For FIRE_MISSION: a station that corrects fire, to watch the fall of shot"},
         "guns": {"type": "array", "items": _STRING, "description": "For fire orders: which guns, default all crewed"},
+        "bombs": {"type": "integer", "description": "For STRIKE: how many bombs, 1 to 4, default 1"},
+        "heading": {"type": "number", "description": "For STRIKE: the direction the aircraft flies on its run, in "
+                                                     "degrees. Default: straight from where it is"},
         "radius": {"type": "number", "description": "Metres around the point"},
         "completion": {"type": "number", "description": "How close counts as arrived, in metres"},
         "hold_for": {"type": "string", "description": "Time to wait at the point, such as 1:30"},

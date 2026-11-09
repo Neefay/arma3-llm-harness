@@ -96,9 +96,9 @@ def test_every_ending_of_a_fire_mission_is_said():
 
 def test_every_machine_in_the_list_has_a_chart():
     charts = set(re.findall(r"<!-- machine: ([\w-]+) -->", MODEL))
-    assert {"carry", "treat", "post", "sortie", "fire", "boarding", "clearing", "placing", "cba-task", "custody",
-            "busy", "battle", "attention", "chain", "objective", "order", "contact", "casualty-list", "apart", "outbox",
-            "server"} == charts
+    assert {"carry", "treat", "post", "sortie", "strike", "fire", "boarding", "clearing", "placing", "cba-task",
+            "custody", "busy", "battle", "attention", "chain", "objective", "order", "contact", "casualty-list",
+            "apart", "outbox", "server"} == charts
 
 
 # -- the order table in section 7.2 --------------------------------------------------------------------------------
@@ -125,7 +125,7 @@ def where(**want) -> set[str]:
 
 def test_the_table_has_every_order_type_once():
     assert set(order_table()) == orders.ORDER_TYPES
-    assert len(order_table()) == len(orders.ORDER_TYPES) == 23
+    assert len(order_table()) == len(orders.ORDER_TYPES) == 24
 
 
 @pytest.mark.parametrize("name, in_the_code, from_the_table", [

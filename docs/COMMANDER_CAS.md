@@ -133,6 +133,31 @@ Two findings:
 - **Prone infantry in grass are invisible from the air.** With the squad set to hold, its men saw the helicopter and lay down. The crew passed within 74 m three times and never detected them (`knowsAbout` 0), so each sortie ended "Nothing seen around grid 037 024, returning to hold." Revealed by script, the same crew fired within a minute. This is fog, not a fault, but it makes CAS useless against an enemy that has gone to ground, unless someone on the ground can show the pilot where they are.
 - **The pilot's contact report uses the existing words:** bearing and range from the aircraft. That's question 3.
 
+## Strikes on a bare grid (built, 2026-11-09)
+
+The `STRIKE` order (`at`: a grid only, `bombs`: 1 to 4, `heading`: optional run-in direction) drops bombs on a grid whether or not anything is seen there. The game side is `brmh_cmd_strikeMachine`, charted in the model's appendix.
+
+- **Flight is the engine's.** The aircraft flies to a run-in point 9 km out on the heading, or straight in if it's already over 8 km away and no heading was given. Then it flies ordinary waypoints through the grid, to a point 6 km beyond it. It flies `CARELESS` and holding fire, so it doesn't break off to fight on the way. Planes climb to at least 700 m for the run.
+- **How AI pilots fly the run** (`spike_strike.py`, A-164 on Stratis), and why it's set up this way:
+  - From a run-in point 5 km out, the pilot comes out of his turn 10-13° off the grid and is still 5° off at 1 km. From 9 km he's on line by 8 km.
+  - With the grid as his last waypoint, he starts to turn to circle it, so a waypoint beyond keeps him straight.
+  - From the south-west of grid 037 024 he bends around the hills, the same way every time, enemy or not. He's 450 m off line 2 km out and back over the grid at the end. From the south, over the sea, he stays within 1-5°.
+  - The heading is the commander's to choose, for the ground as well as for his own men. Guided bombs don't mind; unguided ones on a bent run aren't released ("Couldn't line up").
+- **Only the release is scripted.** It's checked every frame while the aircraft is on the run, and a stick goes a third of a second apart.
+- **With ACE**, the aircraft's bombs are swapped at spawn for ACE's guided versions of the same bombs (`ace_missile_gbu_*`, `ace_missile_sdb_*`), wherever ACE has one. A laser bomb gets a laser shone straight down on the grid by nobody, which is ACE's virtual emitter (`ace_laser_fnc_laserOn`, code 1111). It's left on for a minute after the release. A GPS bomb gets ACE's aim point set to the grid as it's released. Guided bombs go inside 2.4 km, with the aircraft tracking within 15° of the grid (its velocity, not its nose, which sits 10-15° off).
+- **Without ACE**, the pilot uses dumb bombs: no `laserLock` or `irLock`, such as the Mk82. A dumb bomb is released when the impact it would make lands on the grid, within 80 m to the side of it, and the rest of the stick follows a third of a second apart. The impact is predicted from the aircraft's position and velocity, flying the bomb as the engine does. A bomb is a missile with an axis, which starts along the release velocity and turns toward its own (6.9 per second). Drag acts along the axis (k = 0.000225, as k|v|), and the ammo's side friction (`maneuvrability`, 4.6 for the Mk82) damps velocity across it, which holds the fall back like lift. Fitted to three recorded Mk82 drops, it predicts the 1.8-1.9 km throws within 25 m. Gravity and drag alone came out 300 m short. The engine's own laser bombs can't be used for a grid: with nothing locked they glide on for kilometres. An aircraft carrying only those says "Unable, my bombs need a laser on the target."
+
+Measured first (spikes `spike_ace_bombs.py`, `spike_bomb_drag.py`, on Stratis with ACE loaded):
+
+| Bomb | Aircraft | Release | Landed from the grid |
+|---|---|---|---|
+| ACE GBU-12, virtual laser | A-164 | 2.5 km and 2.4 km out, 860 m up, 512-563 km/h | 0 m, 0 m |
+| ACE SDB, GPS | Black Wasp | 2.3 km out, 840 m up, 820 km/h | 1 m |
+| vanilla GBU-12, nothing locked | A-164 | 2.5 km out, 800 m up | glided 6.5 km, into the sea |
+| Mk82, released at nothing | A-164 | 3.1 km out, 800 m up | 1.2 km short: ballistic, 15.5 s, throw 1.9 km |
+
+What the pilot says: "Copy, two bombs on grid 037 024." Then "In hot, grid 037 024.", "Two bombs away." and "Off target, returning to hold." Or "Not lined up, going around." once, then "Couldn't line up on grid 037 024, returning to hold." As with fire missions, nobody says what the bombs hit unless someone sees it.
+
 ## Recommendation: talk-on
 
 A station that can see the enemy, named as `observer` on the CAS order as for fire missions, passes the pilot what it sees: the enemy it knows about within the radius, at its own level of knowledge. That's a radio talk-on, and it moves knowledge from one station to another, so it isn't a leak. In model terms it's an arrow from `Knowledge(observer)` to `Knowledge(pilot)`, which needs a line in the model. It would also cover question 1(b) without a laser.

@@ -33,6 +33,13 @@ if (isNil "brmh_cmd_carries") then {
 if (isNil "brmh_cmd_treats") then {
 	brmh_cmd_treats = [];
 };
+// Strikes: how far out a guided bomb is released, and the drag of the engine's unguided bombs (docs/COMMANDER_CAS.md).
+BRMH_CMD_GUIDED_RELEASE_M = 2400;
+BRMH_CMD_BOMB_DRAG = 0.000225;
+BRMH_CMD_BOMB_TURN = 6.9;
+// How far out a strike's run starts. Out of the turn there, a pilot's track settles onto the grid only slowly: 13° off
+// at 4 km, still 5° at 1 km, from a 5 km start.
+BRMH_CMD_RUN_IN_M = 9000;
 if (isNil "brmh_cmd_builds") then {
 	brmh_cmd_builds = [];
 };
@@ -1302,6 +1309,10 @@ brmh_cmd_fnc_order = {
 		([_group, _order] + (_legs # 0)) call brmh_cmd_fnc_casOrder;
 		true
 	};
+	if (_mode isEqualTo "strike") exitWith {
+		([_group, _order] + (_legs # 0)) call brmh_cmd_fnc_strikeOrder;
+		true
+	};
 	if (_mode in ["carry", "unload", "treat", "post"]) exitWith {
 		([_group, _order] + (_legs # 0)) call (missionNamespace getVariable format ["brmh_cmd_fnc_%1Order", _mode]);
 		true
@@ -1684,6 +1695,7 @@ brmh_cmd_fnc_spawnEnemy = {
 		2 - Position [x, y] (ARRAY)
 		3 - Ammunition [magazine, rounds] pairs, empty to leave it as it comes (ARRAY)
 		4 - (OPTIONAL) Height to start flying at, metres; 0 on the ground (NUMBER) - Default: 0
+		5 - (OPTIONAL) A magazine for each pylon in order, "" to leave one as it comes (ARRAY) - Default: []
 	USAGE:
 		["V1", "B_Mortar_01_F", [4150, 3350], [["8Rnd_82mm_Mo_shells", 16]]] call brmh_cmd_fnc_spawnVehicle;
 		["V2", "B_Heli_Attack_01_dynamicLoadout_F", [2500, 1500], [], 150] call brmh_cmd_fnc_spawnVehicle;
@@ -1691,7 +1703,7 @@ brmh_cmd_fnc_spawnEnemy = {
 	ENVIRONMENT: Server
 */
 brmh_cmd_fnc_spawnVehicle = {
-	params [["_key", "", [""]], ["_class", "", [""]], ["_at", [], [[]], 2], ["_ammo", [], [[]]], ["_fly", 0, [0]]];
+	params [["_key", "", [""]], ["_class", "", [""]], ["_at", [], [[]], 2], ["_ammo", [], [[]]], ["_fly", 0, [0]], ["_pylons", [], [[]]]];
 	private _vehicle = createVehicle [_class, _at + [0], [], 0, ["NONE", "FLY"] select (_fly > 0)];
 	_vehicle setVariable ["brmh_cmd_spawned", true];
 	if (_fly > 0) then {
@@ -1699,7 +1711,14 @@ brmh_cmd_fnc_spawnVehicle = {
 		_vehicle setPosASL [_at # 0, _at # 1, (getTerrainHeightASL _at) + _fly];
 		_vehicle setVelocityModelSpace [0, [40, 100] select (_vehicle isKindOf "Plane"), 0];
 		_vehicle flyInHeight _fly;
+		_vehicle setVariable ["brmh_cmd_flyHeight", _fly];
 	};
+	{
+		if (_x isNotEqualTo "") then {
+			_vehicle setPylonLoadout [_forEachIndex + 1, _x, true];
+		};
+	} forEach _pylons;
+	[_vehicle] call brmh_cmd_fnc_aceBombs;
 	_vehicle setVariable ["brmh_cmd_key", _key];
 	brmh_cmd_vehicles set [_key, _vehicle];
 	if (getNumber (configOf _vehicle >> "artilleryScanner") > 0) then {
@@ -3235,7 +3254,7 @@ brmh_cmd_fnc_casOrder = {
 	private _vehicle = vehicle leader _group;
 	{
 		if ((_x get "GROUP") isEqualTo _group and {
-			((_x get "SPEC") get "KIND") isEqualTo "sortie"
+			((_x get "SPEC") get "KIND") in ["sortie", "strike"]
 		}) then {
 			_x call ["#END", ["called off"]];
 		};
@@ -3245,29 +3264,7 @@ brmh_cmd_fnc_casOrder = {
 	}) exitWith {
 		[_group, _order, "sortie", "", "not flying"] call brmh_cmd_fnc_careSay;
 	};
-	if (isNil {
-		_vehicle getVariable "brmh_cmd_shotsHandler"
-	}) then {
-		_vehicle setVariable ["brmh_cmd_shotsHandler", _vehicle addEventHandler ["Fired", {
-			params ["_vehicle", "", "", "", "_ammo"];
-			private _word = switch (true) do {
-				case (_ammo isKindOf ["BombCore", configFile >> "CfgAmmo"]): {
-					"bombs"
-				};
-				case (_ammo isKindOf ["MissileCore", configFile >> "CfgAmmo"]): {
-					"missiles"
-				};
-				case (_ammo isKindOf ["RocketCore", configFile >> "CfgAmmo"]): {
-					"rockets"
-				};
-				default {
-					"guns"
-				};
-			};
-			_vehicle setVariable ["brmh_cmd_lastShot", [time, _word]];
-			_vehicle setVariable ["brmh_cmd_shots", (_vehicle getVariable ["brmh_cmd_shots", 0]) + 1];
-		}]];
-	};
+	[_vehicle] call brmh_cmd_fnc_countShots;
 	[_group] call brmh_cmd_fnc_clearRoute;
 	private _wp = _group addWaypoint [(_aim select [0, 2]) + [0], 0];
 	_wp setWaypointType "SAD";
@@ -3275,6 +3272,390 @@ brmh_cmd_fnc_casOrder = {
 	_group setBehaviour "COMBAT";
 	_group setCombatMode "RED";
 	brmh_cmd_builds pushBack ([brmh_cmd_sortieMachine, [["GROUP", _group], ["ORDER", _order], ["SUBJECT", _vehicle getVariable ["brmh_cmd_key", ""]], ["VEHICLE", _vehicle], ["AIM", _aim], ["RADIUS", _radius], ["GRID", [mapGridPosition _aim] call brmh_cmd_fnc_spokenGrid], ["WAYPOINT", _wp # 1], ["SHOTS", _vehicle getVariable ["brmh_cmd_shots", 0]]]] call brmh_cmd_fnc_newMachine);
+};
+
+// A strike: bombs on a grid, whatever is seen there. The pilot flies the run on engine waypoints, from a point 5 km out
+// on the heading given (or straight from where he is), and the release is timed by script, each frame, for the grid.
+// With ACE the bombs are ACE's own and guided: a laser shone straight down on the grid, or the GPS aim point.
+// Without ACE they fall where the release puts them (docs/COMMANDER_CAS.md).
+brmh_cmd_strikeMachine = [
+	["KIND", "strike"],
+	["INITIAL", "inbound"],
+	["ALWAYS", [
+		[{
+			not alive (_this get "VEHICLE") or {
+				not ([driver (_this get "VEHICLE")] call brmh_cmd_fnc_able)
+			}
+		}, {}, "", "lost"]
+	]],
+	["STATES", [
+		["inbound", [
+			["ON", [
+				[{
+					(_this get "DIRECT") or {
+						((_this get "VEHICLE") distance2D (_this get "IP")) < 1000
+					}
+				}, {
+					[_this] call brmh_cmd_fnc_strikeRun;
+					_this get "GRID"
+				}, "run", "in hot"]
+			]],
+			["DEADLINE", [600, {
+				_this get "GRID"
+			}, "", "no release"]]
+		]],
+		["run", [
+			["ON", [
+				[{
+					private _released = [_this] call brmh_cmd_fnc_strikeReleased;
+					_released >= (_this get "BOMBS") or {
+						_released > 0 and {
+							[_this] call brmh_cmd_fnc_strikePassed
+						}
+					}
+				}, {
+					[[_this] call brmh_cmd_fnc_strikeReleased] call brmh_cmd_fnc_bombWords
+				}, "away", "away"],
+				[{
+					(_this get "PASSES") isEqualTo 0 and {
+						[_this] call brmh_cmd_fnc_strikePassed
+					}
+				}, {
+					[_this] call brmh_cmd_fnc_strikeAround;
+				}, "inbound", "going around"],
+				[{
+					[_this] call brmh_cmd_fnc_strikePassed
+				}, {
+					_this get "GRID"
+				}, "", "no release"]
+			]],
+			["DEADLINE", [240, {
+				_this get "GRID"
+			}, "", "no release"]]
+		]],
+		["away", [
+			["DEADLINE", [10, {}, "", "off target"]]
+		]]
+	]],
+	["RELEASE", {
+		private _group = _this get "GROUP";
+		private _vehicle = _this get "VEHICLE";
+		[_this getOrDefault ["PFH", -1]] call CBA_fnc_removePerFrameHandler;
+		// The laser stays on until the last bomb has had time to land.
+		private _laser = _this getOrDefault ["LASER", []];
+		if (_laser isNotEqualTo []) then {
+			[{
+				params ["_uuid", "_emitter"];
+				[_uuid] call ace_laser_fnc_laserOff;
+				deleteVehicle _emitter;
+			}, _laser, 60] call CBA_fnc_waitAndExecute;
+		};
+		if (alive _vehicle) then {
+			_vehicle flyInHeight (_vehicle getVariable ["brmh_cmd_flyHeight", 300]);
+			_group setBehaviour "AWARE";
+			[_group, _group getVariable ["brmh_cmd_hold", getPosATL _vehicle]] call brmh_cmd_fnc_holdAir;
+		};
+	}]
+];
+
+/*
+	NAME: brmh_cmd_fnc_strikeOrder
+	DESCRIPTION: Sends a station's aircraft to bomb a grid, then back to its hold. A new order calls off the one before.
+	PARAMETERS:
+		0 - Group (GROUP)
+		1 - Order id (STRING)
+		2 - Grid centre [x, y] (ARRAY)
+		3 - Bombs to drop, 1 to 4 (NUMBER)
+		4 - Run-in heading in degrees, or -1 for straight from where the aircraft is (NUMBER)
+	ENVIRONMENT: Server
+*/
+brmh_cmd_fnc_strikeOrder = {
+	params ["_group", "_order", "_aim", "_bombs", "_heading"];
+	private _vehicle = vehicle leader _group;
+	{
+		if ((_x get "GROUP") isEqualTo _group and {
+			((_x get "SPEC") get "KIND") in ["sortie", "strike"]
+		}) then {
+			_x call ["#END", ["called off"]];
+		};
+	} forEach brmh_cmd_builds;
+	if (not (_vehicle isKindOf "Air") or {
+		not alive _vehicle
+	}) exitWith {
+		[_group, _order, "strike", "", "not flying"] call brmh_cmd_fnc_careSay;
+	};
+	private _bomb = [_vehicle] call brmh_cmd_fnc_bombWeapon;
+	if (_bomb isEqualTo []) exitWith {
+		[_group, _order, "strike", "", "no bombs"] call brmh_cmd_fnc_careSay;
+	};
+	if ((_bomb # 0) isEqualTo "") exitWith {
+		[_group, _order, "strike", "", "laser only"] call brmh_cmd_fnc_careSay;
+	};
+	_bomb params ["_weapon", "_guidance", "_side"];
+	[_vehicle] call brmh_cmd_fnc_countShots;
+	private _given = _heading >= 0;
+	if (not _given) then {
+		_heading = _vehicle getDir _aim;
+	};
+	private _ip = _aim getPos [BRMH_CMD_RUN_IN_M, _heading + 180];
+	private _direct = not _given and {
+		(_vehicle distance2D _aim) > BRMH_CMD_RUN_IN_M - 1000
+	};
+	[_group] call brmh_cmd_fnc_clearRoute;
+	(_group addWaypoint [[_ip, (_aim select [0, 2]) + [0]] select _direct, 0]) setWaypointType "MOVE";
+	// On the run he flies it, and nothing else: no turning off to fight on the way.
+	_group setBehaviour "CARELESS";
+	_group setCombatMode "BLUE";
+	if (_vehicle isKindOf "Plane") then {
+		_vehicle flyInHeight ((_vehicle getVariable ["brmh_cmd_flyHeight", 300]) max 700);
+	};
+	brmh_cmd_builds pushBack ([brmh_cmd_strikeMachine, [["GROUP", _group], ["ORDER", _order], ["SUBJECT", _vehicle getVariable ["brmh_cmd_key", ""]], ["VEHICLE", _vehicle], ["AIM", AGLToASL ((_aim select [0, 2]) + [0])], ["BOMBS", _bombs], ["HEADING", _heading], ["IP", _ip], ["DIRECT", _direct], ["WEAPON", _weapon], ["GUIDANCE", _guidance], ["SIDE", _side], ["GRID", [mapGridPosition _aim] call brmh_cmd_fnc_spokenGrid], ["PASSES", 0], ["BOMBS_BEFORE", _vehicle getVariable ["brmh_cmd_bombs", 0]], ["NEXT", 0]]] call brmh_cmd_fnc_newMachine);
+};
+
+// The weapon that drops the aircraft's bombs on a grid, how they're guided: "SALH" (laser) or "GPS" for ACE's own,
+// "" for a dumb bomb that falls where it's released, and a dumb bomb's side friction for brmh_cmd_fnc_bombImpact. ACE's go first. The engine's own laser bombs can't be used: with
+// nothing locked they glide on for kilometres (spike_bomb_drag.py), so an aircraft with only those gets "laser". Empty
+// when it has no bombs left.
+brmh_cmd_fnc_bombWeapon = {
+	params ["_vehicle"];
+	private _guided = [];
+	private _dumb = [];
+	private _laser = false;
+	{
+		private _ammo = getText (configFile >> "CfgMagazines" >> _x >> "ammo");
+		if (_x isNotEqualTo "" and {
+			(_vehicle ammoOnPylon (_forEachIndex + 1)) > 0
+		} and {
+			_ammo isKindOf ["BombCore", configFile >> "CfgAmmo"]
+		}) then {
+			private _weapon = getText (configFile >> "CfgMagazines" >> _x >> "pylonWeapon");
+			private _ace = configFile >> "CfgAmmo" >> _ammo >> "ace_missileguidance";
+			switch (true) do {
+				case (getNumber (_ace >> "enabled") isEqualTo 1): {
+					_guided = [_weapon, getText (_ace >> "defaultSeekerType"), 0];
+				};
+				case (getNumber (configFile >> "CfgAmmo" >> _ammo >> "laserLock") isEqualTo 0 and {
+					getNumber (configFile >> "CfgAmmo" >> _ammo >> "irLock") isEqualTo 0
+				}): {
+					_dumb = [_weapon, "", getNumber (configFile >> "CfgAmmo" >> _ammo >> "maneuvrability")];
+				};
+				default {
+					_laser = true;
+				};
+			};
+		};
+	} forEach getPylonMagazines _vehicle;
+	switch (true) do {
+		case (_guided isNotEqualTo []): {
+			_guided
+		};
+		case (_dumb isNotEqualTo []): {
+			_dumb
+		};
+		case (_laser): {
+			["", "laser"]
+		};
+		default {
+			[]
+		};
+	}
+};
+
+// Lined up: the route runs to the grid, and an ACE laser bomb gets its laser, shone down on the grid by
+// nobody, as a designator would. The release is checked every frame from here on.
+brmh_cmd_fnc_strikeRun = {
+	params ["_machine"];
+	private _group = _machine get "GROUP";
+	private _aim = _machine get "AIM";
+	// Through the grid and on: with the grid as his last waypoint, a pilot starts turning to circle it from 5 km out, and
+	// his track drifts 11° off by the release.
+	[_group] call brmh_cmd_fnc_clearRoute;
+	(_group addWaypoint [ASLToAGL _aim, 0]) setWaypointType "MOVE";
+	(_group addWaypoint [_aim getPos [6000, _machine get "HEADING"], 0]) setWaypointType "MOVE";
+	if ((_machine get "GUIDANCE") isEqualTo "SALH" and {
+		(_machine getOrDefault ["LASER", []]) isEqualTo []
+	}) then {
+		private _emitter = createVehicle ["Land_HelipadEmpty_F", ASLToAGL _aim, [], 0, "CAN_COLLIDE"];
+		_emitter setVariable ["brmh_cmd_aim", _aim];
+		private _uuid = [_emitter, _emitter, {
+			params ["_emitter"];
+			[(_emitter getVariable "brmh_cmd_aim") vectorAdd [0, 0, 150], [0, 0, -1]]
+		}, 1550, 1111, 1] call ace_laser_fnc_laserOn;
+		_machine set ["LASER", [_uuid, _emitter]];
+	};
+	if ((_machine getOrDefault ["PFH", -1]) < 0) then {
+		_machine set ["PFH", [{
+			(_this # 0) params ["_machine"];
+			if ((_machine get "STATE") isNotEqualTo "run") exitWith {};
+			[_machine] call brmh_cmd_fnc_strikeRelease;
+		}, 0, [_machine]] call CBA_fnc_addPerFrameHandler];
+	};
+};
+
+// Every frame on the run: release the next bomb, a third of a second apart. A guided bomb goes inside the range it can
+// glide to the grid from the run's height (spike_ace_bombs.py: from 2.5 km at 850 m, on the grid); an unguided one when
+// it will land on the grid.
+brmh_cmd_fnc_strikeRelease = {
+	params ["_machine"];
+	if (([_machine] call brmh_cmd_fnc_strikeReleased) >= (_machine get "BOMBS") or {
+		time < (_machine get "NEXT")
+	}) exitWith {};
+	private _vehicle = _machine get "VEHICLE";
+	private _aim = _machine get "AIM";
+	private _velocity = velocity _vehicle;
+	private _flat = [_velocity # 0, _velocity # 1, 0];
+	if ((vectorMagnitude _flat) < 20) exitWith {};
+	private _ready = switch (true) do {
+		// After the first, the rest follow as a stick.
+		case (([_machine] call brmh_cmd_fnc_strikeReleased) > 0): {
+			true
+		};
+		case ((_machine get "GUIDANCE") isNotEqualTo ""): {
+			private _distance = _vehicle distance2D _aim;
+			_distance <= BRMH_CMD_GUIDED_RELEASE_M and {
+				_distance > 600
+			} and {
+				([_vehicle, _aim] call brmh_cmd_fnc_offTrack) < 15
+			}
+		};
+		default {
+			private _along = vectorNormalized _flat;
+			private _miss = _aim vectorDiff ([getPosASL _vehicle, _velocity, _machine get "SIDE"] call brmh_cmd_fnc_bombImpact);
+			private _short = _miss vectorDotProduct _along;
+			_short <= 0 and {
+				_short > -100
+			} and {
+				abs ((_miss # 0) * (_along # 1) - (_miss # 1) * (_along # 0)) < 80
+			}
+		};
+	};
+	if (not _ready) exitWith {};
+	if ((_machine get "GUIDANCE") isEqualTo "GPS") then {
+		ace_missileguidance_gps_mode = "pb";
+		ace_missileguidance_gps_currentSettings = [_aim, -1, -1];
+	};
+	// The bomb leaves a frame or more later and is counted then, so the next isn't asked for before a third of a second.
+	_vehicle fireAtTarget [objNull, _machine get "WEAPON"];
+	_machine set ["NEXT", time + 0.33];
+};
+
+// Where a bomb released now would land, unguided. The engine flies a bomb as a missile: it has an axis, starting along
+// the aircraft's velocity and turning toward its own; drag acts along the axis, and its side friction (the ammo's
+// maneuvrability) damps any velocity across it, which holds the fall back like lift. Fitted to the Mk82's flight
+// (host/tests/spikes/cas/spike_bomb_drag.py): within 25 m of the real throw of 1.8-1.9 km. Drag alone was 300 m short.
+brmh_cmd_fnc_bombImpact = {
+	params ["_position", "_velocity", "_side"];
+	private _step = 0.1;
+	private _axis = vectorNormalized _velocity;
+	private _turn = (BRMH_CMD_BOMB_TURN * _step) min 1;
+	for "_i" from 1 to 600 do {
+		private _speed = vectorMagnitude _velocity;
+		private _along = _axis vectorMultiply (_velocity vectorDotProduct _axis);
+		private _across = _velocity vectorDiff _along;
+		private _accel = ([0, 0, -9.81] vectorAdd (_along vectorMultiply (-BRMH_CMD_BOMB_DRAG * _speed))) vectorAdd (_across vectorMultiply -_side);
+		_axis = vectorNormalized (_axis vectorAdd (((_velocity vectorMultiply (1 / _speed)) vectorDiff _axis) vectorMultiply _turn));
+		_velocity = _velocity vectorAdd (_accel vectorMultiply _step);
+		_position = _position vectorAdd (_velocity vectorMultiply _step);
+		if ((_position # 2) <= getTerrainHeightASL _position) exitWith {};
+	};
+	_position
+};
+
+// Past the grid without releasing: it's behind him, or he's over it.
+brmh_cmd_fnc_strikePassed = {
+	params ["_machine"];
+	private _vehicle = _machine get "VEHICLE";
+	private _aim = _machine get "AIM";
+	private _distance = _vehicle distance2D _aim;
+	_distance < 300 or {
+		_distance < 3000 and {
+			([_vehicle, _aim] call brmh_cmd_fnc_offTrack) > 90
+		}
+	}
+};
+
+// Degrees between where an aircraft is going and a point, from its velocity: its nose can point 10-15° off its track.
+brmh_cmd_fnc_offTrack = {
+	params ["_vehicle", "_at"];
+	private _velocity = velocity _vehicle;
+	private _to = (_at vectorDiff getPosASL _vehicle);
+	acos ((((vectorNormalized [_velocity # 0, _velocity # 1, 0]) vectorDotProduct (vectorNormalized [_to # 0, _to # 1, 0])) min 1) max -1)
+};
+
+// Round again: back out to the run-in point, and in on the same heading.
+brmh_cmd_fnc_strikeAround = {
+	params ["_machine"];
+	private _group = _machine get "GROUP";
+	_machine set ["PASSES", (_machine get "PASSES") + 1];
+	_machine set ["DIRECT", false];
+	[_group] call brmh_cmd_fnc_clearRoute;
+	(_group addWaypoint [_machine get "IP", 0]) setWaypointType "MOVE";
+};
+
+// "Two bombs", as the pilot says it.
+brmh_cmd_fnc_bombWords = {
+	params ["_count"];
+	format ["%1 %2", ["One", "Two", "Three", "Four"] select ((_count - 1) min 3), ["bombs", "bomb"] select (_count isEqualTo 1)]
+};
+
+// Counts what an aircraft fires, and what with, for the machines that report it.
+brmh_cmd_fnc_countShots = {
+	params ["_vehicle"];
+	if (not isNil {
+		_vehicle getVariable "brmh_cmd_shotsHandler"
+	}) exitWith {};
+	_vehicle setVariable ["brmh_cmd_shotsHandler", _vehicle addEventHandler ["Fired", {
+		params ["_vehicle", "", "", "", "_ammo"];
+		private _word = switch (true) do {
+			case (_ammo isKindOf ["BombCore", configFile >> "CfgAmmo"]): {
+				"bombs"
+			};
+			case (_ammo isKindOf ["MissileCore", configFile >> "CfgAmmo"]): {
+				"missiles"
+			};
+			case (_ammo isKindOf ["RocketCore", configFile >> "CfgAmmo"]): {
+				"rockets"
+			};
+			default {
+				"guns"
+			};
+		};
+		_vehicle setVariable ["brmh_cmd_lastShot", [time, _word]];
+		_vehicle setVariable ["brmh_cmd_shots", (_vehicle getVariable ["brmh_cmd_shots", 0]) + 1];
+		if (_word isEqualTo "bombs") then {
+			_vehicle setVariable ["brmh_cmd_bombs", (_vehicle getVariable ["brmh_cmd_bombs", 0]) + 1];
+		};
+	}]];
+};
+
+// Bombs that have left the aircraft since the strike began. Counted as they're fired, which is a frame or more after
+// fireAtTarget asks for them.
+brmh_cmd_fnc_strikeReleased = {
+	params ["_machine"];
+	((_machine get "VEHICLE") getVariable ["brmh_cmd_bombs", 0]) - (_machine get "BOMBS_BEFORE")
+};
+
+// With ACE loaded, an aircraft's bombs are swapped for ACE's guided versions of the same bombs, pylon by pylon, so a
+// strike can be guided onto a bare grid. Anything ACE has no version of stays as it is.
+brmh_cmd_fnc_aceBombs = {
+	params ["_vehicle"];
+	if (not isClass (configFile >> "CfgPatches" >> "ace_missileguidance")) exitWith {};
+	{
+		private _magazine = _x;
+		private _pylon = _forEachIndex + 1;
+		if (_magazine isNotEqualTo "" and {
+			(getText (configFile >> "CfgMagazines" >> _magazine >> "ammo")) isKindOf ["BombCore", configFile >> "CfgAmmo"]
+		}) then {
+			private _guided = (_vehicle getCompatiblePylonMagazines _pylon) select {
+				"ace_missile" in toLowerANSI _x and {
+					(configName inheritsFrom (configFile >> "CfgMagazines" >> _x)) isEqualTo _magazine
+				}
+			};
+			if (_guided isNotEqualTo []) then {
+				_vehicle setPylonLoadout [_pylon, _guided # 0, true];
+			};
+		};
+	} forEach getPylonMagazines _vehicle;
 };
 
 // The aid post: a medic walks to the place, then builds. Its states are the words the radio uses for them.

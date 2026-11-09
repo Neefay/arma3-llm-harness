@@ -1268,6 +1268,49 @@ def play_cas(client: Client) -> list[str]:
     return seen
 
 
+def play_strike(client: Client, guided: bool) -> list[str]:
+    """Bombs on a bare grid: the pilot flies the run and says so, and the bombs land on the grid, guided by ACE where
+    it's loaded, released where they'll fall where it isn't."""
+    harness = Harness()
+    begin(client)
+    # A recorder for where the bombs land, seen only by this test.
+    in_game(harness, """
+    live_impacts = [];
+    private _hog = vehicle leader (brmh_cmd_stations get "Hog");
+    _hog addEventHandler ["Fired", {
+        params ["", "", "", "", "_ammo", "", "_projectile"];
+        _projectile addEventHandler ["Explode", {
+            params ["_projectile", "_pos"];
+            live_impacts pushBack [typeOf _projectile, round (_pos distance2D [3750, 2450])];
+        }];
+    }];
+    true
+    """)
+    # From the south, over the sea: from the south-west the pilot bends around the hills on his way in, 450 m off line
+    # 2 km out, where unguided bombs have to go (spike_strike.py).
+    client.tool("commander_order", to="Hog", legs=[{"type": "STRIKE", "at": "037 024", "bombs": 2, "heading": 0}])
+    finish_turn(client, "Strike")
+    seen, deadline = [], time.time() + 10 * 60
+    while time.time() < deadline:
+        wake = next_wake(client, 300)
+        seen.append(wake["content"])
+        finish_turn(client, "Waiting")
+        if any(end in wake["content"] for end in ("Off target", "Couldn't line up", "Unable", "MISSION END")):
+            break
+    time.sleep(30)  # the last bomb's fall, and the laser left on for it
+    impacts = in_game(harness, "live_impacts")
+    print("    impacts (ammo, metres from the grid):", impacts, flush=True)
+    text = chr(10).join(seen)
+    assert "Hog: Copy, two bombs on grid 037 024, run-in heading 000." in text, text[-2000:]
+    assert "Hog: In hot, grid 037 024." in text, text[-2000:]
+    assert "Hog: Two bombs away." in text, text[-2000:]
+    assert "Off target, returning to hold." in text, text[-2000:]
+    assert len(impacts) == 2, impacts
+    assert all(ammo.startswith("ace_missile_gbu") == guided for ammo, _ in impacts), impacts
+    assert all(metres <= (25 if guided else 120) for _, metres in impacts), impacts
+    return seen
+
+
 def play_stratis_clear(client: Client) -> list[str]:
     """A squad going through buildings it can't all get into says which, and never calls those checked."""
     brief = begin(client)
@@ -1379,6 +1422,8 @@ def main() -> None:
                ("stratis: Camp Maxwell", "stratis_maxwell", "hold", play_stratis),
                ("stratis: clearing the camp", "stratis_clear_check", "hold", play_stratis_clear),
                ("stratis: close air support", "stratis_cas", "hold", play_cas),
+               ("stratis: strike, ACE guided", "stratis_strike", "hold", lambda c: play_strike(c, True)),
+               ("stratis: strike, unguided", "stratis_strike_dumb", "hold", lambda c: play_strike(c, False)),
                ("enemy weapons and vehicles", "contacts_check", "hold", play_contacts)]
     wanted = sys.argv[1:]  # words to match in battle names; none means all of them
     try:

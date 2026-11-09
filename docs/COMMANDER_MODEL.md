@@ -195,6 +195,7 @@ Realisation  =  the engine mechanism; non-normative
 | `FIRE_MISSION` | Guns | Finite | Crew | Engine |
 | `CHECK_FIRE` | Guns | Instant | Crew | Engine |
 | `CAS` | Guns | Finite | Crew | Engine |
+| `STRIKE` | Guns | Finite | Crew | Scripted |
 | `POSTURE` | Settings | Instant | None | Engine |
 
 `All` is every member not crewing a gun.
@@ -370,6 +371,24 @@ stateDiagram-v2
   inbound --> [*]: aircraft lost, out of ammunition, or called off
   over --> [*]: aircraft lost, out of ammunition, or called off
   engaging --> [*]: aircraft lost, out of ammunition, or called off
+```
+
+<!-- machine: strike -->
+```mermaid
+stateDiagram-v2
+  state "inbound" as inbound
+  state "run" as run
+  state "away" as away
+  [*] --> inbound: STRIKE
+  inbound --> run: near the run-in point, or already lined up (in hot)
+  inbound --> [*]: 10 min (no release)
+  run --> away: every bomb released, or some and past the grid
+  run --> inbound: past the grid with none released, the first time (going around)
+  run --> [*]: past it again, or 4 min (no release)
+  away --> [*]: 10 s (off target)
+  inbound --> [*]: aircraft lost, or called off
+  run --> [*]: aircraft lost, or called off
+  away --> [*]: aircraft lost, or called off
 ```
 
 <!-- machine: fire -->
