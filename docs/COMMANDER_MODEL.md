@@ -453,12 +453,16 @@ stateDiagram-v2
 <!-- machine: clearing -->
 ```mermaid
 stateDiagram-v2
+  state "between" as between
+  state "inside" as inside
+  state "done" as done
   [*] --> between: CLEAR
   between --> inside: next building
   between --> between: ruin, skipped
   inside --> inside: next position to a free member
-  inside --> between: all positions visited
-  between --> [*]: none left
+  inside --> between: all positions visited, or 10 min
+  between --> done: none left
+  done --> [*]: next Course order (standing)
 ```
 
 <!-- machine: placing -->

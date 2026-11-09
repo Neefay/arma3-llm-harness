@@ -782,6 +782,7 @@ brmh_cmd_fnc_packet = {
 		_rounds = _rounds + ([_x] call brmh_cmd_fnc_rounds);
 	} forEach _able;
 	private _position = getPosATL _leader;
+	private _clearing = [_group] call brmh_cmd_fnc_clearingState;
 	createHashMapFromArray [
 		["type", "cmd_report"],
 		["callsign", _callsign],
@@ -818,10 +819,10 @@ brmh_cmd_fnc_packet = {
 		["unable", _group getVariable ["brmh_cmd_unable", ""]],
 		["leg", currentWaypoint _group],
 		["legs", count waypoints _group],
-		["clearing", _group getVariable ["brmh_cmd_clearLeft", -1]],
-		["cleared", _group getVariable ["brmh_cmd_cleared", []]],
-		["ruined", _group getVariable ["brmh_cmd_ruined", []]],
-		["blocked", _group getVariable ["brmh_cmd_blocked", []]],
+		["clearing", _clearing # 0],
+		["cleared", _clearing # 1],
+		["ruined", _clearing # 2],
+		["blocked", _clearing # 3],
 		["seen_vehicles", _group getVariable ["brmh_cmd_seenVehicles", []]],
 		["seen_ruins", _group getVariable ["brmh_cmd_seenRuins", []]],
 		["mounted", [_able] call brmh_cmd_fnc_mounted],
@@ -888,24 +889,118 @@ brmh_cmd_fnc_truth = {
 	["evt", createHashMapFromArray [["type", "cmd_truth"], ["groups", _groups], ["vehicles", _vehicles]]] call BRMH_fnc_emit;
 };
 
-// Commander orders that aren't waypoints work from here, on each monitor step.
+// CLEAR: the squad goes through the buildings one at a time, every position of each, and holds there when it's done.
+// Its state reaches the host in the packet's "clearing" (positions left: -1 none, 0 done), "cleared", "ruined" and
+// "blocked", which stay as they are until the next order.
+brmh_cmd_clearingMachine = [
+	["KIND", "clearing"],
+	["SAYS", false],
+	["INITIAL", "between"],
+	["STATES", [
+		["between", [
+			["ON", [
+				[{
+					(_this get "QUEUE") isEqualTo []
+				}, {
+					{
+						_x doFollow leader (_this get "GROUP");
+					} forEach units (_this get "GROUP");
+				}, "done", ""],
+				[{
+					isNull ([(_this get "QUEUE") # 0 # 1] call brmh_cmd_fnc_building)
+				}, {
+					(_this get "RUINED") pushBack (((_this get "QUEUE") deleteAt 0) # 0);
+				}, "between", ""],
+				[{
+					true
+				}, {
+					[_this] call brmh_cmd_fnc_clearNext
+				}, "inside", ""]
+			]],
+			["DEADLINE", [1, {}, "done", ""]]
+		]],
+		["inside", [
+			["EVERY", {
+				[_this] call brmh_cmd_fnc_stepClearing
+			}],
+			["ON", [
+				[{
+					(_this get "SPOTS") isEqualTo [] and {
+						(_this get "BUSY") isEqualTo 0
+					}
+				}, {
+					[_this] call brmh_cmd_fnc_clearDone
+				}, "between", ""]
+			]],
+			// Each man has his own deadline for a position, so this is only a backstop.
+			["DEADLINE", [600, {
+				[_this] call brmh_cmd_fnc_clearDone
+			}, "between", ""]]
+		]],
+		["done", [
+			["STANDING", true]
+		]]
+	]]
+];
+
 brmh_cmd_fnc_startClearing = {
 	params ["_group", "_buildings"];
-	private _total = 0;
-	{
-		_total = _total + count (([_x # 1] call brmh_cmd_fnc_building) buildingPos -1);
-	} forEach _buildings;
-	_group setVariable ["brmh_cmd_clearQueue", +_buildings];
-	_group setVariable ["brmh_cmd_clearSpots", []];
-	_group setVariable ["brmh_cmd_clearCurrent", ""];
-	_group setVariable ["brmh_cmd_clearLeft", _total max 1];
-	_group setVariable ["brmh_cmd_cleared", []];
-	_group setVariable ["brmh_cmd_ruined", []];
-	_group setVariable ["brmh_cmd_blocked", []];
+	[_group, ["clearing"]] call brmh_cmd_fnc_endMachines;
 	{
 		_x setVariable ["brmh_cmd_clearBy", 0];
 		_x setVariable ["brmh_cmd_clearSpot", nil];
 	} forEach units _group;
+	brmh_cmd_builds pushBack ([brmh_cmd_clearingMachine, [["GROUP", _group], ["ORDER", _group getVariable ["brmh_cmd_order", ""]], ["SUBJECT", ""], ["QUEUE", +_buildings], ["SPOTS", []], ["CURRENT", ""], ["REACHED", 0], ["OF", 0], ["BUSY", 0], ["CLEARED", []], ["RUINED", []], ["BLOCKED", []]]] call brmh_cmd_fnc_newMachine);
+};
+
+// Into the next building: its positions a man can be sent to, and how many it has in all.
+brmh_cmd_fnc_clearNext = {
+	params ["_machine"];
+	private _next = (_machine get "QUEUE") deleteAt 0;
+	private _building = [_next # 1] call brmh_cmd_fnc_building;
+	_machine set ["CURRENT", _next # 0];
+	_machine set ["SPOTS", [_building] call brmh_cmd_fnc_safePositions];
+	_machine set ["REACHED", 0];
+	_machine set ["OF", count (_building buildingPos -1)];
+	{
+		_x setVariable ["brmh_cmd_clearSpot", nil];
+	} forEach units (_machine get "GROUP");
+};
+
+// Out of a building: checked if every position was stood on, and blocked, with how many, if not.
+brmh_cmd_fnc_clearDone = {
+	params ["_machine"];
+	if ((_machine get "REACHED") >= (_machine get "OF")) then {
+		(_machine get "CLEARED") pushBack (_machine get "CURRENT");
+	} else {
+		(_machine get "BLOCKED") pushBack [_machine get "CURRENT", _machine get "REACHED", _machine get "OF"];
+	};
+	_machine set ["CURRENT", ""];
+};
+
+// What a squad's clearing is at, for the packet: [positions left (-1 none, 0 done), cleared, ruined, blocked].
+brmh_cmd_fnc_clearingState = {
+	params ["_group"];
+	private _at = brmh_cmd_builds findIf {
+		(_x get "GROUP") isEqualTo _group and {
+			((_x get "SPEC") get "KIND") isEqualTo "clearing"
+		} and {
+			(_x get "STATE") isNotEqualTo ""
+		}
+	};
+	if (_at < 0) exitWith {
+		[-1, [], [], []]
+	};
+	private _machine = brmh_cmd_builds # _at;
+	private _left = 0;
+	if ((_machine get "STATE") isNotEqualTo "done") then {
+		_left = (_machine get "BUSY") + count (_machine get "SPOTS");
+		{
+			_left = _left + count (([_x # 1] call brmh_cmd_fnc_building) buildingPos -1);
+		} forEach (_machine get "QUEUE");
+		_left = _left max 1;
+	};
+	[_left, _machine get "CLEARED", _machine get "RUINED", _machine get "BLOCKED"]
 };
 
 // AI won't register an enemy it walks past. Only what a soldier could plainly see from here counts, so it isn't a cheat.
@@ -937,9 +1032,8 @@ brmh_cmd_fnc_safePositions = {
 // A position only counts once someone has stood on it: AI can't get into some buildings at all (a cargo house's floor is
 // up a step, and they stop 3 m outside), and a building nobody got into mustn't be reported as checked.
 brmh_cmd_fnc_stepClearing = {
-	params ["_group"];
-	private _spots = _group getVariable ["brmh_cmd_clearSpots", []];
-	private _queue = _group getVariable ["brmh_cmd_clearQueue", []];
+	params ["_machine"];
+	private _spots = _machine get "SPOTS";
 	private _busy = 0;
 	{
 		private _soldier = _x;
@@ -951,7 +1045,7 @@ brmh_cmd_fnc_stepClearing = {
 		} and {
 			abs (((getPosATL _soldier) # 2) - (_spot # 2)) < 0.8
 		}) then {
-			_group setVariable ["brmh_cmd_clearReached", (_group getVariable ["brmh_cmd_clearReached", 0]) + 1];
+			_machine set ["REACHED", (_machine get "REACHED") + 1];
 			_soldier setVariable ["brmh_cmd_clearSpot", nil];
 		};
 		// A position can be unreachable, so nobody waits for one for long: not past his deadline, and not once he's at
@@ -985,56 +1079,8 @@ brmh_cmd_fnc_stepClearing = {
 				_busy = _busy + 1;
 			};
 		};
-	} forEach ((units _group) select {
-		[_x] call brmh_cmd_fnc_able and {
-			not (_x getVariable ["brmh_cmd_busy", false])
-		}
-	});
-	if (_spots isEqualTo [] and {
-		_busy isEqualTo 0
-	}) then {
-		private _current = _group getVariable ["brmh_cmd_clearCurrent", ""];
-		if (_current isNotEqualTo "") then {
-			private _reached = _group getVariable ["brmh_cmd_clearReached", 0];
-			private _of = _group getVariable ["brmh_cmd_clearOf", 0];
-			if (_reached >= _of) then {
-				(_group getVariable ["brmh_cmd_cleared", []]) pushBack _current;
-			} else {
-				(_group getVariable ["brmh_cmd_blocked", []]) pushBack [_current, _reached, _of];
-			};
-			_group setVariable ["brmh_cmd_clearCurrent", ""];
-		};
-		if (_queue isNotEqualTo []) then {
-			private _next = _queue deleteAt 0;
-			private _building = [_next # 1] call brmh_cmd_fnc_building;
-			if (isNull _building) then {
-				(_group getVariable ["brmh_cmd_ruined", []]) pushBack (_next # 0);
-			} else {
-				_group setVariable ["brmh_cmd_clearCurrent", _next # 0];
-				_group setVariable ["brmh_cmd_clearSpots", [_building] call brmh_cmd_fnc_safePositions];
-				_group setVariable ["brmh_cmd_clearReached", 0];
-				_group setVariable ["brmh_cmd_clearOf", count (_building buildingPos -1)];
-				{
-					_x setVariable ["brmh_cmd_clearSpot", nil];
-				} forEach units _group;
-			};
-		} else {
-			_group setVariable ["brmh_cmd_clearQueue", nil];
-			_group setVariable ["brmh_cmd_clearLeft", 0];
-			{
-				_x doFollow leader _group;
-			} forEach units _group;
-		};
-	};
-	if (not isNil {
-		_group getVariable "brmh_cmd_clearQueue"
-	}) then {
-		private _left = _busy + count (_group getVariable ["brmh_cmd_clearSpots", []]);
-		{
-			_left = _left + count (([_x # 1] call brmh_cmd_fnc_building) buildingPos -1);
-		} forEach _queue;
-		_group setVariable ["brmh_cmd_clearLeft", _left max 1];
-	};
+	} forEach ([_machine get "GROUP"] call brmh_cmd_fnc_freeMen);
+	_machine set ["BUSY", _busy];
 };
 
 // OCCUPY and CORDON: each soldier gets a spot and walks there, and the squad holds when they all have, or after 90 s.
@@ -1262,11 +1308,6 @@ brmh_cmd_fnc_listBuildings = {
 brmh_cmd_fnc_step = {
 	["evt", createHashMapFromArray [["type", "cmd_tick"]]] call BRMH_fnc_emit;
 	{
-		if (not isNil {
-			_y getVariable "brmh_cmd_clearQueue"
-		}) then {
-			[_y] call brmh_cmd_fnc_stepClearing;
-		};
 		[_y] call brmh_cmd_fnc_stepMount;
 		[_y] call brmh_cmd_fnc_stepDismount;
 	} forEach brmh_cmd_stations;
@@ -1394,12 +1435,7 @@ brmh_cmd_fnc_order = {
 	if (_mode isNotEqualTo "posture" and {
 		not _oneSeat
 	}) then {
-		_group setVariable ["brmh_cmd_clearQueue", nil];
-		_group setVariable ["brmh_cmd_clearLeft", -1];
-		_group setVariable ["brmh_cmd_cleared", []];
-		_group setVariable ["brmh_cmd_blocked", []];
-		_group setVariable ["brmh_cmd_ruined", []];
-		[_group, ["placing"]] call brmh_cmd_fnc_endMachines;
+		[_group, ["placing", "clearing"]] call brmh_cmd_fnc_endMachines;
 		{
 			_x enableAI "PATH";
 			// A cordon turns each man to watch its centre, and nothing else turns him back.
