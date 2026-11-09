@@ -52,6 +52,8 @@ All six are on the `commander_stratis` profile, so ACE isn't needed. All six use
 
 ## 3. The protocol
 
+You don't have to run it all. Every battle stands alone, so run one scenario on one seed, or any handful, a session at a time. What keeps the comparison fair is that the models you compare played the same scenario on the same seeds. `commander compare <scenario>` lines up whatever battles of that scenario exist.
+
 The rules that make runs comparable:
 
 - **Same seeds for every model.** Play each scenario on the six seeds in `benchmark.yaml`. A shorter pass that still covers every variant: hidden gun 2, 1, 5, 116, 7, 40 (all six), two roads 1, 7, 5, decoy 1, 3, 5, silence 1, 7, 5, guns only 1, 5, 7, danger close 1, 2, 3.
@@ -61,7 +63,7 @@ The rules that make runs comparable:
 - **Only finished battles count.** A battle that ends "unfinished" was cut short by the session or the game, not by the commander's play. Run that seed again.
 - **Nothing else on the game.** Don't run spikes, other scenarios or anything else against the running game during a battle.
 
-**Time.** A battle lasts until its objective is met, it's lost, or its time limit, so at most 20 to 30 minutes. The full set is 36 battles per model, roughly 12 to 15 hours. The shorter pass is 18.
+**Time.** A battle lasts until its objective is met, it's lost, or its time limit, so at most 20 to 30 minutes. For reference, the full set is 36 battles per model (12 to 15 hours) and the shorter pass 18, but neither is needed to compare models on a scenario.
 
 **Usage limits.** A commander session costs model calls on every wake, so a long battle uses a fair share of a subscription's limits. If the limit is reached mid-battle, the commander stops answering and the battle plays out without it. That battle doesn't count.
 
