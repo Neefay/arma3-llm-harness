@@ -9,7 +9,7 @@ import sys
 import time
 from pathlib import Path
 
-from ..adapters import load_sqf
+from ..adapters import load_commander
 from ..config import Home
 from ..harness import Harness, HarnessError
 from . import scenario as scenario_mod
@@ -86,7 +86,7 @@ def start(path: str, mode: str | None = None, harness: Harness | None = None, wa
     world_size, sample, world_name = world
     if sample != "034030":
         raise HarnessError(f"this world's grid isn't a plain 100 m grid ({sample!r}), which isn't supported yet")
-    _result(h.exec(load_sqf("commander_boot.sqf"), "server", timeout=20, strip=False))
+    _result(h.exec(load_commander(), "server", timeout=20, strip=False))
     # A repeat start reuses the running game, so clear the previous attempt's soldiers first.
     _result(h.exec("call brmh_cmd_fnc_clearAll", "server", timeout=10))
     for station in scenario.stations.values():

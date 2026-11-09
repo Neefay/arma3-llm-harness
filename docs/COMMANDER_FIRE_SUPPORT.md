@@ -248,7 +248,7 @@ This gives the classic loop: a first round off by up to the grid's error, the ob
 
 ## 7. How it runs in the game
 
-Server-side, in `commander_boot.sqf`, on a CBA per-frame handler every 0.5 s while any mission is active, and the 2 s step otherwise. Each gun has a small state machine:
+Server-side, in `adapters/commander/` (`machine_fire.sqf`, `fn_stepFire.sqf`), on a CBA per-frame handler every 0.5 s while any mission is active, and the 2 s step otherwise. Each gun has a small state machine:
 
 ```text
 IDLE -> (FIRE_MISSION) -> checks -> AIMING -> FIRING -> DONE -> IDLE

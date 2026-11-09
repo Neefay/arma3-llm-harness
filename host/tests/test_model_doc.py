@@ -8,10 +8,11 @@ import re
 
 import pytest
 
+from arma_harness.adapters import commander_source
 from arma_harness.commander import orders, reports
 from arma_harness.config import REPO_ROOT
 
-SQF = (REPO_ROOT / "host" / "src" / "arma_harness" / "adapters" / "commander_boot.sqf").read_text(encoding="utf-8")
+SQF = commander_source()
 MODEL = (REPO_ROOT / "docs" / "COMMANDER_MODEL.md").read_text(encoding="utf-8")
 
 # Which functions make up each machine, and the patterns that set its state.

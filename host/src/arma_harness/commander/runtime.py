@@ -68,7 +68,7 @@ TRUTH_GROUP_FIELDS = ("group", "side", "able", "down", "mounted", "limping", "le
 CANCELS_A_CHAIN = {"replace", "halt", "mount", "dismount", "chain"}
 AIR_PACE = 60  # m/s, about a Blackfoot's cruise; only for the "minutes out" a pilot gives
 STRIKE_PACE = 125  # m/s, an A-164 out to its run-in point and back in, as flown on Stratis
-RUN_IN_M = 9000  # BRMH_CMD_RUN_IN_M in commander_boot.sqf: where a strike's run starts
+RUN_IN_M = 9000  # BRMH_CMD_RUN_IN_M in adapters/commander/init.sqf: where a strike's run starts
 
 
 def strike_route(start: list, aim: list, heading: float) -> float:

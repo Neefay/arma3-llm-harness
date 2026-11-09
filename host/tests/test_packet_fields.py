@@ -6,10 +6,11 @@ stopped reaching the estimates. These read the game's own code, so a field added
 import re
 from pathlib import Path
 
+from arma_harness.adapters import commander_source
 from arma_harness.commander import runtime
 from arma_harness.config import REPO_ROOT
 
-SQF = (REPO_ROOT / "host" / "src" / "arma_harness" / "adapters" / "commander_boot.sqf").read_text(encoding="utf-8")
+SQF = commander_source()
 HOST = REPO_ROOT / "host" / "src" / "arma_harness" / "commander"
 
 

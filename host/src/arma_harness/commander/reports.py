@@ -1,7 +1,7 @@
 """From perception packets to radio text: rounding, buckets, templates, and deciding what is worth saying.
 
 Pure functions and one small state tracker per station, so all of it can be tested without the game.
-Only fields the group could know arrive here (see adapters/commander_boot.sqf), and only rounded words leave.
+Only fields the group could know arrive here (see adapters/commander/), and only rounded words leave.
 """
 from __future__ import annotations
 

@@ -1030,7 +1030,8 @@ host/src/arma_harness/commander/
   records.py        the commander's text files
   operator.py       the operator's commands and the commander's workspace
   doctrine.md       the commander's instructions, delivered by the MCP server
-host/src/arma_harness/adapters/commander_boot.sqf    monitor, order writer, enemy spawning, truth recorder, observer feeds
+host/src/arma_harness/adapters/commander/          the game side, one file per function (fn_*.sqf) and per machine
+                                                    (machine_*.sqf), with init.sqf and start.sqf; the host joins them
 missions/brmh_commander.VR/                          the village, and the observer slot
 host/tests/test_commander.py                         offline tests, including the fog tests
 host/tests/live_commander.py                         scripted battles on a real game

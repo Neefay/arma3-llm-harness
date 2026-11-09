@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from arma_harness.adapters import commander_source
 from arma_harness.commander import orders, reports, scenario
 from arma_harness.commander.orders import Invalid
 from arma_harness.commander.records import Records
@@ -1696,7 +1697,7 @@ def test_a_squad_leaving_a_fight_cant_get_ahead_of_itself(tmp_path):
 
 def test_no_script_ever_makes_a_shell():
     """Rounds always come from a real gun. Scripted fire is how the mods this was compared with do it."""
-    code = (Path(reports.__file__).parent.parent / "adapters" / "commander_boot.sqf").read_text(encoding="utf-8")
+    code = commander_source()
     assert "doArtilleryFire" in code
     for banned in ("fireSupportVirtual", "BIS_fnc_fireSupport", "Sh_82mm", "Sh_155mm", "Smoke_82mm"):
         assert banned not in code
