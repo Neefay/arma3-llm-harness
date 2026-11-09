@@ -58,9 +58,40 @@ The pilot's contact report names a place relative to the grid he was given, whic
 
 Nobody but an observer reports what the strike hit, as with fire missions. Observers (`spotter: true`) report impacts on the enemy they see.
 
+## What the established codebases do (read 2026-11-09)
+
+Antistasi, BromA, ACE3, LambsDanger and CBA were read for how they make an AI aircraft attack. LambsDanger and CBA have nothing for it. The rest, by how much of the attack is left to the engine:
+
+| Mechanism | Where | Flight | Firing | Aim or guidance | Takes a bare grid |
+|---|---|---|---|---|---|
+| SAD over the area, with enemies revealed by a spotting check | Antistasi UAV support | engine | engine | engine | only if something is there |
+| Flight through the grid on waypoints, weapons released on a timer | Antistasi airstrike | engine | script | none (Antistasi spawns the bombs; real pylon bombs would work) | yes |
+| A real missile steered to a position | Antistasi SEAD | engine | script | engine, with `setMissileTargetPos`, on a patched ammo class (`manualControl = 1`) | yes |
+| ACE guided bombs on a virtual laser or a GPS aim point | ACE3 `missileguidance`, `laser` | not covered | not covered | ACE steers the real bomb; no designator unit needed | yes |
+| Plane flown on rails at the point, firing every weapon | BromA `fn_cas.sqf` (a copy of Arma's CAS module), Antistasi CAS and dive runs | script | script | the nose points at it; Antistasi also re-aims each round | yes |
+
+What this corrects in the spikes above:
+
+- **Guided weapons can be steered to a grid.** The spike's GBU-12s and Mavericks ignored `setMissileTarget` and `setMissileTargetPos` most likely because vanilla ammo has no `manualControl`. Antistasi patches its HARM with exactly that, then steers it to a position. A config patch needs an addon, not a mission, and the harness has one (`@brmh`). This still needs a spike to confirm for a GBU-12.
+- **ACE can guide a released bomb onto a point** with its own GBU-12 or SDB loaded on the pylons. Either a virtual laser emitter registered by script (no unit designating), or the GPS aim point. That only works where ACE is loaded: the Stratis profile has a `commander_stratis_ace` variant.
+- **A laser spot can be kept alive.** BromA resets its position every few seconds, because the engine deletes one nobody designates.
+
+### Options
+
+1. **Engine CAS with a spotting check.** A SAD waypoint over the grid, as now. Each cycle the pilot gets a fair chance to spot enemies near the grid: line of sight from the aircraft, then a chance by distance and cover, as Antistasi models it. Those he spots are revealed to him. Flight, firing and aim stay the engine's own; only the pilot's search is modelled. It would fix the prone-infantry problem honestly, by giving the pilot a search instead of telling him where they are. An empty grid still gets no attack.
+2. **A strike on coordinates.** The aircraft flies through the grid on ordinary waypoints, and the script releases real pylon weapons at a computed point. Choose one:
+   - a) ACE guided bombs, steered by a virtual laser or a GPS point at the grid;
+   - b) a patched ammo class with `manualControl`, steered by `setMissileTargetPos`;
+   - c) unguided bombs, landing where the release puts them.
+
+   Only the release timing is scripted, plus the guidance target in a) and b). That's roughly what a pilot does with a grid-only fire mission.
+3. **Avoid:** flying the plane on rails, or spawning bombs under it. Either replaces the aircraft's own flight or weapons with script.
+
+My recommendation is 1 for close support, where the pilot attacks what he finds, and 2a or 2b for "bomb this grid". They'd be two order types, or two modes of `CAS`.
+
 ## Questions for the owner
 
-1. **A bare-grid strike.** It isn't possible with unscripted AI. The options are:
+1. **A bare-grid strike.** It isn't possible with unscripted AI. The options above replace my earlier (a) to (c). The options are:
    - (a) `SAD` only. The pilot needs to see something.
    - (b) A real laser from a real unit: a JTAC station with a designator lases the grid. This needs another spike, to check that AI pilots attack a laser held by a unit.
    - (c) A computed release point for unguided bombs. The release is scripted; the bomb and its errors are real.
