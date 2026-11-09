@@ -916,6 +916,16 @@ brmh_cmd_fnc_noticeNearby = {
 	} forEach (_soldier nearEntities ["CAManBase", 10]);
 };
 
+// A building's positions a soldier can be sent to without falling. On VR's cargo tower, men sent to the positions 13 to
+// 18 m up fell off and broke their legs, five of eight in five minutes, and one died. The ones left out still count, so a
+// building with any is reported checked, but not all of it: nobody has looked up there.
+brmh_cmd_fnc_safePositions = {
+	params ["_building"];
+	(_building buildingPos -1) select {
+		(_x # 2) <= 10
+	}
+};
+
 // AI won't enter buildings to look for enemies it can't see, so soldiers are walked through every position in turn.
 // A position only counts once someone has stood on it: AI can't get into some buildings at all (a cargo house's floor is
 // up a step, and they stop 3 m outside), and a building nobody got into mustn't be reported as checked.
@@ -994,7 +1004,7 @@ brmh_cmd_fnc_stepClearing = {
 				(_group getVariable ["brmh_cmd_ruined", []]) pushBack (_next # 0);
 			} else {
 				_group setVariable ["brmh_cmd_clearCurrent", _next # 0];
-				_group setVariable ["brmh_cmd_clearSpots", _building buildingPos -1];
+				_group setVariable ["brmh_cmd_clearSpots", [_building] call brmh_cmd_fnc_safePositions];
 				_group setVariable ["brmh_cmd_clearReached", 0];
 				_group setVariable ["brmh_cmd_clearOf", count (_building buildingPos -1)];
 				{
@@ -1480,7 +1490,7 @@ brmh_cmd_fnc_probePositions = {
 			hideObjectGlobal _man;
 			// Those for one building set off a few seconds apart, so they don't jam its doorway.
 			brmh_cmd_probeWalkers pushBack (createHashMapFromArray [["MAN", _man], ["HOUSE", _house], ["SPOT", _x], ["START", time + 4 * _forEachIndex], ["BEST", 1e9], ["GAIN", time + 4 * _forEachIndex]]);
-		} forEach (_house buildingPos -1);
+		} forEach ([_house] call brmh_cmd_fnc_safePositions);
 	} forEach (nearestObjects [_centre + [0], ["House"], _radius] select {
 		count (_x buildingPos -1) > 0
 	});
@@ -1648,7 +1658,7 @@ brmh_cmd_fnc_spawnEnemy = {
 		private _spots = +_reachable;
 		if (_spots isEqualTo []) then {
 			{
-				_spots append (_x buildingPos -1);
+				_spots append ([_x] call brmh_cmd_fnc_safePositions);
 			} forEach nearestObjects [_centre, ["House"], _radius];
 		};
 		{
