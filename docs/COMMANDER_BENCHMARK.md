@@ -69,6 +69,12 @@ The rules that make runs comparable:
 
 ## 4. Running one battle
 
+To see every scenario, with the benchmark's first and their seeds:
+
+```powershell
+& "C:\projects\otherrma-harness\host\.venv\Scriptsrma-harness.exe" commander list
+```
+
 1. **Set it up.** This boots the game if it isn't running, places everything, and prints the launch command:
 
    ```powershell

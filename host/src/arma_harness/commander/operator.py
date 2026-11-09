@@ -253,6 +253,36 @@ def _wait_for_buildings(h: Harness, at: list[float], radius: float, timeout: flo
     raise HarnessError(f"no enterable buildings within {radius} m of {at} to garrison")
 
 
+def list_scenarios() -> str:
+    """Every scenario, one line each: the benchmark's first with their seeds, then the harness's own test battles."""
+    import yaml
+
+    folder = scenario_mod.SCENARIO_DIR
+    plan = yaml.safe_load((folder / "benchmark.yaml").read_text(encoding="utf-8")).get("scenarios") or {}
+    rows: dict[bool, list[tuple[str, ...]]] = {True: [], False: []}
+    for file in sorted(folder.glob("*.yaml")):
+        if file.stem == "benchmark":
+            continue
+        raw = yaml.safe_load(file.read_text(encoding="utf-8")) or {}
+        mission = str(raw.get("mission", ""))
+        where = ("Stratis" if "stratis" in mission else "VR") + (" (ACE)" if mission.endswith("_ace") else "")
+        objective = " ".join(str(raw.get("objective") or raw.get("text") or "").split())
+        if len(objective) > 70:
+            objective = objective[:67].rstrip() + "..."
+        seeds = ", ".join(str(seed) for seed in plan.get(file.stem, {}))
+        rows[file.stem in plan].append((file.stem, where, str(raw.get("time_limit", "")), objective,
+                                        f"seeds {seeds}" if seeds else ""))
+    widths = [max(len(row[i]) for row in rows[True] + rows[False]) for i in range(5)]
+
+    def lines(found: list[tuple[str, ...]]) -> list[str]:
+        return ["  " + "  ".join(cell.ljust(width) for cell, width in zip(row, widths, strict=True)).rstrip()
+                for row in found]
+
+    return "\n".join(["Benchmark (play each model on the same seeds; docs/COMMANDER_BENCHMARK.md)",
+                      *lines(rows[True]), "", "Harness tests", *lines(rows[False]), "",
+                      "Start one with: arma-harness commander start <name> [--seed N]"])
+
+
 def _read_raw(path: str) -> dict:
     import yaml
 

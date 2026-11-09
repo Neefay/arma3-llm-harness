@@ -940,6 +940,7 @@ The harness alone judges end conditions, and the commander learns the result onl
 These run on the normal harness, separate from the commander's tools, and may reveal anything:
 
 ```text
+arma-harness commander list                                      every scenario, the benchmark's first with their seeds
 arma-harness commander start <scenario> [--mode hold|deliver]    set up a battle; repeating it reuses the running game
 arma-harness commander status                                    state, pending wakes, "no wake scheduled", turn counts
 arma-harness commander aar                                       radio, turns, timers and true positions on one timeline

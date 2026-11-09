@@ -3,7 +3,7 @@ says, so every model is compared on the same situations, and an edit that would 
 import pytest
 import yaml
 
-from arma_harness.commander import scenario
+from arma_harness.commander import operator, scenario
 from arma_harness.commander.operator import _read_raw
 from arma_harness.config import REPO_ROOT
 
@@ -24,3 +24,12 @@ def test_each_benchmark_scenario_loads_and_has_six_seeds(name):
     assert loaded.mission and loaded.time_limit_s > 0 and loaded.objectives
     assert resolved.get("success") and resolved.get("failure"), "a benchmark battle needs a way to win and to lose"
     assert len(PLAN["scenarios"][name]) == 6
+
+
+def test_the_list_puts_the_benchmark_first_with_its_seeds():
+    listing = operator.list_scenarios()
+    benchmark, tests = listing.split("Harness tests")
+    for name, seeds in PLAN["scenarios"].items():
+        line = next(row for row in benchmark.splitlines() if row.strip().startswith(name + " "))
+        assert line.endswith("seeds " + ", ".join(str(seed) for seed in seeds)), line
+    assert "take_the_village" in tests and "llm_" not in tests and "benchmark " not in listing

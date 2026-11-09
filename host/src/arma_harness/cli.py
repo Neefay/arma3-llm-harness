@@ -107,7 +107,8 @@ def main(argv: list[str] | None = None) -> int:
     sc.add_argument("path")
     sc.add_argument("--keep-running", action="store_true")
     co = sub.add_parser("commander", help="set up, watch and review a commander battle (docs/COMMANDER.md)")
-    co.add_argument("action", choices=["start", "status", "aar", "review", "compare", "site", "stop", "check-lockdown"])
+    co.add_argument("action", choices=["list", "start", "status", "aar", "review", "compare", "site", "stop",
+                                       "check-lockdown"])
     co.add_argument("scenario", nargs="?", help="start: scenario name in scenarios/commander/, or a path; compare: "
                                                 "every finished battle of this scenario")
     co.add_argument("--mode", choices=["hold", "deliver"], help="what happens to messages during a turn")
@@ -215,6 +216,8 @@ def _commander(h: Harness, a):
     from .commander import operator
 
     match a.action:
+        case "list":
+            return operator.list_scenarios()
         case "start":
             if not a.scenario:
                 raise ValueError("commander start needs a scenario name")
