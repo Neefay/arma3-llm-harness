@@ -4,6 +4,7 @@ from __future__ import annotations
 import io
 import json
 import math
+import re
 import time
 from pathlib import Path
 
@@ -29,6 +30,7 @@ from arma_harness.commander.server import (
 from arma_harness.commander.wake import DELIVER, HOLD, WakeLogic
 from arma_harness.config import REPO_ROOT, Home
 from arma_harness.harness import HarnessError
+from arma_harness.sqf import strip_comments
 
 
 @pytest.fixture(autouse=True)
@@ -1693,6 +1695,16 @@ def test_a_squad_leaving_a_fight_cant_get_ahead_of_itself(tmp_path):
     b.advance(200, contacts=[], suppression=0)
     words = radio_words(b)
     assert words.index("Shot, 6 rounds, splash in about 30 seconds.") < words.index("Rounds complete.")
+
+
+def test_the_game_side_broadcasts_by_named_event_never_remote_exec():
+    """remoteExec would need a CfgRemoteExec whitelist in every mission the harness attaches to. @brmh handles the named
+    events instead (BRMH_fnc_commanderEvents), and every event raised has a handler there."""
+    code = strip_comments(commander_source())
+    assert "remoteExec" not in code
+    handlers = (REPO_ROOT / "addons" / "main" / "functions" / "fn_commanderEvents.sqf").read_text(encoding="utf-8")
+    raised = set(re.findall(r'\["(brmh_cmd_\w+)", .*?\] call CBA_fnc_globalEvent', code))
+    assert raised and raised <= set(re.findall(r'\["(brmh_cmd_\w+)", \{', handlers)), raised
 
 
 def test_no_script_ever_makes_a_shell():

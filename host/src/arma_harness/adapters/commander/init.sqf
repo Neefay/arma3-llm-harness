@@ -36,6 +36,12 @@ if (isNil "brmh_cmd_treats") then {
 	brmh_cmd_treats = [];
 };
 // Strikes: how far out a guided bomb is released, and the drag of the engine's unguided bombs (docs/COMMANDER_CAS.md).
+// The game side's own diagnostics (brmh_cmd_fnc_log): the least level written to the RPT, and whether warnings and
+// errors also go to the observers' chat. Kept across battles, so they can be set by hand on a running game.
+if (isNil "BRMH_CMD_LOG_LEVEL") then {
+	BRMH_CMD_LOG_LEVEL = "INFO";
+	BRMH_CMD_LOG_SCREEN = false;
+};
 BRMH_CMD_GUIDED_RELEASE_M = 2400;
 BRMH_CMD_BOMB_DRAG = 0.000225;
 BRMH_CMD_BOMB_TURN = 6.9;

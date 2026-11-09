@@ -38,7 +38,7 @@ private _MachineDeclaration = [
 		} forEach (_spec getOrDefault ["STATES", []]);
 		_spec set ["STATES", _states];
 		{
-			diag_log format ["[Commander] Error: machine %1: %2", _spec getOrDefault ["KIND", "?"], _x];
+			["Machines", "ERROR", "machine %1: %2", [_spec getOrDefault ["KIND", "?"], _x]] call brmh_cmd_fnc_log;
 		} forEach ([_spec] call brmh_cmd_fnc_machineProblems);
 		_self set ["SPEC", _spec];
 		{

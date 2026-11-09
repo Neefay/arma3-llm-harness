@@ -30,6 +30,9 @@ class CfgFunctions {
 			class bridgeCall {};
 			class register {};
 			class guiText {};
+			class commanderEvents {
+				postInit = 1;
+			};
 		};
 	};
 };
