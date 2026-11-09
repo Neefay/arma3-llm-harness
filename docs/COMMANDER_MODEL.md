@@ -298,6 +298,11 @@ Each machine as it is held in the code. A quoted state is the code's own string.
 
 ### Game side
 
+Every game-side machine that steps is declared for one runner, `brmh_cmd_fnc_newMachine`: carry, treat, post, sortie, strike, fire, boarding, clearing, placing and cba-task. Each declaration is plain data: states, `[guard, action, next, word]` transitions, a deadline or `STANDING` for each state, and a release step. Moving them to another state-machine library is then a translation. Two kinds of machine aren't declared:
+
+- **Custody and busy** are flags on a man (`brmh_cmd_handled`, `brmh_cmd_busy`). A carry or a treat sets them when it starts and clears them when it ends, so they need no runner of their own.
+- **Battle** and the machines below it run in the host, in Python.
+
 <!-- machine: carry -->
 ```mermaid
 stateDiagram-v2
@@ -307,22 +312,20 @@ stateDiagram-v2
   state "carrying" as carrying
   state "working" as working
   state "loading" as loading
-  state "done" as done
   [*] --> going: CARRY
   going --> going: next approach
   going --> lifting: reached
   going --> fetching: closest reachable
-  going --> done: unreachable
+  going --> [*]: unreachable (can't reach him)
   fetching --> lifting: 8 s
-  lifting --> carrying: 9 s
+  lifting --> carrying: 9 s (carrying)
   carrying --> loading: at vehicle
   carrying --> working: stalled within 60 m
-  carrying --> done: at place, or stalled beyond 60 m
+  carrying --> [*]: at place (carried), or stalled beyond 60 m (stuck)
   working --> loading: 8 s, to a vehicle
-  working --> done: 8 s, to a place
-  loading --> done: aboard, or 5 s
-  done --> [*]
-  note right of done: from any state but loading, on carrier down, casualty dead or up, or superseded
+  working --> [*]: 8 s, to a place (placed)
+  loading --> [*]: aboard (loaded), or 5 s (couldn't load him)
+  note right of loading: from any state, carrier down, casualty dead or up; from any but loading, superseded (left, put down)
 ```
 
 <!-- machine: treat -->
