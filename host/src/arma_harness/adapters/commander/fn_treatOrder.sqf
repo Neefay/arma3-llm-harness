@@ -8,7 +8,7 @@
 		2 - Who: [[man key, place], ...], or nobody for everyone down within 100 m (ARRAY)
 	ENVIRONMENT: Server
 */
-params ["_group", "_order", "_who"];
+params [["_group", grpNull, [grpNull]], ["_order", "", [""]], ["_who", [], [[]]]];
 private _medics = (units _group) select {
 	[_x] call brmh_cmd_fnc_able and {
 		[_x] call brmh_cmd_fnc_isMedic

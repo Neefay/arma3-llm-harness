@@ -8,7 +8,7 @@
 		3 - Vehicle's key (STRING)
 	ENVIRONMENT: Server
 */
-params ["_group", "_order", "_who", "_key"];
+params [["_group", grpNull, [grpNull]], ["_order", "", [""]], ["_who", [], [[]]], ["_key", "", [""]]];
 private _vehicle = brmh_cmd_vehicles getOrDefault [_key, objNull];
 if (isNull _vehicle or {
 	not alive _vehicle

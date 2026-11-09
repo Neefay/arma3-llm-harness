@@ -7,7 +7,7 @@
 		2 - Position (ARRAY)
 	ENVIRONMENT: Server
 */
-params ["_group", "_order", "_at"];
+params [["_group", grpNull, [grpNull]], ["_order", "", [""]], ["_at", [], [[]], [2, 3]]];
 if (alive (_group getVariable ["brmh_cmd_post", objNull]) or {
 	(brmh_cmd_builds findIf {
 		(_x get "GROUP") isEqualTo _group and {

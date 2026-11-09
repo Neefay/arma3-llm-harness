@@ -4,6 +4,9 @@
 	PARAMETERS:
 		0 - Group (GROUP)
 		1 - Position (ARRAY)
+	USAGE:
+		[_group, [2500, 1500]] call brmh_cmd_fnc_holdAir;
+	RETURNS: Nothing
 	ENVIRONMENT: Server
 */
 params [["_group", grpNull, [grpNull]], ["_at", [], [[]], [2, 3]]];

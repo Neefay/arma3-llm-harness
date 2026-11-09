@@ -1032,6 +1032,8 @@ host/src/arma_harness/commander/
   doctrine.md       the commander's instructions, delivered by the MCP server
 host/src/arma_harness/adapters/commander/          the game side, one file per function (fn_*.sqf) and per machine
                                                     (machine_*.sqf), with init.sqf and start.sqf; the host joins them
+tools/lint_commander.py                              lints the game side with HEMTT, which doesn't see it otherwise
+addons/main/functions/fn_commanderEvents.sqf         @brmh's handlers for the game side's broadcasts (pose, observer chat)
 missions/brmh_commander.VR/                          the village, and the observer slot
 host/tests/test_commander.py                         offline tests, including the fog tests
 host/tests/live_commander.py                         scripted battles on a real game

@@ -11,7 +11,7 @@
 	RETURNS: The carry (HASHMAP). "state" ends as "done", and "result" says how
 	ENVIRONMENT: Server
 */
-params ["_medic", "_casualty", "_to", ["_group", grpNull], ["_order", ""]];
+params [["_medic", objNull, [objNull]], ["_casualty", objNull, [objNull]], ["_to", [], [[], objNull]], ["_group", grpNull, [grpNull]], ["_order", "", [""]]];
 {
 	_x forceSpeed -1;
 } forEach [_medic, _casualty];

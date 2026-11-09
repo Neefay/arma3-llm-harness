@@ -6,7 +6,7 @@
 		0 - Group (GROUP)
 	ENVIRONMENT: Server
 */
-params ["_group"];
+params [["_group", grpNull, [grpNull]]];
 {
 	if ((_x get "GROUP") isEqualTo _group and {
 		not ((_x get "STATE") in ["loading", ""])

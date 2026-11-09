@@ -9,7 +9,7 @@
 		3 - Radius, metres (NUMBER)
 	ENVIRONMENT: Server
 */
-params ["_group", "_order", "_aim", "_radius"];
+params [["_group", grpNull, [grpNull]], ["_order", "", [""]], ["_aim", [], [[]], [2, 3]], ["_radius", 150, [0]]];
 private _vehicle = vehicle leader _group;
 {
 	if ((_x get "GROUP") isEqualTo _group and {

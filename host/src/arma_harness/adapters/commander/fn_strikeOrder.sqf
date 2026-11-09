@@ -7,9 +7,12 @@
 		2 - Grid centre [x, y] (ARRAY)
 		3 - Bombs to drop, 1 to 4 (NUMBER)
 		4 - Run-in heading in degrees, or -1 for straight from where the aircraft is (NUMBER)
+	USAGE:
+		[_group, "O-0004", [3750, 2450], 2, 0] call brmh_cmd_fnc_strikeOrder;
+	RETURNS: Nothing
 	ENVIRONMENT: Server
 */
-params ["_group", "_order", "_aim", "_bombs", "_heading"];
+params [["_group", grpNull, [grpNull]], ["_order", "", [""]], ["_aim", [], [[]], [2, 3]], ["_bombs", 1, [0]], ["_heading", -1, [0]]];
 private _vehicle = vehicle leader _group;
 {
 	if ((_x get "GROUP") isEqualTo _group and {

@@ -30,7 +30,7 @@ brmh_cmd_probeWalkers = [];
 		brmh_cmd_probeWalkers pushBack (createHashMapFromArray [["MAN", _man], ["HOUSE", _house], ["SPOT", _x], ["START", time + 4 * _forEachIndex], ["BEST", 1e9], ["GAIN", time + 4 * _forEachIndex]]);
 	} forEach ([_house] call brmh_cmd_fnc_safePositions);
 } forEach (nearestObjects [_centre + [0], ["House"], _radius] select {
-	count (_x buildingPos -1) > 0
+	(_x buildingPos -1) isNotEqualTo []
 });
 if (not isNil "brmh_cmd_probePfh") then {
 	[brmh_cmd_probePfh] call CBA_fnc_removePerFrameHandler;

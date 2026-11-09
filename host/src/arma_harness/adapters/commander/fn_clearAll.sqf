@@ -1,3 +1,14 @@
+/*
+	NAME: brmh_cmd_fnc_clearAll
+	DESCRIPTION: Ends a battle on a running game, so the next can start clean: every machine called off, and whatever the
+		harness made deleted (stations, enemies, its vehicles, the dead and the observers' markers). A vehicle the mission
+		placed itself stays. Operator action, never reachable by the commander.
+	PARAMETERS: None
+	USAGE:
+		call brmh_cmd_fnc_clearAll;
+	RETURNS: true
+	ENVIRONMENT: Server, unscheduled
+*/
 {
 	_x call ["#END", ["called off"]];
 } forEach brmh_cmd_carries;

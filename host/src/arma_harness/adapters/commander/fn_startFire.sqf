@@ -8,7 +8,7 @@
 		2 - [gun keys, [x, y], "HE" or "SMOKE", rounds, radius] (ARRAY)
 	ENVIRONMENT: Server
 */
-params ["_group", "_order", "_leg"];
+params [["_group", grpNull, [grpNull]], ["_order", "", [""]], ["_leg", [], [[]], 5]];
 _leg params ["_keys", "_aim", "_word", "_want", "_radius"];
 private _guns = [_group, _keys] call brmh_cmd_fnc_gunsOf;
 private _missions = [];

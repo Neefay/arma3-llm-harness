@@ -1,4 +1,15 @@
-// Puts men down, as if hit, for a scenario that wants casualties without a fight. Not the leader. Operator action.
+/*
+	NAME: brmh_cmd_fnc_knockDown
+	DESCRIPTION: Puts men of a station down, as if hit, for a scenario that wants casualties without a fight. Never its
+		leader. Needs ACE's medical system. Operator action.
+	PARAMETERS:
+		0 - Callsign (STRING)
+		1 - (OPTIONAL) How many (NUMBER) - Default: 1
+	USAGE:
+		["Alpha", 2] call brmh_cmd_fnc_knockDown;
+	RETURNS: true
+	ENVIRONMENT: Server
+*/
 params [["_callsign", "", [""]], ["_count", 1, [0]]];
 private _group = brmh_cmd_stations getOrDefault [_callsign, grpNull];
 private _men = (units _group) select {

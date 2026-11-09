@@ -27,7 +27,7 @@ for "_j" from 0 to _n - 1 do {
 		private _at = [_x0 + (_i + 0.5) * _step, _y0 + (_j + 0.5) * _step];
 		_cells pushBack [
 			round getTerrainHeightASL _at,
-			[0, 1] select (surfaceIsWater _at),
+			parseNumber (surfaceIsWater _at),
 			count (nearestTerrainObjects [_at, ["TREE", "SMALL TREE"], _step / 2, false, true]),
 			count (nearestTerrainObjects [_at, ["BUSH"], _step / 2, false, true])
 		];

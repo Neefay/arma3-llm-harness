@@ -10,7 +10,7 @@
 		3 - To: a position, or a vehicle's key (ARRAY or STRING)
 	ENVIRONMENT: Server
 */
-params ["_group", "_order", "_who", "_to"];
+params [["_group", grpNull, [grpNull]], ["_order", "", [""]], ["_who", [], [[]]], ["_to", [], [[], ""]]];
 private _target = if (_to isEqualType "") then {
 	brmh_cmd_vehicles getOrDefault [_to, objNull]
 } else {

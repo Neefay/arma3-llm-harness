@@ -10,4 +10,4 @@ private _at = brmh_cmd_builds findIf {
 if (_at < 0) exitWith {
 	-1
 };
-[0, 1] select (((brmh_cmd_builds # _at) get "STATE") isEqualTo "placed")
+parseNumber (((brmh_cmd_builds # _at) get "STATE") isEqualTo "placed")
