@@ -185,8 +185,8 @@ def contact_phrase(group: dict, buildings: list[dict] | None = None, known: set 
                                 key=lambda one: (len(one), one)))
              for kind in kinds]
     if group.get("from_grid"):
-        place = ("on your grid" if group["range"] < 50 else
-                 f"{rough_range(group['range'])} {compass(*group['offset'])} of your grid")
+        place = ("on the target grid" if group["range"] < 50 else
+                 f"{rough_range(group['range'])} {compass(*group['offset'])} of the target grid")
         words = f"{' and '.join(parts)}, {place}"
     else:
         bearing = spoken_bearing(*group["offset"], group["accuracy_m"])
@@ -1065,7 +1065,7 @@ def _splash_words(rows: list[dict], packet: dict) -> str:
         bearing = spoken_bearing(ref[0] - packet["pos"][0], ref[1] - packet["pos"][1], enemy.get("accuracy_m", 0))
         name = f"the enemy at {bearing}"
     else:
-        ref, name = rows[0]["aim"], "your grid"
+        ref, name = rows[0]["aim"], "the target grid"
     north, east = _offset(y - ref[1]), _offset(x - ref[0])
     parts = []
     if north:
@@ -1085,7 +1085,7 @@ def _mission_words(row: list, packet: dict) -> str | None:
     if state == "out":
         return f"Out of {word}, {fired} of {want} fired."
     if state == "holding":
-        return "Holding, weapons tight. Mission waiting."
+        return "Delay on the gun, mission still on."
     if state == "cantlay":
         return "Unable, can't lay on that target."
     if state == "gunner":

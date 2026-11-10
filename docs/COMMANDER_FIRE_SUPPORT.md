@@ -204,7 +204,7 @@ Gunner down on V1.                      (his own squad knows at once)
 Copy, fire mission, 6 HE at grid 041 041.
 Shot, 6 rounds, splash in about 30 seconds.
 Rounds complete. 26 HE left.
-Holding, weapons tight. Mission waiting.    (currentCommand is FIRE AT POSITION, nothing fired after 8 s)
+Delay on the gun, mission still on.    (currentCommand is FIRE AT POSITION, nothing fired after 8 s)
 Unable, out of range.
 Unable, can't lay on that target.           (unitReady, all checks passed, and nothing fired after 10 s)
 Unable, no gunner on V1.                    (when the order names V1)

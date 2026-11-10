@@ -1646,7 +1646,7 @@ def test_a_short_mission_still_says_shot_before_it_says_done():
     (mission("unable", reason="no gun", gun=""), "Unable, no gun crewed."),
     (mission("unable", reason="destroyed"), "Unable, V1 is destroyed."),
     (mission("cantlay"), "Unable, can't lay on that target."),
-    (mission("holding"), "Holding, weapons tight. Mission waiting."),
+    (mission("holding"), "Delay on the gun, mission still on."),
 ])
 def test_every_way_a_mission_can_fail_is_said_aloud(row, words):
     tracker = Tracker()
@@ -1718,7 +1718,7 @@ def test_no_script_ever_makes_a_shell():
 def test_holding_then_firing_is_each_reported_once():
     tracker = Tracker()
     tracker.order = "O-1"
-    assert firing_at(tracker, mission("holding")) == ["Holding, weapons tight. Mission waiting."]
+    assert firing_at(tracker, mission("holding")) == ["Delay on the gun, mission still on."]
     assert firing_at(tracker, mission("holding"), 2) == []
     assert firing_at(tracker, mission(fired=1), 4) == ["Shot, 6 rounds, splash in about 30 seconds."]
 
@@ -1868,7 +1868,7 @@ def test_a_commanders_observer_calls_the_fall_of_shot_against_the_grid(tmp_path)
     b.advance(114, order="O-0001")
     assert not [w for w in latest(b) if "Splash" in w]
     b.advance(118, order="O-0001")
-    assert "Splash 20 m south, 50 m east of your grid. 2 rounds seen." in latest(b)
+    assert "Splash 20 m south, 50 m east of the target grid. 2 rounds seen." in latest(b)
 
 
 def test_an_observer_calls_against_the_enemy_it_can_see(tmp_path):
@@ -1886,7 +1886,7 @@ def test_an_observer_can_be_dead_on(tmp_path):
     b.runtime.order({"to": "Alpha", "legs": [{"type": "FIRE_MISSION", "at": "030 030", "observer": "Alpha"}]})
     land(b, 110, pos=(3052, 3047), order="O-0001", seen=True)
     b.advance(115, order="O-0001")
-    assert "Splash on your grid. 1 round seen." in latest(b)
+    assert "Splash on the target grid. 1 round seen." in latest(b)
 
 
 def test_offsets_are_called_by_eye():
@@ -1944,7 +1944,7 @@ def test_impact_reports_survive_a_restart_of_the_host(tmp_path):
     b.runtime = b.new_runtime()
     assert b.runtime.trackers["Alpha"].spotter is True and b.runtime.fire_orders["O-0001"]["observer"] == "Alpha"
     b.advance(116, order="O-0001")
-    assert "Splash on your grid. 1 round seen." in latest(b)
+    assert "Splash on the target grid. 1 round seen." in latest(b)
 
 
 def test_the_mortar_scenario_is_a_real_battle():

@@ -45,9 +45,9 @@ CAS  at: <grid, 6 or 8 figures>  radius: <m, default 150>  [weapons: GUN | ROCKE
 |---|---|
 | Accepted | "Hawg, copy, grid 037 024, about 2 minutes out." |
 | Over the grid | "Hawg, over the grid, looking." |
-| Engaging | "Hawg, engaging, a vehicle 60 m east of your grid." |
+| Engaging | "Hawg, engaging, a vehicle 60 m east of the target grid." |
 | Weapons | "Hawg, guns." / "Rockets away." / "Bombs away." |
-| Nothing seen | "Hawg, nothing seen around your grid, returning to hold." |
+| Nothing seen | "Hawg, nothing seen around grid 037 024, returning to hold." |
 | Done | "Hawg, off target, returning to hold." |
 | Out of ammunition | "Hawg, Winchester." |
 | Hit | "Hawg, taking fire." Lost aircraft: silence, as for any lost station. |

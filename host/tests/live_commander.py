@@ -430,7 +430,7 @@ def play_fire(client: Client) -> list[str]:
     # Weapons tight: it holds and says so, and goes when released. BLUE can't stop what's already running.
     client.tool("commander_order", to="Hammer", legs=[{"type": "POSTURE"}], combat_mode="GREEN")
     fire(at="028 020", ammo="SMOKE", rounds=1)
-    hear("Holding, weapons tight.", 40)
+    hear("Delay on the gun", 40)
     client.tool("commander_order", to="Hammer", legs=[{"type": "POSTURE"}], combat_mode="YELLOW")
     hear("2 SMOKE left", 60)
 
@@ -462,7 +462,7 @@ def play_fire(client: Client) -> list[str]:
     time.sleep(35)  # let the dust of the checked mission settle
     fire(at="028 020", rounds=1, observer="Recon")
     text = hear("seen.", 90)
-    assert "of your grid. 1 round seen." in text or "Splash on your grid" in text, text[-500:]
+    assert "of the target grid. 1 round seen." in text or "Splash on the target grid" in text, text[-500:]
     fire(at="0298 0205", rounds=1)
     hear("Under indirect fire, explosions about", 90)
 

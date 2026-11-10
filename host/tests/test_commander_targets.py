@@ -122,7 +122,7 @@ def test_a_pilot_gives_contacts_from_the_grid_he_was_sent_to(tmp_path):
     infantry = {"pos": [3850.0, 2550.0], "kind": "infantry", "age_s": 1.0, "accuracy_m": 5}
     heard = settle(b, 102, callsign="Hawg", pos=[2550.0, 1850.0], contacts=[infantry])
     contact = next(line for line in heard if line.startswith("Contact,"))
-    assert "one infantry, roughly 150 metres north-east of your grid" in contact, contact
+    assert "one infantry, roughly 150 metres north-east of the target grid" in contact, contact
     assert "bearing" not in contact
 
 
