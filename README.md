@@ -7,7 +7,8 @@ Drive and observe Arma 3 from LLM agents and scripts. The harness is a standard 
 - take in-engine screenshots (GUI included) and terrain maps;
 - talk to the agent from in-game chat and have it act on the world ([demo](docs/DEMO.md));
 - hot-reload mission code;
-- run declarative test scenarios.
+- run declarative test scenarios;
+- let an LLM command AI squads by radio, under fog of war, and score how it does ([commander mode](#commander-mode)).
 
 Agents get their instructions from [`AGENTS.md`](AGENTS.md): rules, where code runs, the chat loop and tested recipes.
 
@@ -231,6 +232,24 @@ steps:
   - `selftest`: the harness itself, on the bundled mission;
   - `attached_check`: certifies whatever game is attached or running;
   - `boot`, `timeout_round`, `all_targets` and `jip`: the rounds framework's seed scenarios, which need a `rounds_framework` profile.
+
+## Commander mode
+
+An LLM commands AI squads in a battle it can't see. It knows only what its squads report by radio, as bearings and rough ranges, and orders them by grid, marker or building id: moves, building clearing, vehicles, fire missions, air support and casualty care. The harness scores each battle and replays it afterwards, the commander's picture beside the truth. It runs on a Claude Code subscription, through a locked-down session with its own MCP server.
+
+```powershell
+host\.venv\Scripts\arma-harness.exe commander list                                # every scenario
+host\.venv\Scripts\arma-harness.exe commander start llm_hidden_gun --seed 116     # set one up; it prints the launch command
+host\.venv\Scripts\arma-harness.exe commander compare llm_hidden_gun              # afterwards, battles side by side
+```
+
+| Doc | What's in it |
+|---|---|
+| [COMMANDER_BENCHMARK.md](docs/COMMANDER_BENCHMARK.md) | Running battles with real LLMs, the fixed seeds, and reading the scores |
+| [COMMANDER.md](docs/COMMANDER.md) | The design: turns and waking, orders, reports, the fog, operating a battle |
+| [COMMANDER_MODEL.md](docs/COMMANDER_MODEL.md) | The formal model, its order table and state charts (tested against the code) |
+| [COMMANDER_SCENARIOS.md](docs/COMMANDER_SCENARIOS.md) | Scenarios that test the commander's judgement |
+| [COMMANDER_FIRE_SUPPORT.md](docs/COMMANDER_FIRE_SUPPORT.md), [COMMANDER_CASEVAC.md](docs/COMMANDER_CASEVAC.md), [COMMANDER_CAS.md](docs/COMMANDER_CAS.md) | Fire missions, casualties, and air support: designs and engine findings |
 
 ## Tests
 

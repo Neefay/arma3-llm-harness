@@ -4,6 +4,8 @@
 
 **Audience:** developers and agents building or reviewing this feature. Read [ARCHITECTURE.md](ARCHITECTURE.md) first for how the harness itself works. [COMMANDER_MODEL.md](COMMANDER_MODEL.md) gives the abstract model: what kinds of thing exist, and which rules follow from them.
 
+**The other commander docs:** [COMMANDER_BENCHMARK.md](COMMANDER_BENCHMARK.md) for running and scoring battles with real LLMs; [COMMANDER_SCENARIOS.md](COMMANDER_SCENARIOS.md) for the scenarios that test judgement; [COMMANDER_FIRE_SUPPORT.md](COMMANDER_FIRE_SUPPORT.md), [COMMANDER_CASEVAC.md](COMMANDER_CASEVAC.md) and [COMMANDER_CAS.md](COMMANDER_CAS.md) for fire missions, casualties and air support. The commander's own instructions are [doctrine.md](../host/src/arma_harness/commander/doctrine.md), which its server delivers.
+
 ## Contents
 
 1. [The idea](#1-the-idea)
@@ -408,6 +410,8 @@ A later step is still a squad order, so it can call off a separate `CARRY` sent 
 | `DISMOUNT` | Gets out | Leaves one vehicle, or all of them | None | Off V1, or after 30 s, "Can't get Owen King off V1" | Fire support |
 | `FIRE_MISSION` | `doArtilleryFire` from a real gun | Fires its crewed guns. The squad's other orders carry on | Grid of 6 or 8 figures, only | Shot, then rounds complete | Fire support |
 | `CHECK_FIRE` | `doStop` on the gun | Stops firing. What's in the air still lands | None | Rounds still in the air | Fire support |
+| `CAS` | `SAD`, with a modelled pilot's search | An aircraft attacks what its pilot finds himself around a grid, then returns to its hold | Grid of 6 or 8 figures, only; radius | Over the grid, engaging, off target or nothing seen | CAS |
+| `STRIKE` | Engine waypoints; the release timed by script | An aircraft bombs a grid, seen or not: ACE-guided bombs with ACE, dumb ones without | Grid, only; bombs 1 to 4; optional heading | In hot, bombs away, off target | CAS |
 | `CARRY` | A hidden dummy walks, with the bearer attached | Free men carry casualties to a vehicle or a place | Casualties, and where to | Loaded, or set down | CASEVAC |
 | `UNLOAD` | `ace_common_fnc_unloadPerson` | Takes casualties off a stopped vehicle | Vehicle | Off | CASEVAC |
 | `TREAT` | Scripted, then `ace_medical_fnc_fullHeal` | Medics treat casualties where they lie | Casualties, optional | Back up | CASEVAC |
@@ -420,12 +424,8 @@ A later step is still a squad order, so it can call off a separate `CARRY` sent 
 | `PATROL_AREA` | `CBA_fnc_taskPatrol` | Patrols randomly around a place | Place, radius | On the objective | First |
 | `SWEEP` | `CBA_fnc_taskSearchArea` | Searches an area randomly, including some buildings, until replaced | Place, radius | On the objective | First |
 | `POSTURE` | Group commands | Changes speed, formation, behaviour or firing rules and keeps its route | Any setting | Acknowledged | First |
-| `BOARD` | `GETIN` | Mounts its assigned vehicle | Assigned vehicle | Mounted | Later |
-| `DISMOUNT` | `GETOUT` | Leaves its vehicle at a point | Grid | Dismounted | Later |
-| `PICKUP`, `DROP` | `LOAD`, `UNLOAD`, `TR UNLOAD` | Transport moves cargo or troops | Grid | Loaded, unloaded | Later |
-| `GUARD` | `GUARD` | Protects an area and responds to threats | Grid | On station | Later |
-| `LOITER` | `LOITER` | An aircraft circles a point | Grid, radius | On station | Later |
-| `JOIN` | `JOIN` | Merges into another station | Callsign | Joined | Later |
+
+Not built, and left for later: transport (`PICKUP`, `DROP`), `GUARD`, a standing `LOITER` for aircraft (an aircraft circles its hold between sorties anyway) and `JOIN`. CAS and STRIKE are described in [COMMANDER_CAS.md](COMMANDER_CAS.md).
 
 `CLEAR`, `OCCUPY`, `CORDON` and the CBA tasks each stand alone in an order. `at` can be a grid, a marker id or a building id. CBA tasks run until replaced, so "on the objective" is the only report they give. `CBA_fnc_searchNearby` was left out, because `CLEAR` does the same with a named building and a report.
 
@@ -746,7 +746,7 @@ It's a pure function of what the commander has already been told, drawn with Pil
 
 ## 12. Commander tools
 
-This is the complete planned list on the `arma-commander-mcp` server. A test fails if the server exposes anything else.
+This is the complete list on the `arma-commander-mcp` server. A test fails if the server exposes anything else.
 
 | Tool | Purpose | Status |
 |---|---|---|
@@ -755,7 +755,7 @@ This is the complete planned list on the `arma-commander-mcp` server. A test fai
 | `commander_end_turn(note, messages_only)` | Ends the turn and logs the note. A turn with no other actions is the noop. Refused when no wake is active, unless `messages_only` is true | Built |
 | `commander_brief()` | The current briefing without waiting, for resuming a session | Built |
 | `commander_order(to, legs, mode, ...)` | Sends an order, returns only an order id | Built |
-| `commander_ask(to, topics)` | General or specific question, for `position`, `task`, `strength`, `ammo`, `contacts` and `eta` | Built |
+| `commander_ask(to, topics)` | General or specific question, for `position`, `task`, `strength`, `casualties`, `ammo`, `contacts`, `eta` and `vehicles` | Built |
 | `commander_schedule(after\|at\|every, do, ...)` | Creates a timed order, question or wake, once or repeating | Built |
 | `commander_unschedule(id)` | Cancels a schedule or wake | Built |
 | `commander_notes(text)` | Replaces the estimate included in every briefing | Built |
@@ -763,6 +763,7 @@ This is the complete planned list on the `arma-commander-mcp` server. A test fai
 | `commander_mark(id, kind, at, ...)` | Creates or updates a marker | Built |
 | `commander_unmark(id)` | Retires a marker, keeping its history | Built |
 | `commander_map(center, radius)` | Renders the commander's map as an image | Built |
+| `commander_ground(at, to)` | The ground at a place in words: height, slope and cover, and with `to`, whether one place can see the other | Built |
 
 Grids are the primary coordinate format, because that's what subordinates speak and what the map shows.
 
