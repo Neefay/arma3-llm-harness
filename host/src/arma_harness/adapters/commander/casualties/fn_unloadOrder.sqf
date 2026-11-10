@@ -1,12 +1,16 @@
 /*
 	NAME: brmh_cmd_fnc_unloadOrder
-	DESCRIPTION: Takes downed men out of a stopped vehicle, by a squad that has someone there.
+	DESCRIPTION: Takes downed men out of a stopped vehicle, by a squad that has someone within 25 m of it. ACE gets each
+		man out; 3 s later he's laid down, and the radio says whether he's off or stuck.
 	PARAMETERS:
 		0 - Group (GROUP)
 		1 - Order id (STRING)
-		2 - Who: [[man key, place], ...], or nobody for all of them (ARRAY)
+		2 - Who: [[man key, place], ...], or [] for every downed man aboard (ARRAY)
 		3 - Vehicle's key (STRING)
-	ENVIRONMENT: Server
+	USAGE:
+		[_group, "O-0009", [], "V2"] call brmh_cmd_fnc_unloadOrder;
+	RETURNS: Nothing
+	ENVIRONMENT: Server, unscheduled
 */
 params [["_group", grpNull, [grpNull]], ["_order", "", [""]], ["_who", [], [[]]], ["_key", "", [""]]];
 private _vehicle = brmh_cmd_vehicles getOrDefault [_key, objNull];
@@ -40,12 +44,18 @@ if (_men isEqualTo []) exitWith {
 };
 {
 	if (_x in _aboard) then {
+		// ACE refuses a vehicle that's moving or more than 2 m off the ground, and says so.
+		if (not ([_x] call ace_common_fnc_unloadPerson)) then {
+			[_group, _order, "unload", _x, "stuck", _key] call brmh_cmd_fnc_careSay;
+			continue;
+		};
 		[_group, _order, "unload", _x, "going", _key] call brmh_cmd_fnc_careSay;
-		[_x] call ace_common_fnc_unloadPerson;
 		[{
 			params ["_man", "_group", "_order", "_key"];
 			if (alive _man and {
 				not ([_man] call brmh_cmd_fnc_able)
+			} and {
+				isNull objectParent _man
 			}) then {
 				[_man, "UnconsciousReviveDefault"] call brmh_cmd_fnc_carryPose;
 			};

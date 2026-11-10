@@ -1,5 +1,16 @@
-// How far an impact was from each station's nearest man, and whether it could see it land. It has to be right then,
-// because dust and smoke hide the next one for free. Rows are [callsign, metres, dx, dy, seen].
+/*
+	NAME: brmh_cmd_fnc_whoHeard
+	DESCRIPTION: How far a burst was from each station's nearest able man, and whether any of its four nearest could
+		see it land. It has to be right then, because dust and smoke hide the next one for free. Seen means within
+		1,500 m and with a clear view of a point 1 m above the burst.
+	PARAMETERS:
+		0 - Where it burst, ASL [x, y, z] (ARRAY)
+	USAGE:
+		[_pos] call brmh_cmd_fnc_whoHeard;
+	RETURNS: [[callsign, metres, dx, dy, seen], ...], dx and dy from that man to the burst; one row per station with
+		an able man (ARRAY)
+	ENVIRONMENT: Server, unscheduled (a shell's Explode handler)
+*/
 params ["_pos"];
 private _ground = [_pos # 0, _pos # 1];
 private _point = _pos vectorAdd [0, 0, 1];

@@ -1,18 +1,33 @@
 /*
 	NAME: brmh_cmd_fnc_order
-	DESCRIPTION: Applies a validated order. The result never says whether the group exists, so the commander can't learn it from here.
+	DESCRIPTION: Applies an order the host has already checked (commander/orders.py). The result never says whether the
+		squad exists, so the commander can't learn it from here: a refusal, such as a leg in open water, is left in the
+		squad's brmh_cmd_unable for its next packet. Fire missions, air, care and boarding orders go to their own
+		functions and leave the squad's route alone; any other order but posture takes back the men a placing,
+		clearing or CBA task had.
 	PARAMETERS:
-		0 - Callsign (STRING)
+		0 - Callsign, as enrolled in brmh_cmd_stations (STRING)
 		1 - Order id (STRING)
-		2 - Mode: "replace", "append", "halt" or "posture" (STRING)
-		3 - Legs: [[waypoint type, [x, y], radius, completion, hold for], ...] (ARRAY)
+		2 - Mode (STRING), one of:
+		    "replace", "append" - a route, which replaces or adds to the one it has
+		    "halt", "posture" - stop where it is, or only change its posture; no legs
+		    "mount", "dismount" - board a vehicle, or get off one
+		    "fire", "checkfire", "cas", "strike", "carry", "unload", "treat", "post" - handed on as one leg
+		3 - Legs (ARRAY), by mode:
+		    route: [[waypoint type, [x, y], radius, completion radius, hold for in seconds], ...]. The type is an engine
+		    waypoint type, or "CLEAR" (with [[building id, [x, y]], ...] for its place), "OCCUPY", "CORDON",
+		    "ATTACK", "DEFEND", "PATROL_AREA" or "SWEEP"
+		    mount: [[vehicle key, seat or ""]]; dismount: [[vehicle key or ""]]
+		    any other: [[the arguments its function takes after the squad and order id]]
 		4 - Posture: [speed, formation, behaviour, combat mode], "" leaves a setting alone (ARRAY)
 	USAGE:
 		["Alpha", "O-0001", "replace", [["MOVE", [3450, 3050], 0, 0, 0]], ["", "", "", ""]] call brmh_cmd_fnc_order;
+		["Alpha", "O-0002", "halt", [], ["", "", "", "GREEN"]] call brmh_cmd_fnc_order;
+		["Bravo", "O-0003", "mount", [["V3", ""]], ["", "", "", ""]] call brmh_cmd_fnc_order;
 	RETURNS: true
-	ENVIRONMENT: Server
+	ENVIRONMENT: Server, unscheduled (the host's exec)
 */
-params [["_callsign", "", [""]], ["_order", "", [""]], ["_mode", "replace", [""]], ["_legs", [], [[]]], ["_posture", [], [[]], 4]];
+params [["_callsign", "", [""]], ["_order", "", [""]], ["_mode", "replace", [""]], ["_legs", [], [[]]], ["_posture", ["", "", "", ""], [[]], 4]];
 private _group = brmh_cmd_stations getOrDefault [_callsign, grpNull];
 if (isNull _group) exitWith {
 	true
@@ -38,6 +53,17 @@ if (_mode isEqualTo "strike") exitWith {
 };
 if (_mode in ["carry", "unload", "treat", "post"]) exitWith {
 	([_group, _order] + (_legs # 0)) call (missionNamespace getVariable format ["brmh_cmd_fnc_%1Order", _mode]);
+	true
+};
+// Refused before anything changes, so a squad told to go into open water carries on with what it was doing.
+if (not (_mode in ["mount", "dismount", "posture"]) and {
+	(_legs findIf {
+		not ((_x # 0) in ["CYCLE", "CLEAR"]) and {
+			surfaceIsWater (_x # 1)
+		}
+	}) >= 0
+}) exitWith {
+	_group setVariable ["brmh_cmd_unable", "water"];
 	true
 };
 private _oneSeat = _mode isEqualTo "mount" and {
@@ -73,14 +99,6 @@ if (_mode isEqualTo "mount") exitWith {
 if (_mode isEqualTo "dismount") exitWith {
 	[_group] call brmh_cmd_fnc_clearRoute;
 	[_group, _legs # 0 # 0] call brmh_cmd_fnc_startDismount;
-	true
-};
-if ((_legs findIf {
-	not ((_x # 0) in ["CYCLE", "CLEAR"]) and {
-		surfaceIsWater (_x # 1)
-	}
-}) >= 0) exitWith {
-	_group setVariable ["brmh_cmd_unable", "water"];
 	true
 };
 if (_mode in ["replace", "halt"]) then {
@@ -130,7 +148,13 @@ private _first = [];
 		continue;
 	};
 	if (_type isEqualTo "OCCUPY") then {
-		private _spots = nearestObject [_at + [0], "House"] buildingPos -1;
+		// The building standing there, as brmh_cmd_fnc_building finds one: nearestObject measures from a model's
+		// centre and can find a neighbour or a ruin. The nearest house only when no building stands on the spot.
+		private _house = [_at] call brmh_cmd_fnc_building;
+		if (isNull _house) then {
+			_house = nearestObject [_at + [0], "House"];
+		};
+		private _spots = [_house] call brmh_cmd_fnc_safePositions;
 		[_group, _spots, []] call brmh_cmd_fnc_startPlacing;
 		continue;
 	};

@@ -1,5 +1,9 @@
 // Close air support: the pilot flies to the grid and attacks whatever he finds there himself, by the engine's own
 // seek-and-destroy. Nothing is aimed for him: no AI aircraft will bomb a bare grid (docs/COMMANDER_CAS.md).
+// States: inbound (flying to the grid), over (searching it: brmh_cmd_fnc_sortieSearch), engaging (he has fired), and
+// leaving (says how it went, and ends). Losing the pilot or running out of ammunition ends it from any state, and on
+// any ending he goes back to his hold. Made by brmh_cmd_fnc_casOrder, and stepped every 2 s with the other builds
+// (brmh_cmd_fnc_stepBuilds).
 brmh_cmd_sortieMachine = [
 	["KIND", "sortie"],
 	["INITIAL", "inbound"],
@@ -68,6 +72,8 @@ brmh_cmd_sortieMachine = [
 	["RELEASE", {
 		private _group = _this get "GROUP";
 		if (alive (_this get "VEHICLE")) then {
+			// Seek-and-destroy left it in COMBAT.
+			_group setBehaviour "AWARE";
 			[_group, _group getVariable ["brmh_cmd_hold", getPosATL (_this get "VEHICLE")]] call brmh_cmd_fnc_holdAir;
 		};
 	}]

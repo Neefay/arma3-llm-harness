@@ -1,3 +1,14 @@
+/*
+	NAME: brmh_cmd_fnc_boardTaken
+	DESCRIPTION: Whether someone else has taken a seat that one of those boarding is still on his way to. The engine
+		has a man wait beside a taken seat for good, with no error, so this is the only way to know.
+	PARAMETERS:
+		0 - The squad's boarding machine (HASHMAP object)
+	USAGE:
+		if ([_machine] call brmh_cmd_fnc_boardTaken) then { [_machine, "taken", []] call brmh_cmd_fnc_boardFinish };
+	RETURNS: BOOL
+	ENVIRONMENT: Server, unscheduled
+*/
 params ["_machine"];
 private _vehicle = _machine get "VEHICLE";
 ([_machine] call brmh_cmd_fnc_boardWaiting) findIf {

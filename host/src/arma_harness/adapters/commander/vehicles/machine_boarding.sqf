@@ -1,6 +1,8 @@
-// MOUNT and DISMOUNT: the squad's men going to their seats, or getting off. Its state reaches the host in the packet's
-// "mount" record, [vehicle id, state, seat, names, spare men], which keeps how it ended until the next one. A boarding
-// that can't start at all (no vehicle, seat or man) is a record and no machine.
+// MOUNT and DISMOUNT: the squad's men going to their seats, or getting off. States: going (to the seats, from
+// brmh_cmd_fnc_startMount) and going off (brmh_cmd_fnc_startDismount starts it there). Its state reaches the host in
+// the packet's "mount" record, [vehicle id, state, seat, names, spare men], which keeps how it ended until the next
+// one. A boarding that can't start at all (no vehicle, seat or man) is a record and no machine. Stepped every 2 s with
+// the other builds (brmh_cmd_fnc_stepBuilds).
 brmh_cmd_boardingMachine = [
 	["KIND", "boarding"],
 	["SAYS", false],

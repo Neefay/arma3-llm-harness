@@ -1,12 +1,13 @@
 /*
 	NAME: brmh_cmd_fnc_terrain
-	DESCRIPTION: The ground around a place, as a commander's paper map would show it: heights, water and woods on a square
-		grid, roads, the world's own buildings, and its named places. Only terrain: these commands see the world's own
-		objects and its config, never anything a mission placed, which would put the enemy on the map. Named places come
-		from the world's config for that reason, since a mission can create locations.
+	DESCRIPTION: The ground around a place, as a commander's paper map would show it: heights, water and woods on a
+		square grid, roads, the world's own buildings, and its named places. Only terrain: these commands see the
+		world's own objects and its config, never anything a mission placed, which would put the enemy on the map. Named
+		places come from the world's config for that reason, since a mission can create locations. Two terrain-object
+		searches a cell, all in one call, so a big window takes a while: the host gives it 90 s.
 	PARAMETERS:
 		0 - Centre [x, y] (ARRAY)
-		1 - Radius, metres (NUMBER)
+		1 - Radius, metres: half the side of the square (NUMBER)
 		2 - Cell size, metres (NUMBER)
 	USAGE:
 		[[3200, 2800], 1500, 50] call brmh_cmd_fnc_terrain;
@@ -15,7 +16,7 @@
 		roads  - [x1, y1, x2, y2, kind], each stretch once
 		houses - [x, y, width, length, direction]
 		places - [name, type, x, y]
-	ENVIRONMENT: Server
+	ENVIRONMENT: Server, unscheduled
 */
 params [["_centre", [], [[]], 2], ["_radius", 1000, [0]], ["_step", 50, [0]]];
 private _n = ceil (2 * _radius / _step);

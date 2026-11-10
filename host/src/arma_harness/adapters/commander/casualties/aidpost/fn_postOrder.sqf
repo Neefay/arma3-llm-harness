@@ -1,11 +1,15 @@
 /*
 	NAME: brmh_cmd_fnc_postOrder
-	DESCRIPTION: A medic goes to a place and sets up an aid post, a real tent that can be destroyed. One per station.
+	DESCRIPTION: A free medic goes to a place and sets up an aid post, a real tent that can be destroyed. One per
+		station: a second is refused while the first stands or is being built.
 	PARAMETERS:
 		0 - Group (GROUP)
 		1 - Order id (STRING)
-		2 - Position (ARRAY)
-	ENVIRONMENT: Server
+		2 - Position [x, y] or [x, y, z] (ARRAY)
+	USAGE:
+		[_group, "O-0012", [3420, 2990, 0]] call brmh_cmd_fnc_postOrder;
+	RETURNS: Nothing
+	ENVIRONMENT: Server, unscheduled
 */
 params [["_group", grpNull, [grpNull]], ["_order", "", [""]], ["_at", [], [[]], [2, 3]]];
 if (alive (_group getVariable ["brmh_cmd_post", objNull]) or {

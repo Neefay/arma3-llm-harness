@@ -1,3 +1,14 @@
+/*
+	NAME: brmh_cmd_fnc_treatRelease
+	DESCRIPTION: However a treatment ends: the medic's free again and back with his squad, and the man can be given to
+		someone else.
+	PARAMETERS:
+		0 - Treat job (HASHMAP object)
+	USAGE:
+		[_job] call brmh_cmd_fnc_treatRelease;
+	RETURNS: Nothing
+	ENVIRONMENT: Server, unscheduled
+*/
 params ["_job"];
 private _medic = _job get "MEDIC";
 _medic setVariable ["brmh_cmd_busy", nil];

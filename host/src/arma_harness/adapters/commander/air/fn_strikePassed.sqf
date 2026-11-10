@@ -1,4 +1,14 @@
-// Past the grid without releasing: it's behind him, or he's over it.
+/*
+	NAME: brmh_cmd_fnc_strikePassed
+	DESCRIPTION: Whether the aircraft is past the grid without releasing: over it (within 300 m), or with it behind him
+		(more than 90° off his track) within 3 km.
+	PARAMETERS:
+		0 - Strike machine (HASHMAP object)
+	USAGE:
+		[_this] call brmh_cmd_fnc_strikePassed
+	RETURNS: Boolean
+	ENVIRONMENT: Server, unscheduled. The strike machine's guards on the run.
+*/
 params ["_machine"];
 private _vehicle = _machine get "VEHICLE";
 private _aim = _machine get "AIM";

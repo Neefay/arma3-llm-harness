@@ -1,6 +1,9 @@
 // CLEAR: the squad goes through the buildings one at a time, every position of each, and holds there when it's done.
-// Its state reaches the host in the packet's "clearing" (positions left: -1 none, 0 done), "cleared", "ruined" and
-// "blocked", which stay as they are until the next order.
+// Started by brmh_cmd_fnc_startClearing and stepped every 2 s with the other machines in brmh_cmd_builds. "between"
+// takes the next building off the queue (a ruined one goes to RUINED), "inside" walks the men through it
+// (brmh_cmd_fnc_stepClearing) until every position has been tried, and "done" has the men follow their leader and
+// stands until the next order. Its state reaches the host in the packet's "clearing" (positions left: -1 none, 0 done),
+// "cleared", "ruined" and "blocked", which stay as they are until the next order.
 brmh_cmd_clearingMachine = [
 	["KIND", "clearing"],
 	["SAYS", false],

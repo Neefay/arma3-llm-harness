@@ -1,3 +1,13 @@
+/*
+	NAME: brmh_cmd_fnc_rounds
+	DESCRIPTION: The rounds a soldier carries for his primary weapon, the loaded magazine included.
+	PARAMETERS:
+		0 - Soldier (OBJECT)
+	USAGE:
+		[_x] call brmh_cmd_fnc_rounds;
+	RETURNS: Rounds (NUMBER)
+	ENVIRONMENT: Server, unscheduled
+*/
 params ["_unit"];
 private _compatible = (compatibleMagazines primaryWeapon _unit) apply {
 	toLowerANSI _x

@@ -23,6 +23,7 @@ ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
 
 def main() -> int:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # HEMTT's report draws with box characters
     with tempfile.TemporaryDirectory(prefix="brmh_lint_") as tmp:
         project = Path(tmp)
         (project / ".hemtt").mkdir()

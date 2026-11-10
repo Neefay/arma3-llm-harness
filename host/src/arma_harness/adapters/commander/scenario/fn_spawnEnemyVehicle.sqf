@@ -8,15 +8,19 @@
 		1 - Side (SIDE)
 		2 - Vehicle class (STRING)
 		3 - Position [x, y] (ARRAY)
-		4 - Facing, degrees (NUMBER)
-		5 - Mode: "hold" stays put, "patrol" drives around the area (STRING)
-		6 - Radius in metres, for a patrol (NUMBER)
+		4 - (OPTIONAL) Facing, degrees (NUMBER) - Default: 0
+		5 - (OPTIONAL) Mode: "hold" stays put, "patrol" drives around the area (STRING) - Default: "hold"
+		6 - (OPTIONAL) Radius in metres, for a patrol (NUMBER) - Default: 100
 	USAGE:
 		["East Gun", east, "O_HMG_01_high_F", [3700, 2400], 210, "hold", 0] call brmh_cmd_fnc_spawnEnemyVehicle;
 	RETURNS: How many crew it has (NUMBER)
-	ENVIRONMENT: Server
+	ENVIRONMENT: Server, unscheduled
 */
 params [["_id", "", [""]], ["_side", east, [east]], ["_class", "", [""]], ["_at", [], [[]], 2], ["_dir", 0, [0]], ["_mode", "hold", [""]], ["_radius", 100, [0]]];
+if (not isClass (configFile >> "CfgVehicles" >> _class)) exitWith {
+	["Spawn", "ERROR", "%1: no such vehicle class %2", [_id, _class]] call brmh_cmd_fnc_log;
+	0
+};
 // A gun on a tripod goes on level ground near the place: on Stratis one on a slope tipped over within seconds and threw
 // off its gunner. Vehicles sit on slopes well enough, and stay where they're put.
 private _tries = [[0, 0]];
@@ -43,9 +47,10 @@ if (_class isKindOf "StaticWeapon") then {
 _vehicle setVariable ["brmh_cmd_spawned", true];
 private _group = createVehicleCrew _vehicle;
 if (side _group isNotEqualTo _side) then {
-	private _crew = crew _vehicle;
+	private _made = _group;
 	_group = createGroup [_side, false];
-	_crew joinSilent _group;
+	(crew _vehicle) joinSilent _group;
+	deleteGroup _made;
 };
 _group setGroupIdGlobal [_id];
 brmh_cmd_enemies pushBack _group;

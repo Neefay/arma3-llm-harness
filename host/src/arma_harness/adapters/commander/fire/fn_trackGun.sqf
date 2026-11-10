@@ -1,3 +1,15 @@
+/*
+	NAME: brmh_cmd_fnc_trackGun
+	DESCRIPTION: Watches a gun's rounds, once per gun, for its life. Each shot counts on the gun's current mission
+		(fired, in the air, last shot), and its burst is a cmd_impact event: where, from which gun and order, and how
+		each station heard or saw it (brmh_cmd_fnc_whoHeard). A burst also damages any aid post near it.
+	PARAMETERS:
+		0 - Gun (OBJECT)
+	USAGE:
+		[_vehicle] call brmh_cmd_fnc_trackGun;
+	RETURNS: Nothing
+	ENVIRONMENT: Server, unscheduled. Its handlers run there too, where the gun and its shells are local
+*/
 params ["_gun"];
 if (_gun getVariable ["brmh_cmd_tracked", false]) exitWith {};
 _gun setVariable ["brmh_cmd_tracked", true];

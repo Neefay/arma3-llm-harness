@@ -1,3 +1,13 @@
+/*
+	NAME: brmh_cmd_fnc_truth
+	DESCRIPTION: Where everyone really is, for the after-action review and the objectives: every west, east and
+		independent group, and whether each vehicle the harness spawned is still alive. Never reaches the commander.
+	PARAMETERS: None
+	USAGE:
+		call brmh_cmd_fnc_truth;
+	RETURNS: Nothing. Emits "evt" with type "cmd_truth"
+	ENVIRONMENT: Server, unscheduled (every 5 s, from brmh_cmd_fnc_step)
+*/
 private _groups = (allGroups select {
 	side _x in [west, east, independent]
 }) apply {

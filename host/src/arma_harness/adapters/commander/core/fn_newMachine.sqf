@@ -1,8 +1,10 @@
 /*
 	NAME: brmh_cmd_fnc_newMachine
-	DESCRIPTION: A declared state machine, stepped by its owner. The declaration names every state, and on creation it's
-		checked for the two faults that hand-written machines kept having: a state that waits with no deadline, and a way
-		to end that says nothing. Either is logged as an error. See docs/COMMANDER_MODEL.md, the appendix.
+	DESCRIPTION: A declared state machine, stepped by its owner (brmh_cmd_fnc_stepBuilds for those in
+		brmh_cmd_builds). The declaration names every state, and on creation it's checked for the two faults that
+		hand-written machines kept having: a state that waits with no deadline, and a way to end that says nothing.
+		Either is logged as an error. A deadline counts in the engine's time, from when the state was entered. See
+		docs/COMMANDER_MODEL.md, the appendix.
 	PARAMETERS:
 		0 - Declaration (ARRAY): [KEY, value] pairs:
 			KIND     - what the radio calls the job, as brmh_cmd_fnc_careSay takes it (STRING)
@@ -20,7 +22,8 @@
 		1 - Data: [KEY, value] pairs, such as GROUP, ORDER, SUBJECT and whatever its code reads. START, if given, is the
 		    state it starts in instead of INITIAL (ARRAY)
 	USAGE:
-		private _job = [brmh_cmd_postMachine, [["GROUP", _group], ["ORDER", _order], ["SUBJECT", "post"]]] call brmh_cmd_fnc_newMachine;
+		private _data = [["GROUP", _group], ["ORDER", _order], ["SUBJECT", "post"]];
+		private _job = [brmh_cmd_postMachine, _data] call brmh_cmd_fnc_newMachine;
 		brmh_cmd_builds = brmh_cmd_builds select { _x call ["#STEP", []] };
 		_job call ["#END", ["called off"]];
 	RETURNS: The machine (HASHMAP object). #STEP returns whether it's still running
@@ -46,6 +49,10 @@ private _MachineDeclaration = [
 		} forEach _data;
 		// A machine with more than one way in, such as boarding's getting on and getting off, names where it starts.
 		_self set ["STATE", _self getOrDefault ["START", _spec get "INITIAL"]];
+		if (not ((_self get "STATE") in _states)) then {
+			["Machines", "ERROR", "machine %1 starts in %2, which isn't declared", [_spec getOrDefault ["KIND", "?"], _self get "STATE"]] call brmh_cmd_fnc_log;
+			_self set ["STATE", ""];
+		};
 		_self set ["SINCE", time];
 	}],
 	["#STEP", {

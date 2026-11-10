@@ -1,4 +1,21 @@
-params ["_group", "_key", "_kind"];
+/*
+	NAME: brmh_cmd_fnc_startMount
+	DESCRIPTION: MOUNT: sends the squad's free men to a vehicle's seats, by the engine's own seat assignment, and
+		starts the boarding machine that watches them on. With no seat named it fills every free seat, newest men first
+		and the leader last; a named seat is for one man. A boarding that can't start (wrecked, no such seat, seat
+		taken, nobody free) is only a mount record, with no machine.
+	PARAMETERS:
+		0 - Group (GROUP)
+		1 - Vehicle id (STRING)
+		2 - Seat: "" for everyone who fits, "driver", "gunner", "commander", "cargo", or "turret:N" for the Nth
+		    turret seat (STRING)
+	USAGE:
+		[_group, "V2", ""] call brmh_cmd_fnc_startMount;
+		[_group, "V1", "gunner"] call brmh_cmd_fnc_startMount;
+	RETURNS: Nothing
+	ENVIRONMENT: Server, unscheduled
+*/
+params [["_group", grpNull, [grpNull]], ["_key", "", [""]], ["_kind", "", [""]]];
 private _vehicle = brmh_cmd_vehicles getOrDefault [_key, objNull];
 // One man sent to a seat while others are still boarding: they're no longer watched, as before.
 [_group, ["boarding"]] call brmh_cmd_fnc_endMachines;
@@ -17,7 +34,7 @@ private _free = _newestFirst select {
 	[_x] call brmh_cmd_fnc_able and {
 		_x isNotEqualTo _leader
 	} and {
-		vehicle _x isEqualTo _x
+		isNull objectParent _x
 	} and {
 		not (_x getVariable ["brmh_cmd_busy", false])
 	} and {

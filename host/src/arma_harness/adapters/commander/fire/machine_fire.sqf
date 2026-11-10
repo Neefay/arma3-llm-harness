@@ -1,5 +1,8 @@
-// A gun's fire mission, one per gun, stepped every half second while any is running. Its state is the mission
-// record's, which the packet carries for the host to word: firing or holding while it lasts, then how it ended.
+// A gun's fire mission, one machine per gun, made by brmh_cmd_fnc_startFire and stepped every half second by
+// brmh_cmd_fnc_stepFire while any is running. States: firing (an order given, its rounds going) and holding (still
+// ordered, but nothing fired for 10 s). Its state is the mission record's, which the packet carries for the host to
+// word: firing or holding while it lasts, then how it ended (done, out, gunner, destroyed, cantlay, or stopped by a
+// check fire).
 brmh_cmd_fireMachine = [
 	["KIND", "fire"],
 	["SAYS", false],

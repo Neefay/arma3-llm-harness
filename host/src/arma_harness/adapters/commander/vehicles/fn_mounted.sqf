@@ -1,3 +1,14 @@
+/*
+	NAME: brmh_cmd_fnc_mounted
+	DESCRIPTION: Which of these men are in a vehicle, and where, for the packet's "mounted" field. A man the engine
+		lists in no seat counts as cargo.
+	PARAMETERS:
+		0 - Soldiers, the squad's able men (ARRAY)
+	USAGE:
+		[_able] call brmh_cmd_fnc_mounted;
+	RETURNS: [[vehicle id or "", seat role, name, on a static weapon], ...] (ARRAY)
+	ENVIRONMENT: Server, unscheduled
+*/
 params ["_alive"];
 private _out = [];
 {

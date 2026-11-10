@@ -1,3 +1,17 @@
+/*
+	NAME: brmh_cmd_fnc_packet
+	DESCRIPTION: A squad's report for the host: its own state, its jobs' progress, and what it knows of the enemy. Only
+		what the squad itself could know goes in. Also records who is acting for the leader (brmh_cmd_acting), since
+		the engine's leader can be dead or down for a while, and init.sqf's ace_unconscious handler keeps him in charge.
+	PARAMETERS:
+		0 - Callsign (STRING)
+		1 - Group (GROUP)
+	USAGE:
+		private _packet = [_callsign, _group] call brmh_cmd_fnc_packet;
+	RETURNS: The "cmd_report" packet (HASHMAP), its fields as commander/runtime.py lists them. Nil when nobody in the
+		squad is able, so a wiped-out squad goes silent
+	ENVIRONMENT: Server, unscheduled (the 2 s monitor, brmh_cmd_fnc_step)
+*/
 params ["_callsign", "_group"];
 private _able = (units _group) select {
 	[_x] call brmh_cmd_fnc_able
@@ -41,7 +55,7 @@ createHashMapFromArray [
 	["behaviour", behaviour _leader],
 	["speed_mode", speedMode _group],
 	["spread", ((_able - [_leader]) select {
-		vehicle _x isEqualTo _x
+		isNull objectParent _x
 	}) apply {
 		private _at = getPosATL _x;
 		[name _x, round ((_at # 0) - (_position # 0)), round ((_at # 1) - (_position # 1)), _x getVariable ["brmh_cmd_busy", false]]

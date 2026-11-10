@@ -1,5 +1,7 @@
 // OCCUPY and CORDON: each soldier gets a spot and walks there, and the squad holds when they all have, or after 90 s.
-// Its state reaches the host as the packet's "placed": -1 none, 0 moving, 1 placed.
+// Made by brmh_cmd_fnc_startPlacing and stepped every 2 s in brmh_cmd_builds (brmh_cmd_fnc_stepBuilds). "moving" lasts
+// until every free man is ready, or 90 s; "placed" stands until the squad's next order ends it. Its state reaches the
+// host as the packet's "placed" (brmh_cmd_fnc_placedState): -1 none, 0 moving, 1 placed.
 brmh_cmd_placingMachine = [
 	["KIND", "placing"],
 	["SAYS", false],

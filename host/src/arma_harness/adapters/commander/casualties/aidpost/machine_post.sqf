@@ -1,4 +1,5 @@
-// The aid post: a medic walks to the place, then builds. Its states are the words the radio uses for them.
+// The aid post: a medic walks to the place, then builds. Its states, going and building, are the words the radio uses
+// for them. Made by brmh_cmd_fnc_postOrder and stepped every 2 s in brmh_cmd_builds (brmh_cmd_fnc_stepBuilds).
 brmh_cmd_postMachine = [
 	["KIND", "post"],
 	["INITIAL", "going"],
@@ -31,6 +32,12 @@ brmh_cmd_postMachine = [
 			["DEADLINE", [300, {}, "", "can't reach"]]
 		]],
 		["building", [
+			["EVERY", {
+				if ((time - (_this getOrDefault ["ANIM", 0])) >= 8) then {
+					_this set ["ANIM", time];
+					[_this get "MEDIC", "AinvPknlMstpSlayWrflDnon_medicOther"] call brmh_cmd_fnc_carryPose;
+				};
+			}],
 			["DEADLINE", [{
 				brmh_cmd_careTimes get "build_s"
 			}, {

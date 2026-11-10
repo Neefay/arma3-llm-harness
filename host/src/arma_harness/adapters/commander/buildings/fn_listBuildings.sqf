@@ -7,7 +7,7 @@
 	USAGE:
 		[[4150, 4150], 400] call brmh_cmd_fnc_listBuildings;
 	RETURNS: [[x, y, grid, display name, positions, width, length, direction], ...] (ARRAY)
-	ENVIRONMENT: Server
+	ENVIRONMENT: Server, unscheduled. Operator action
 */
 params [["_at", [], [[]], 2], ["_radius", 400, [0]]];
 private _centre = _at + [0];

@@ -1,4 +1,14 @@
-// To work: how long it takes depends on where he is (brmh_cmd_careTimes). Returns where, for the radio.
+/*
+	NAME: brmh_cmd_fnc_treatStart
+	DESCRIPTION: To work: the medic stops, faces the man and kneels over him. How long it takes depends on where the
+		man is (brmh_cmd_careTimes).
+	PARAMETERS:
+		0 - Treat job (HASHMAP object)
+	USAGE:
+		[_job] call brmh_cmd_fnc_treatStart;
+	RETURNS: Where, for the radio: "field" or "facility" (STRING)
+	ENVIRONMENT: Server, unscheduled
+*/
 params ["_job"];
 private _medic = _job get "MEDIC";
 private _man = _job get "SUBJECT";

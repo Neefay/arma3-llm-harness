@@ -6,7 +6,7 @@
 	USAGE:
 		["Alpha"] call brmh_cmd_fnc_killStation;
 	RETURNS: true
-	ENVIRONMENT: Server
+	ENVIRONMENT: Server, unscheduled
 */
 params [["_callsign", "", [""]]];
 private _group = brmh_cmd_stations getOrDefault [_callsign, grpNull];

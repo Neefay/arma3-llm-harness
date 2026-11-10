@@ -1,3 +1,19 @@
+/*
+	NAME: brmh_cmd_fnc_contacts
+	DESCRIPTION: What a squad's leader knows of the enemy, for the packet: where the group believes each one is, what
+		it would call it, and how long since it was seen. The true object never leaves this function, only the key the
+		commander's list follows a weapon or vehicle by. A crewman is reported as his vehicle. A model's name is only
+		given once the leader knows it well, or has had a steady 20 s look within 400 m (800 m for a tank, aircraft or
+		boat). Keeps those looks in the group's brmh_cmd_looks, and gives a weapon or vehicle its key.
+	PARAMETERS:
+		0 - Acting leader (OBJECT)
+	USAGE:
+		["contacts", [_leader] call brmh_cmd_fnc_contacts]
+	RETURNS: One HASHMAP per contact (ARRAY): "pos" [x, y] as believed, "kind" (brmh_cmd_fnc_kind), "name" ("" until
+		identified), "key" ("" for infantry and unknowns), "age_s" (0 while in the leader's sight), "accuracy_m" (the
+		engine's position error, -1 if it isn't listed)
+	ENVIRONMENT: Server, unscheduled
+*/
 params ["_leader"];
 private _near = _leader nearTargets 2000;
 // A crewman is listed as a target of his own, with no type: whoever sees him sees the vehicle he's in, so it's the
@@ -26,13 +42,15 @@ private _seen = [];
 	}
 });
 // When each weapon or vehicle came into the leader's sight and stayed there: a steady look identifies it.
-private _looks = (group _leader) getVariable ["brmh_cmd_looks", createHashMap];
+// Rebuilt each pass from what's in sight now: a target that drops off the list and comes back starts its look again.
+private _before = (group _leader) getVariable ["brmh_cmd_looks", createHashMap];
+private _looks = createHashMap;
 (group _leader) setVariable ["brmh_cmd_looks", _looks];
 _seen apply {
 	_x params ["_object", "_known"];
 	private _knowledge = _leader targetKnowledge _known;
-	private _inSight = ([_leader, "VIEW", _object] checkVisibility [
-		eyePos _leader,
+	private _inSight = ([vehicle _leader, "VIEW", _object] checkVisibility [
+		eyePos vehicle _leader,
 		(getPosASL _object) vectorAdd [0, 0, 1]
 	]) > 0.3;
 	private _entry = _near findIf {
@@ -58,14 +76,12 @@ _seen apply {
 	private _since = if (_materiel and {
 		_inSight
 	}) then {
-		_looks getOrDefault [hashValue _object, time]
+		_before getOrDefault [hashValue _object, time]
 	} else {
 		-1
 	};
 	if (_since >= 0) then {
 		_looks set [hashValue _object, _since];
-	} else {
-		_looks deleteAt (hashValue _object);
 	};
 	private _identifies = [400, 800] select (_kind in ["tank", "tracked vehicle", "APC", "helicopter", "aircraft", "boat"]);
 	private _identified = _materiel and {

@@ -1,16 +1,17 @@
 /*
 	NAME: brmh_cmd_fnc_enroll
-	DESCRIPTION: Spawns one station's group and puts it on the command net. Operator action, never reachable by the commander.
+	DESCRIPTION: Spawns one station's group and puts it on the command net. Its strength and rounds now are the
+		baselines its reports count losses and ammunition against. Operator action, never reachable by the commander.
 	PARAMETERS:
 		0 - Callsign (STRING)
 		1 - Side (SIDE)
 		2 - Number of soldiers (NUMBER)
 		3 - Unit class (STRING)
-		4 - Position [x, y] (ARRAY)
+		4 - Position [x, y]; the men stand 3 m apart from there, going east (ARRAY)
 	USAGE:
 		["Alpha", west, 4, "B_Soldier_F", [3050, 3050]] call brmh_cmd_fnc_enroll;
-	RETURNS: Number of soldiers created
-	ENVIRONMENT: Server
+	RETURNS: Number of soldiers created (NUMBER)
+	ENVIRONMENT: Server, unscheduled
 */
 params [["_callsign", "", [""]], ["_side", west, [west]], ["_count", 1, [0]], ["_class", "", [""]], ["_at", [], [[]], 2]];
 private _group = createGroup [_side, false];

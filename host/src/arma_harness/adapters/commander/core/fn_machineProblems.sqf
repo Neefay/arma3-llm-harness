@@ -1,5 +1,15 @@
-// What's wrong with a declaration, as plain sentences: a state with no deadline, an ending with no word, a state that
-// isn't declared. Empty when it's sound.
+/*
+	NAME: brmh_cmd_fnc_machineProblems
+	DESCRIPTION: What's wrong with a machine's declaration, as plain sentences: a state with no deadline, an ending
+		with no word, a state that isn't declared. brmh_cmd_fnc_newMachine logs each as an error when it makes one.
+	PARAMETERS:
+		0 - The declaration as brmh_cmd_fnc_newMachine has turned it into, with STATES a hashmap of each state's own
+		    hashmap (HASHMAP)
+	USAGE:
+		private _problems = [_spec] call brmh_cmd_fnc_machineProblems;
+	RETURNS: The problems, empty when it's sound (ARRAY of STRING)
+	ENVIRONMENT: Any machine, unscheduled or scheduled
+*/
 params ["_spec"];
 private _states = _spec get "STATES";
 private _problems = [];

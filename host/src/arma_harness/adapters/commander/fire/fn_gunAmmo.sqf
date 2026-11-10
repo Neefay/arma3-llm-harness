@@ -1,3 +1,14 @@
+/*
+	NAME: brmh_cmd_fnc_gunAmmo
+	DESCRIPTION: The rounds a gun has left, by the commander's word for them, over every magazine on its main turret.
+		Magazines with no word, such as flares, are left out.
+	PARAMETERS:
+		0 - Gun (OBJECT)
+	USAGE:
+		[_gun] call brmh_cmd_fnc_gunAmmo; // [["HE", 14], ["SMOKE", 4]]
+	RETURNS: [[word, rounds], ...], in no set order (ARRAY)
+	ENVIRONMENT: Server, unscheduled
+*/
 params ["_gun"];
 private _counts = createHashMap;
 {

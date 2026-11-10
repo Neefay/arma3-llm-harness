@@ -1,5 +1,16 @@
-// What a squad would call a contact, from the type it believes it is. The engine names the exact model as soon as it
-// notices anything, so how much of that a squad can say is decided by how well it knows the target: see the contacts.
+/*
+	NAME: brmh_cmd_fnc_kind
+	DESCRIPTION: What a squad would call a contact, from the type it believes it is. The engine names the exact model as
+		soon as it notices anything, so how much of that a squad can say is decided by how well it knows the target:
+		see brmh_cmd_fnc_contacts.
+	PARAMETERS:
+		0 - Class name as believed, "" when not known (STRING)
+	USAGE:
+		private _kind = [typeOf _vehicle] call brmh_cmd_fnc_kind;
+	RETURNS: "unknown", "infantry", "mortar", "emplacement", "tank", "tracked vehicle", "APC", "truck", "car",
+		"armed car", "helicopter", "aircraft", "boat" or "vehicle" (STRING)
+	ENVIRONMENT: Any
+*/
 params ["_type"];
 private _config = configFile >> "CfgVehicles" >> _type;
 switch (true) do {

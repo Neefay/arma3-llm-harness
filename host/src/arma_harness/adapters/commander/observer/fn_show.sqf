@@ -7,7 +7,7 @@
 	USAGE:
 		["Alpha -> HQ: Moving, grid 040 041."] call brmh_cmd_fnc_show;
 	RETURNS: true
-	ENVIRONMENT: Server
+	ENVIRONMENT: Server, unscheduled (the host's exec, or brmh_cmd_fnc_log)
 */
 params [["_text", "", [""]]];
 // A named event, not remoteExec, so no mission has to whitelist it: see @brmh's BRMH_fnc_commanderEvents.

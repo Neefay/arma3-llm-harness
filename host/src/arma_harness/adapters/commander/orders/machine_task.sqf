@@ -1,7 +1,9 @@
-// CBA's tasks handle the behaviour. They run until replaced, so the commander's next order has to undo them cleanly.
-// A CBA task runs until the next order replaces it. Then the squad is released from it: CBA's scripts keep running,
-// and DEFEND's disable each soldier's pathing as he reaches his post, so for 150 s his pathing is turned back on each
-// step. Its state isn't said: the order that replaced it is.
+// ATTACK, DEFEND, PATROL_AREA and SWEEP, which CBA's group tasks carry out. Made by brmh_cmd_fnc_startTask and
+// stepped every 2 s in brmh_cmd_builds (brmh_cmd_fnc_stepBuilds). A CBA task runs until replaced, so the commander's
+// next order has to undo it cleanly: brmh_cmd_fnc_order sets REPLACED, which moves "running" (standing) to
+// "releasing". CBA's scripts keep running after that, and DEFEND's disable each soldier's pathing as he reaches his
+// post, so for 150 s his pathing is turned back on each step, and then the machine ends. Its state isn't said: the
+// order that replaced it is.
 brmh_cmd_taskMachine = [
 	["KIND", "task"],
 	["SAYS", false],
@@ -12,9 +14,12 @@ brmh_cmd_taskMachine = [
 				[{
 					_this getOrDefault ["REPLACED", false]
 				}, {
-					// ATTACK leaves a group crawling in COMBAT, and DEFEND at LIMITED speed. Both tested on a real game.
+					// ATTACK leaves a group crawling in COMBAT, and DEFEND at LIMITED speed. Both tested on a real
+					// game.
 					(_this get "GROUP") setBehaviour "AWARE";
 					(_this get "GROUP") setSpeedMode "NORMAL";
+					// SWEEP's CBA_fnc_searchNearby locks the waypoints while it searches a building.
+					(_this get "GROUP") lockWP false;
 				}, "releasing", ""]
 			]],
 			["STANDING", true]

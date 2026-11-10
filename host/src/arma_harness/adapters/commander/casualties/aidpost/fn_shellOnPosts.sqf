@@ -1,4 +1,15 @@
-// One 82 mm round on a tent did 0.38 by the engine's own reckoning, when it was allowed to.
+/*
+	NAME: brmh_cmd_fnc_shellOnPosts
+	DESCRIPTION: A shell that bursts within 20 m of an aid post damages it, less the further out: up to 0.4 a round.
+		One 82 mm round on a tent did 0.38 by the engine's own reckoning, when it was allowed to. Smoke does nothing.
+	PARAMETERS:
+		0 - Where it burst (ARRAY)
+		1 - Its ammo class (STRING)
+	USAGE:
+		[_pos, typeOf _shell] call brmh_cmd_fnc_shellOnPosts;
+	RETURNS: Nothing
+	ENVIRONMENT: Server, unscheduled (a shell's Explode handler)
+*/
 params ["_pos", "_ammo"];
 if ("smoke" in toLowerANSI _ammo) exitWith {};
 {

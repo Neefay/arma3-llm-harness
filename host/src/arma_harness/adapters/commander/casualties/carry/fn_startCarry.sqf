@@ -1,15 +1,19 @@
 /*
 	NAME: brmh_cmd_fnc_startCarry
-	DESCRIPTION: Sends a medic to pick up a downed man and carry him somewhere. An AI can't walk in ACE's carrying state, so
-		a hidden dummy does the walking, with the medic attached to it. The idea is Antistasi's, for a drag. If the dummy
-		stops getting anywhere and the place isn't far, the medic stays where he is, works on the man for a while, and the
-		man is then put there directly, so a bad spot can't leave a medic stuck.
+	DESCRIPTION: Sends a bearer to pick up a downed man and carry him somewhere. An AI can't walk in ACE's carrying
+		state, so a hidden dummy does the walking, with the bearer attached to it. The idea is Antistasi's, for a drag.
+		If the dummy stops getting anywhere and the place isn't far, the bearer stays where he is, works on the man for
+		a while, and the man is then put there directly, so a bad spot can't leave a bearer stuck.
 	PARAMETERS:
-		0 - Medic (OBJECT)
+		0 - Bearer (OBJECT)
 		1 - Casualty (OBJECT)
 		2 - Where to: a position, or a vehicle to load him into (ARRAY or OBJECT)
-	RETURNS: The carry (HASHMAP). "state" ends as "done", and "result" says how
-	ENVIRONMENT: Server
+		3 - (OPTIONAL) Group whose radio reports it; with none, nothing is said (GROUP) - Default: grpNull
+		4 - (OPTIONAL) Order id (STRING) - Default: ""
+	USAGE:
+		[_bearer, _man, [3410, 2980, 0], _group, "O-0007"] call brmh_cmd_fnc_startCarry;
+	RETURNS: The carry, a brmh_cmd_carryMachine (HASHMAP object). Its "STATE" is "" once it's ended
+	ENVIRONMENT: Server, unscheduled
 */
 params [["_medic", objNull, [objNull]], ["_casualty", objNull, [objNull]], ["_to", [], [[], objNull]], ["_group", grpNull, [grpNull]], ["_order", "", [""]]];
 {

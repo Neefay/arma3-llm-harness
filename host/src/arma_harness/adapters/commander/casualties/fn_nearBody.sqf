@@ -1,8 +1,17 @@
 /*
-	Where to send someone who has to reach a downed man, best first. The pathfinder often can't get to him. With a body at
-	some spots in a house, nowhere in or right beside that house can be planned to, though it's fine with the body elsewhere,
-	and open ground is fine either way. A man told to go there stands still for 12 s, then reports himself ready. So: the
-	nearest position of the house at his level, the man himself, then a ring clear of the house, nearest the rescuer first.
+	NAME: brmh_cmd_fnc_nearBody
+	DESCRIPTION: Where to send someone who has to reach a downed man, best first. The pathfinder often can't get to him.
+		With a body at some spots in a house, nowhere in or right beside that house can be planned to, though it's fine
+		with the body elsewhere, and open ground is fine either way. A man told to go there stands still for 12 s, then
+		reports himself ready. So: the nearest position of the house at his level, the man himself, then a ring clear of
+		the house, nearest the rescuer first.
+	PARAMETERS:
+		0 - Downed man (OBJECT)
+		1 - Where the rescuer is (ARRAY)
+	USAGE:
+		private _spots = [_casualty, getPosATL _medic] call brmh_cmd_fnc_nearBody;
+	RETURNS: Positions ATL, best first: one house position at most, the body's own, then eight around (ARRAY)
+	ENVIRONMENT: Any machine. Used on the server, unscheduled
 */
 params ["_body", "_from"];
 private _at = getPosATL _body;

@@ -1,4 +1,14 @@
-// Tries the next place he could reach the man from.
+/*
+	NAME: brmh_cmd_fnc_carryApproach
+	DESCRIPTION: Sends the bearer to the next place he could reach the man from (brmh_cmd_fnc_nearBody), and counts
+		the try. Once every place has been tried he isn't moved again, and the machine decides what's next.
+	PARAMETERS:
+		0 - Carry (HASHMAP object)
+	USAGE:
+		[_carry] call brmh_cmd_fnc_carryApproach;
+	RETURNS: Nothing
+	ENVIRONMENT: Server, unscheduled
+*/
 params ["_carry"];
 private _tries = _carry get "TRIES";
 private _spots = [_carry get "SUBJECT", getPosATL (_carry get "MEDIC")] call brmh_cmd_fnc_nearBody;

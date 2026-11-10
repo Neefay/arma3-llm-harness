@@ -4,16 +4,17 @@
 		reads it back, so it can't help the commander.
 	PARAMETERS:
 		0 - Marker id (STRING)
-		1 - Kind: enemy, friendly, objective, danger, hypothesis or note (STRING)
+		1 - Kind: enemy, friendly, objective, danger, hypothesis, phase_line, area or note; the last three are drawn
+		    as a white dot (STRING)
 		2 - Points, [[x, y], ...]; the first is where it's drawn (ARRAY)
 		3 - Label (STRING)
-		4 - Confidence, as the commander gave it (STRING)
+		4 - Confidence, as the commander gave it: low, medium or high (STRING)
 		5 - (OPTIONAL) Whether it was removed (BOOL) - Default: false
 	USAGE:
-		["E1", "enemy", [[4120, 4180]], "MG team", "likely"] call brmh_cmd_fnc_mirror;
+		["E1", "enemy", [[4120, 4180]], "MG team", "medium"] call brmh_cmd_fnc_mirror;
 		["E1", "enemy", [], "", "", true] call brmh_cmd_fnc_mirror;
 	RETURNS: true
-	ENVIRONMENT: Server
+	ENVIRONMENT: Server, unscheduled (the host's exec)
 */
 params [["_id", "", [""]], ["_kind", "note", [""]], ["_points", [], [[]]], ["_label", "", [""]], ["_confidence", "", [""]], ["_removed", false, [false]]];
 private _name = "brmh_cmd_" + _id;

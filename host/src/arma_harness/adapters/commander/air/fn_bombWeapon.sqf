@@ -1,7 +1,20 @@
-// The weapon that drops the aircraft's bombs on a grid, how they're guided: "SALH" (laser) or "GPS" for ACE's own,
-// "" for a dumb bomb that falls where it's released, and a dumb bomb's side friction for brmh_cmd_fnc_bombImpact. ACE's go first. The engine's own laser bombs can't be used: with
-// nothing locked they glide on for kilometres (spike_bomb_drag.py), so an aircraft with only those gets "laser". Empty
-// when it has no bombs left.
+/*
+	NAME: brmh_cmd_fnc_bombWeapon
+	DESCRIPTION: The weapon that drops the aircraft's bombs on a grid, and how they're guided. ACE's guided bombs go
+		first, then dumb bombs, which fall where they're released. The engine's own laser bombs can't be used: with
+		nothing locked they glide on for kilometres (spike_bomb_drag.py), so an aircraft with only those is told apart,
+		for the pilot to say so. Only pylons with rounds left count.
+	PARAMETERS:
+		0 - Aircraft (OBJECT)
+	USAGE:
+		private _bomb = [_vehicle] call brmh_cmd_fnc_bombWeapon;
+	RETURNS: (ARRAY) one of
+		[weapon, seeker, 0]         - an ACE guided bomb, with ACE's seeker type for it: "SALH" (laser) or "GPS"
+		[weapon, "", side friction] - a dumb bomb, with its ammo's maneuvrability for brmh_cmd_fnc_bombImpact
+		["", "laser"]               - only the engine's own laser bombs
+		[]                          - no bombs left
+	ENVIRONMENT: Server, unscheduled
+*/
 params ["_vehicle"];
 private _guided = [];
 private _dumb = [];
@@ -16,7 +29,11 @@ private _laser = false;
 		private _weapon = getText (configFile >> "CfgMagazines" >> _x >> "pylonWeapon");
 		private _ace = configFile >> "CfgAmmo" >> _ammo >> "ace_missileguidance";
 		switch (true) do {
-			case (getNumber (_ace >> "enabled") isEqualTo 1): {
+			// ACE guides an AI's bomb only at its missile guidance setting 2, its default. Below that, its bombs are
+			// laser bombs like the engine's own.
+			case (getNumber (_ace >> "enabled") isEqualTo 1 and {
+				(missionNamespace getVariable ["ace_missileguidance_enabled", 0]) >= 2
+			}): {
 				_guided = [_weapon, getText (_ace >> "defaultSeekerType"), 0];
 			};
 			case (getNumber (configFile >> "CfgAmmo" >> _ammo >> "laserLock") isEqualTo 0 and {

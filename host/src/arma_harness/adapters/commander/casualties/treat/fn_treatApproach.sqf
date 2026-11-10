@@ -1,4 +1,14 @@
-// The medic heads for the next place he could reach the man from.
+/*
+	NAME: brmh_cmd_fnc_treatApproach
+	DESCRIPTION: The medic heads for the next place he could reach the man from: a random spot 4 m from the vehicle
+		he's in, or the next of brmh_cmd_fnc_nearBody's places. Counts the try.
+	PARAMETERS:
+		0 - Treat job (HASHMAP object)
+	USAGE:
+		[_job] call brmh_cmd_fnc_treatApproach;
+	RETURNS: Nothing
+	ENVIRONMENT: Server, unscheduled
+*/
 params ["_job"];
 private _man = _job get "SUBJECT";
 private _medic = _job get "MEDIC";

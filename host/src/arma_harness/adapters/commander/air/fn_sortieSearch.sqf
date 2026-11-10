@@ -1,8 +1,19 @@
-// The pilot searching the grid he was given. The engine's own spotting from a fast jet or a helicopter misses men lying
-// in grass even 74 m below (Stratis), so the search is modelled as Antistasi models it (fn_SUP_CASApproach): each enemy
-// near the grid, if nothing blocks the line from the aircraft, has a chance each second of being seen, less the farther
-// he is from the grid and from the aircraft, and less again lying down or crouching (that part is ours). Whoever is seen
-// is revealed to the crew, and the engine's seek-and-destroy does the rest. An empty grid gets nothing.
+/*
+	NAME: brmh_cmd_fnc_sortieSearch
+	DESCRIPTION: The pilot searching the grid he was given. The engine's own spotting from a fast jet or a helicopter
+		misses men lying in grass even 74 m below (Stratis), so the search is modelled as Antistasi models it
+		(fn_SUP_CASApproach): each enemy near the grid, if nothing blocks the line from the aircraft, has a chance each
+		second of being seen, less the farther he is from the grid and from the aircraft, and less again lying down or
+		crouching (that part is ours). Whoever is seen is revealed to the crew, and the engine's seek-and-destroy does
+		the rest. An empty grid gets nothing. The chance is scaled to the time since the last search, so how often it's
+		called doesn't change it; the first call only starts the clock.
+	PARAMETERS:
+		0 - Sortie machine (HASHMAP object). Reads VEHICLE, GROUP, AIM and RADIUS; keeps SEARCHED and SPOTTED.
+	USAGE:
+		[_this] call brmh_cmd_fnc_sortieSearch;
+	RETURNS: Nothing
+	ENVIRONMENT: Server, unscheduled. The sortie machine's EVERY, over the grid and engaging.
+*/
 params ["_machine"];
 private _vehicle = _machine get "VEHICLE";
 private _group = _machine get "GROUP";

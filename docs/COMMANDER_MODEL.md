@@ -325,7 +325,7 @@ stateDiagram-v2
   working --> loading: 8 s, to a vehicle
   working --> [*]: 8 s, to a place (placed)
   loading --> [*]: aboard (loaded), or 5 s (couldn't load him)
-  note right of loading: from any state, carrier down, casualty dead or up; from any but loading, superseded (left, put down)
+  note right of loading: from any state, carrier down, casualty dead or up, or the vehicle wrecked; from any but loading, superseded (left, put down)
 ```
 
 <!-- machine: treat -->

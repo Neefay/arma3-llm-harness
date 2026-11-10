@@ -1,3 +1,18 @@
+/*
+	NAME: brmh_cmd_fnc_startPlacing
+	DESCRIPTION: OCCUPY and CORDON: sends each free man to a spot, in turn, and starts the placing machine that holds
+		them there. Spots are shared out round the squad, so with fewer spots than men some share one. Ends the
+		squad's placing machine before.
+	PARAMETERS:
+		0 - Squad (GROUP)
+		1 - Spots, one per man, such as a building's positions or a ring round a cordon (ARRAY of positions)
+		2 - Where the men face once placed, or [] to leave them be (ARRAY)
+	USAGE:
+		[_group, _building buildingPos -1, []] call brmh_cmd_fnc_startPlacing;
+		[_group, _ring, [3450, 3050, 0]] call brmh_cmd_fnc_startPlacing;
+	RETURNS: The new length of brmh_cmd_builds (NUMBER)
+	ENVIRONMENT: Server, unscheduled
+*/
 params ["_group", "_spots", "_watch"];
 [_group, ["placing"]] call brmh_cmd_fnc_endMachines;
 private _count = count _spots;

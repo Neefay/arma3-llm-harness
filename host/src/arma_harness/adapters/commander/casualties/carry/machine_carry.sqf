@@ -1,5 +1,7 @@
 // A carry: the bearer goes to the casualty, lifts him and carries him to a place or a vehicle. Stepped every half
-// second by brmh_cmd_fnc_stepCarries. Its words are the radio's, with the casualty as their subject.
+// second by brmh_cmd_fnc_stepCarries. Its words are the radio's, with the casualty as their subject. States: going
+// (to him), fetching (as close as he got, the man is then pulled to him), lifting, carrying, working (stalled near the
+// place, the man is then put there) and loading (into the vehicle).
 brmh_cmd_carryMachine = [
 	["KIND", "carry"],
 	["INITIAL", "going"],
@@ -15,7 +17,14 @@ brmh_cmd_carryMachine = [
 		}, {}, "", "he died"],
 		[{
 			lifeState (_this get "SUBJECT") isNotEqualTo "INCAPACITATED"
-		}, {}, "", "he woke"]
+		}, {}, "", "he woke"],
+		[{
+			(_this get "TO") isEqualType objNull and {
+				not alive (_this get "TO")
+			}
+		}, {
+			(_this get "TO") getVariable ["brmh_cmd_key", ""]
+		}, "", "wrecked"]
 	]],
 	["STATES", [
 		["going", [
@@ -72,7 +81,7 @@ brmh_cmd_carryMachine = [
 			["DEADLINE", [8, {
 				private _medic = _this get "MEDIC";
 				private _casualty = _this get "SUBJECT";
-				_casualty setPosATL (_medic getPos [1.2, getDir _medic]);
+				_casualty setPosATL ((getPosATL _medic) vectorAdd ([sin getDir _medic, cos getDir _medic, 0] vectorMultiply 1.2));
 				[_casualty, "UnconsciousReviveDefault"] call brmh_cmd_fnc_carryPose;
 				[_medic, "AmovPercMstpSrasWrflDnon"] call brmh_cmd_fnc_carryPose;
 				[_this] call brmh_cmd_fnc_carryStartLift
@@ -86,6 +95,17 @@ brmh_cmd_carryMachine = [
 		["carrying", [
 			["EVERY", {
 				private _dummy = _this get "DUMMY";
+				// A vehicle that has moved off is followed, from where it is now.
+				private _place = [_this] call brmh_cmd_fnc_carryPlace;
+				private _sent = _this getOrDefault ["SENT", _place];
+				if ((_place distance2D _sent) > 5) then {
+					_dummy doMove _place;
+				};
+				if ((_place distance2D _sent) > 5 or {
+					not ("SENT" in _this)
+				}) then {
+					_this set ["SENT", _place];
+				};
 				if ((_dummy distance2D (_this get "LAST")) >= 1) then {
 					_this set ["LAST", getPosATL _dummy];
 					_this set ["MOVED", time];

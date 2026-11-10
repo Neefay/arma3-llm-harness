@@ -1,16 +1,20 @@
 /*
 	NAME: brmh_cmd_fnc_strikeOrder
 	DESCRIPTION: Sends a station's aircraft to bomb a grid, then back to its hold. A new order calls off the one before.
+		The run starts BRMH_CMD_RUN_IN_M out on the heading given. With none it's flown from where the aircraft is:
+		straight at the grid when that's farther than the run-in point, by the run-in point when it's nearer. On the
+		run the pilot fights nothing, and a plane goes up to at least 700 m. Refused, with the reason said, when it
+		isn't flying, has no bombs, or has only bombs that need a laser on the target.
 	PARAMETERS:
 		0 - Group (GROUP)
 		1 - Order id (STRING)
 		2 - Grid centre [x, y] (ARRAY)
-		3 - Bombs to drop, 1 to 4 (NUMBER)
-		4 - Run-in heading in degrees, or -1 for straight from where the aircraft is (NUMBER)
+		3 - (OPTIONAL) Bombs to drop, 1 to 4 (NUMBER) - Default: 1
+		4 - (OPTIONAL) Run-in heading in degrees, or -1 for straight from where the aircraft is (NUMBER) - Default: -1
 	USAGE:
 		[_group, "O-0004", [3750, 2450], 2, 0] call brmh_cmd_fnc_strikeOrder;
 	RETURNS: Nothing
-	ENVIRONMENT: Server
+	ENVIRONMENT: Server, unscheduled. Called by brmh_cmd_fnc_order for a "strike" order.
 */
 params [["_group", grpNull, [grpNull]], ["_order", "", [""]], ["_aim", [], [[]], [2, 3]], ["_bombs", 1, [0]], ["_heading", -1, [0]]];
 private _vehicle = vehicle leader _group;

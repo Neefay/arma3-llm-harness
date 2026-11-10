@@ -1,14 +1,18 @@
 /*
 	NAME: brmh_cmd_fnc_carryOrder
-	DESCRIPTION: A squad's free men each pick up a downed man, and carry him to a place or into a vehicle. The rest of the
-		squad carries on with its orders. With no list, it's everyone down within 100 m. A man it's already carrying goes
-		to the new place instead.
+	DESCRIPTION: A squad's free men each pick up a downed man, and carry him to a place or into a vehicle. The rest of
+		the squad carries on with its orders. With no list, it's everyone down within 100 m. A man it's already carrying
+		goes to the new place instead. An aid post is somewhere to put him down, 11 m out, not something to get into.
 	PARAMETERS:
 		0 - Group (GROUP)
 		1 - Order id (STRING)
-		2 - Who: [[man key, place], ...] (ARRAY)
-		3 - To: a position, or a vehicle's key (ARRAY or STRING)
-	ENVIRONMENT: Server
+		2 - Who: [[man key, place], ...], or [] for everyone down within 100 m (ARRAY)
+		3 - To: a position [x, y, z], or the key of a vehicle or an aid post (ARRAY or STRING)
+	USAGE:
+		[_group, "O-0007", [["m3", [3410, 2980]]], "V2"] call brmh_cmd_fnc_carryOrder;
+		[_group, "O-0008", [], [3500, 3020, 0]] call brmh_cmd_fnc_carryOrder;
+	RETURNS: Nothing
+	ENVIRONMENT: Server, unscheduled
 */
 params [["_group", grpNull, [grpNull]], ["_order", "", [""]], ["_who", [], [[]]], ["_to", [], [[], ""]]];
 private _target = if (_to isEqualType "") then {
@@ -32,13 +36,14 @@ if (_target isEqualType objNull and {
 };
 private _men = [_who] call brmh_cmd_fnc_targets;
 if (_who isEqualTo []) then {
-	_men = (brmh_cmd_down + ((units _group) select {
+	// The dead too can be on brmh_cmd_down: ACE's death clears unconsciousness without raising ace_unconscious.
+	_men = brmh_cmd_down + ((units _group) select {
+		not ([_x] call brmh_cmd_fnc_able)
+	});
+	_men = (_men arrayIntersect _men) select {
 		alive _x and {
-			not ([_x] call brmh_cmd_fnc_able)
-		}
-	})) arrayIntersect (brmh_cmd_down + units _group);
-	_men = _men select {
-		(_x distance2D leader _group) < 100 and {
+			(_x distance2D leader _group) < 100
+		} and {
 			[_group, _x] call brmh_cmd_fnc_friendly
 		}
 	};
@@ -48,7 +53,7 @@ if (_men isEqualTo []) exitWith {
 };
 private _bearers = (units _group) select {
 	[_x] call brmh_cmd_fnc_able and {
-		vehicle _x isEqualTo _x
+		isNull objectParent _x
 	} and {
 		not (_x getVariable ["brmh_cmd_busy", false])
 	}

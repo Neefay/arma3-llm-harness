@@ -1,3 +1,15 @@
+/*
+	NAME: brmh_cmd_fnc_carryLift
+	DESCRIPTION: He's on the bearer's shoulder, and they set off. A hidden civilian dummy that can't be hurt or shot at
+		walks to the place, with the bearer attached to it and his own animations off, and the man attached to him where
+		ACE puts a carried man. brmh_cmd_fnc_carryRelease deletes the dummy.
+	PARAMETERS:
+		0 - Carry (HASHMAP object)
+	USAGE:
+		[_carry] call brmh_cmd_fnc_carryLift;
+	RETURNS: Nothing
+	ENVIRONMENT: Server, unscheduled. The bearer and the man have to be local
+*/
 params ["_carry"];
 private _medic = _carry get "MEDIC";
 private _casualty = _carry get "SUBJECT";

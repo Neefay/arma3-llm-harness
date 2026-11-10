@@ -1,10 +1,21 @@
-// Each step: casualties waiting on a TREAT order go to the squad's free medics, one each. The medics' jobs are
-// brmh_cmd_treatMachine, stepped with the other machines.
+/*
+	NAME: brmh_cmd_fnc_stepTreats
+	DESCRIPTION: Each step: casualties waiting on a TREAT order go to the squad's free medics, one each. The medics'
+		jobs are brmh_cmd_treatMachine, stepped with the other machines in brmh_cmd_builds. A man who died or got up
+		while waiting is reported and dropped, and so is everyone waiting on a squad with no medic left. A man aboard an
+		ordinary vehicle, or being carried or treated already, waits. An order is dropped once nobody's waiting on it
+		and none of its medics is still at work.
+	PARAMETERS: None
+	USAGE:
+		call brmh_cmd_fnc_stepTreats; // every 2 s, from brmh_cmd_fnc_step
+	RETURNS: Nothing
+	ENVIRONMENT: Server, unscheduled
+*/
 {
 	private _treat = _x;
-	private _group = _treat get "group";
-	private _order = _treat get "order";
-	private _queue = _treat get "queue";
+	private _group = _treat get "GROUP";
+	private _order = _treat get "ORDER";
+	private _queue = _treat get "QUEUE";
 	private _free = (units _group) select {
 		[_x] call brmh_cmd_fnc_able and {
 			[_x] call brmh_cmd_fnc_isMedic
@@ -61,19 +72,19 @@
 		brmh_cmd_builds pushBack _job;
 		[_group, _order, "treat", _man, "going"] call brmh_cmd_fnc_careSay;
 	};
-	_treat set ["queue", _queue + _waiting];
+	_treat set ["QUEUE", _queue + _waiting];
 } forEach brmh_cmd_treats;
 // An order is done when nobody's waiting on it and none of its medics is still at work.
 brmh_cmd_treats = brmh_cmd_treats select {
 	private _treat = _x;
-	(_treat get "queue") isNotEqualTo [] or {
+	(_treat get "QUEUE") isNotEqualTo [] or {
 		(brmh_cmd_builds findIf {
 			((_x get "SPEC") get "KIND") isEqualTo "treat" and {
 				(_x get "STATE") isNotEqualTo ""
 			} and {
-				((_x get "TREAT") get "order") isEqualTo (_treat get "order")
+				((_x get "TREAT") get "ORDER") isEqualTo (_treat get "ORDER")
 			} and {
-				(_x get "GROUP") isEqualTo (_treat get "group")
+				(_x get "GROUP") isEqualTo (_treat get "GROUP")
 			}
 		}) >= 0
 	}

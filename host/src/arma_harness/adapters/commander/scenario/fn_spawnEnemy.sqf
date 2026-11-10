@@ -7,13 +7,15 @@
 		2 - Number of soldiers (NUMBER)
 		3 - Unit class (STRING)
 		4 - Position [x, y] (ARRAY)
-		5 - Mode: "hold" stays put, "garrison" takes positions in nearby buildings, "patrol" walks the area (STRING)
-		6 - Radius in metres (NUMBER)
-		7 - (OPTIONAL) For a garrison, the positions it may take, from brmh_cmd_fnc_probePositions (ARRAY) - Default: any
+		5 - (OPTIONAL) Mode: "hold" stays put, "garrison" takes positions in nearby buildings, "patrol" walks the area
+		    (STRING) - Default: "hold"
+		6 - (OPTIONAL) Radius in metres (NUMBER) - Default: 100
+		7 - (OPTIONAL) For a garrison, the positions it may take, from brmh_cmd_fnc_probePositions (ARRAY)
+		    - Default: [], any position up to 10 m high in the houses within the radius
 	USAGE:
 		["East 1", east, 6, "O_Soldier_F", [4100, 4160], "garrison", 120] call brmh_cmd_fnc_spawnEnemy;
-	RETURNS: Number of soldiers created
-	ENVIRONMENT: Server
+	RETURNS: Number of soldiers created (NUMBER)
+	ENVIRONMENT: Server, unscheduled
 */
 params [["_id", "", [""]], ["_side", east, [east]], ["_count", 1, [0]], ["_class", "", [""]], ["_at", [], [[]], 2], ["_mode", "hold", [""]], ["_radius", 100, [0]], ["_reachable", [], [[]]]];
 private _centre = _at + [0];

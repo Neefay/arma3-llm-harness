@@ -1,13 +1,14 @@
 /*
 	NAME: brmh_cmd_fnc_airLeave
-	DESCRIPTION: An aircraft at the end of its time on station flies off, 5 km out from the middle of the map, and circles
-		there. It isn't deleted, so its crew don't count as lost. Called by the host, which refuses it orders from then on.
+	DESCRIPTION: An aircraft at the end of its time on station calls off its strike or sortie ("bingo"), flies 5 km on,
+		straight away from the middle of the map, and circles there holding fire. It isn't deleted, so its crew don't
+		count as lost. Called by the host, which says the bingo call itself and refuses it orders from then on.
 	PARAMETERS:
 		0 - Callsign (STRING)
 	USAGE:
 		["Hawg"] call brmh_cmd_fnc_airLeave;
 	RETURNS: Nothing
-	ENVIRONMENT: Server
+	ENVIRONMENT: Server, unscheduled
 */
 params [["_callsign", "", [""]]];
 private _group = brmh_cmd_stations getOrDefault [_callsign, grpNull];

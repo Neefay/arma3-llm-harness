@@ -1,9 +1,31 @@
-// AI won't enter buildings to look for enemies it can't see, so soldiers are walked through every position in turn.
-// A position only counts once someone has stood on it: AI can't get into some buildings at all (a cargo house's floor is
-// up a step, and they stop 3 m outside), and a building nobody got into mustn't be reported as checked.
+/*
+	NAME: brmh_cmd_fnc_stepClearing
+	DESCRIPTION: AI won't enter buildings to look for enemies it can't see, so soldiers are walked through every
+		position in turn. A position only counts once someone has stood on it: AI can't get into some buildings at all
+		(a cargo house's floor is up a step, and they stop 3 m outside), and a building nobody got into mustn't be
+		reported as checked. Runs each step while the clearing is inside a building, and sets its BUSY to how many men
+		are still on their way to a position.
+	PARAMETERS:
+		0 - Clearing machine (HASHMAP object)
+	USAGE:
+		[_this] call brmh_cmd_fnc_stepClearing;
+	RETURNS: Nothing
+	ENVIRONMENT: Server, unscheduled
+*/
 params ["_machine"];
 private _spots = _machine get "SPOTS";
 private _busy = 0;
+private _free = [_machine get "GROUP"] call brmh_cmd_fnc_freeMen;
+// A man taken off to carry or treat, or down, gives back the position he was on his way to.
+{
+	private _held = _x getVariable "brmh_cmd_clearSpot";
+	if (not isNil "_held" and {
+		not (_x in _free)
+	}) then {
+		_spots pushBack _held;
+		_x setVariable ["brmh_cmd_clearSpot", nil];
+	};
+} forEach units (_machine get "GROUP");
 {
 	private _soldier = _x;
 	[_soldier] call brmh_cmd_fnc_noticeNearby;
@@ -48,5 +70,5 @@ private _busy = 0;
 			_busy = _busy + 1;
 		};
 	};
-} forEach ([_machine get "GROUP"] call brmh_cmd_fnc_freeMen);
+} forEach _free;
 _machine set ["BUSY", _busy];

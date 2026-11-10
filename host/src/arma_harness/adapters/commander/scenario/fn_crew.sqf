@@ -1,21 +1,23 @@
 /*
 	NAME: brmh_cmd_fnc_crew
-	DESCRIPTION: Starts a scenario with a soldier already in a seat. Operator action, never reachable by the commander.
+	DESCRIPTION: Starts a scenario with a soldier already in a seat: the last of the station's men on foot, in the first
+		free seat of that kind. Called once a seat, so a helicopter can get a pilot and a gunner. Operator action, never
+		reachable by the commander.
 	PARAMETERS:
 		0 - Callsign (STRING)
-		1 - Vehicle id (STRING)
-		2 - Seat: gunner, driver, commander or cargo (STRING)
+		1 - Vehicle id, the scenario's (STRING)
+		2 - (OPTIONAL) Seat: gunner, driver, commander or cargo (STRING) - Default: "gunner"
 	USAGE:
 		["Hammer", "V1", "gunner"] call brmh_cmd_fnc_crew;
-	RETURNS: Whether anybody got on
-	ENVIRONMENT: Server
+	RETURNS: Whether anybody got on (BOOL)
+	ENVIRONMENT: Server, unscheduled
 */
 params [["_callsign", "", [""]], ["_key", "", [""]], ["_kind", "gunner", [""]]];
 private _group = brmh_cmd_stations getOrDefault [_callsign, grpNull];
 private _vehicle = brmh_cmd_vehicles getOrDefault [_key, objNull];
 private _seat = ([_vehicle, _kind] call brmh_cmd_fnc_freeSeats) param [0, []];
-private _free = (+(units _group)) select {
-	vehicle _x isEqualTo _x
+private _free = (units _group) select {
+	isNull objectParent _x
 };
 reverse _free;
 if (_seat isEqualTo [] or {
@@ -33,7 +35,7 @@ switch (_kind) do {
 		_man moveInCommander _vehicle;
 	};
 	case "cargo": {
-		_man moveInCargo _vehicle;
+		_man moveInCargo [_vehicle, _seat # 2];
 	};
 	default {
 		_man moveInGunner _vehicle;

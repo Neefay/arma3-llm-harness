@@ -1,4 +1,5 @@
-// A medic's job, one casualty: he goes to him, then works on him until he's up. Its words are the radio's.
+// A medic's job, one casualty: he goes to him, then works on him until he's up. Its words are the radio's. States:
+// going and working. Made by brmh_cmd_fnc_stepTreats, and stepped every 2 s in brmh_cmd_builds by stepBuilds.
 brmh_cmd_treatMachine = [
 	["KIND", "treat"],
 	["INITIAL", "going"],
@@ -7,7 +8,7 @@ brmh_cmd_treatMachine = [
 			not ([_this get "MEDIC"] call brmh_cmd_fnc_able)
 		}, {
 			// Back in the queue, for another medic.
-			((_this get "TREAT") get "queue") pushBack (_this get "SUBJECT");
+			((_this get "TREAT") get "QUEUE") pushBack (_this get "SUBJECT");
 		}, "", "medic down"],
 		[{
 			not alive (_this get "SUBJECT")

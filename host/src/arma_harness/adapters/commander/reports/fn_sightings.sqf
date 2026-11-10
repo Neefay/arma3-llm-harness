@@ -1,5 +1,16 @@
-// What a squad can see of vehicles and destroyed buildings. The host decides what's news. Only worked out now and then,
-// because it's the most expensive thing here.
+/*
+	NAME: brmh_cmd_fnc_sightings
+	DESCRIPTION: What a squad can see of empty or wrecked vehicles and destroyed buildings, within 800 m of its first
+		able man. The host decides what's news. Only one squad per monitor step does this, because it's the most
+		expensive thing here. A vehicle seen for the first time gets a key ("U" and a number) in brmh_cmd_vehicles.
+	PARAMETERS:
+		0 - Group (GROUP)
+	USAGE:
+		[_group] call brmh_cmd_fnc_sightings;
+	RETURNS: Nothing. Sets the group's brmh_cmd_seenVehicles ([[key, display name, grid, alive], ...]) and
+		brmh_cmd_seenRuins ([building id, ...]), which the packet sends
+	ENVIRONMENT: Server, unscheduled (the 2 s monitor, brmh_cmd_fnc_step)
+*/
 params ["_group"];
 private _alive = (units _group) select {
 	[_x] call brmh_cmd_fnc_able
@@ -27,7 +38,9 @@ private _seen = [];
 	if ([_lookers, _vehicle, _top, ["FIRE", "VIEW"] select alive _vehicle] call brmh_cmd_fnc_canSee) then {
 		private _key = _vehicle getVariable ["brmh_cmd_key", ""];
 		if (_key isEqualTo "") then {
-			_key = format ["U%1", count brmh_cmd_vehicles + 1];
+			// A counter of its own: one taken from the list's size would repeat once anything left the list.
+			brmh_cmd_unknownCount = (missionNamespace getVariable ["brmh_cmd_unknownCount", 0]) + 1;
+			_key = format ["U%1", brmh_cmd_unknownCount];
 			_vehicle setVariable ["brmh_cmd_key", _key];
 			brmh_cmd_vehicles set [_key, _vehicle];
 		};

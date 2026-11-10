@@ -1,19 +1,21 @@
-// A repeat start reuses the running game. Renaming keeps old empty groups out of the new battle's records.
 /*
 	NAME: brmh_cmd_fnc_spawnVehicle
-	DESCRIPTION: Places a scenario's vehicle or gun. Operator action, never reachable by the commander.
+	DESCRIPTION: Places a scenario's vehicle or gun, under its id, marked as the harness's own so the reset between
+		battles deletes it. An aircraft can start flying, and gets ACE's guided bombs where ACE has them
+		(brmh_cmd_fnc_aceBombs); a gun's fire is tracked. Operator action, never reachable by the commander.
 	PARAMETERS:
 		0 - Scenario id (STRING)
 		1 - Class (STRING)
 		2 - Position [x, y] (ARRAY)
-		3 - Ammunition [magazine, rounds] pairs, empty to leave it as it comes (ARRAY)
+		3 - (OPTIONAL) Rounds by kind for the main turret, [[word, rounds], ...] as brmh_cmd_fnc_setAmmo takes them,
+		    empty to leave it as it comes (ARRAY) - Default: []
 		4 - (OPTIONAL) Height to start flying at, metres; 0 on the ground (NUMBER) - Default: 0
 		5 - (OPTIONAL) A magazine for each pylon in order, "" to leave one as it comes (ARRAY) - Default: []
 	USAGE:
-		["V1", "B_Mortar_01_F", [4150, 3350], [["8Rnd_82mm_Mo_shells", 16]]] call brmh_cmd_fnc_spawnVehicle;
+		["V1", "B_Mortar_01_F", [4150, 3350], [["HE", 16], ["SMOKE", 4]]] call brmh_cmd_fnc_spawnVehicle;
 		["V2", "B_Heli_Attack_01_dynamicLoadout_F", [2500, 1500], [], 150] call brmh_cmd_fnc_spawnVehicle;
-	RETURNS: Its display name
-	ENVIRONMENT: Server
+	RETURNS: Its display name (STRING)
+	ENVIRONMENT: Server, unscheduled
 */
 params [["_key", "", [""]], ["_class", "", [""]], ["_at", [], [[]], 2], ["_ammo", [], [[]]], ["_fly", 0, [0]], ["_pylons", [], [[]]]];
 private _vehicle = createVehicle [_class, _at + [0], [], 0, ["NONE", "FLY"] select (_fly > 0)];
@@ -27,7 +29,7 @@ if (_fly > 0) then {
 };
 {
 	if (_x isNotEqualTo "") then {
-		_vehicle setPylonLoadout [_forEachIndex + 1, _x, true];
+		[_vehicle, _forEachIndex + 1, _x] call brmh_cmd_fnc_setPylon;
 	};
 } forEach _pylons;
 [_vehicle] call brmh_cmd_fnc_aceBombs;

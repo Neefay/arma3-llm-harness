@@ -1,11 +1,22 @@
-// Who a squad knows is down: its own, wherever they are, and anyone else's on its side within sight of its leader.
+/*
+	NAME: brmh_cmd_fnc_casualties
+	DESCRIPTION: Who a squad knows is down, for its report: its own, wherever they are, and anyone else's on its side
+		within 30 m of its leader and in his sight. Each man gets a key the first time he's listed.
+	PARAMETERS:
+		0 - Group (GROUP)
+		1 - Its leader, whose sight counts (OBJECT)
+	USAGE:
+		["casualties", [_group, _leader] call brmh_cmd_fnc_casualties]
+	RETURNS: [[man key, name, x, y, vehicle key or "", aboard, ours, "", "carried" or "treated"], ...] (ARRAY)
+	ENVIRONMENT: Server, unscheduled
+*/
 params ["_group", "_leader"];
 private _down = (units _group) select {
 	alive _x and {
 		not ([_x] call brmh_cmd_fnc_able)
 	}
 };
-// Within sight, as the comment above says: near isn't enough, and a man down behind a wall can't be reported.
+// Within sight: near isn't enough, and a man down behind a wall can't be reported.
 private _others = brmh_cmd_down select {
 	alive _x and {
 		group _x isNotEqualTo _group

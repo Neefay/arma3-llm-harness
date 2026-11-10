@@ -1,3 +1,14 @@
+/*
+	NAME: brmh_cmd_fnc_stepProbe
+	DESCRIPTION: One step of brmh_cmd_fnc_probePositions' walk: sends each walker off when his turn comes, and decides
+		whether he got there. He hasn't if he stops getting closer for 20 s, or isn't there after 120 s. When all are
+		done it sets brmh_cmd_probe, deletes the walkers and removes its own per-frame handler.
+	PARAMETERS: None. Reads brmh_cmd_probeWalkers
+	USAGE:
+		brmh_cmd_probePfh = [{ call brmh_cmd_fnc_stepProbe }, 1] call CBA_fnc_addPerFrameHandler;
+	RETURNS: Nothing
+	ENVIRONMENT: Server, unscheduled (a CBA per-frame handler)
+*/
 {
 	private _walker = _x;
 	private _man = _walker get "MAN";

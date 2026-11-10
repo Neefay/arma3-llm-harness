@@ -1,10 +1,15 @@
 /*
 	NAME: brmh_cmd_fnc_callOffCare
-	DESCRIPTION: The squad's newest order says to do something else, so its men stop carrying, treating and building, and
-		go back to it. A casualty's left where he is. A man being put in a vehicle is a moment from done, so he's let finish.
+	DESCRIPTION: The squad's newest order says to do something else, so its men stop carrying, treating and building,
+		and go back to it. A casualty's left where he is. A man being put in a vehicle is a moment from done, so he's
+		let finish. Each man still waiting on a TREAT order is reported called off. Every other job of the squad's in
+		brmh_cmd_builds ends as well, a sortie or a clearing as much as an aid post, except a task or a boarding.
 	PARAMETERS:
 		0 - Group (GROUP)
-	ENVIRONMENT: Server
+	USAGE:
+		[_group] call brmh_cmd_fnc_callOffCare;
+	RETURNS: Nothing
+	ENVIRONMENT: Server, unscheduled
 */
 params [["_group", grpNull, [grpNull]]];
 {
@@ -19,11 +24,11 @@ brmh_cmd_carries = brmh_cmd_carries select {
 };
 {
 	private _treat = _x;
-	if ((_treat get "group") isEqualTo _group) then {
+	if ((_treat get "GROUP") isEqualTo _group) then {
 		{
-			[_group, _treat get "order", "treat", _x, "called off"] call brmh_cmd_fnc_careSay;
-		} forEach (_treat get "queue");
-		_treat set ["queue", []];
+			[_group, _treat get "ORDER", "treat", _x, "called off"] call brmh_cmd_fnc_careSay;
+		} forEach (_treat get "QUEUE");
+		_treat set ["QUEUE", []];
 	};
 } forEach brmh_cmd_treats;
 {

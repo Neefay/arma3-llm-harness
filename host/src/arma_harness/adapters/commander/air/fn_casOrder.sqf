@@ -1,13 +1,18 @@
 /*
 	NAME: brmh_cmd_fnc_casOrder
 	DESCRIPTION: Sends a station's aircraft to attack what it finds around a grid, then back to its hold. A new order
-		calls off the one before.
+		calls off the one before. The pilot flies a seek-and-destroy waypoint and fights by himself: what he spots
+		there is brmh_cmd_fnc_sortieSearch's, and the sortie machine reports how it goes. An aircraft that isn't
+		flying says so.
 	PARAMETERS:
 		0 - Group (GROUP)
 		1 - Order id (STRING)
 		2 - Grid centre [x, y] (ARRAY)
-		3 - Radius, metres (NUMBER)
-	ENVIRONMENT: Server
+		3 - (OPTIONAL) Radius searched, metres (NUMBER) - Default: 150
+	USAGE:
+		[_group, "O-0004", [3750, 2450], 200] call brmh_cmd_fnc_casOrder;
+	RETURNS: Nothing
+	ENVIRONMENT: Server, unscheduled. Called by brmh_cmd_fnc_order for a "cas" order.
 */
 params [["_group", grpNull, [grpNull]], ["_order", "", [""]], ["_aim", [], [[]], [2, 3]], ["_radius", 150, [0]]];
 private _vehicle = vehicle leader _group;

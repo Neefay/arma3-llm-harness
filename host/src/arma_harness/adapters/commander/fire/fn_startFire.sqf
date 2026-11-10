@@ -1,12 +1,16 @@
 /*
 	NAME: brmh_cmd_fnc_startFire
-	DESCRIPTION: Starts a station's fire mission on its guns. Every way this can silently do nothing is checked first or
-		watched for, and comes out in the packet as a state for the host to word.
+	DESCRIPTION: FIRE_MISSION: starts a station's fire mission on its guns, one fire machine per gun. Every way this
+		can silently do nothing is checked first or watched for, and comes out in the packet as a state for the host
+		to word. A gun that was already firing drops its old mission for the new one.
 	PARAMETERS:
 		0 - Group (GROUP)
 		1 - Order id (STRING)
-		2 - [gun keys, [x, y], "HE" or "SMOKE", rounds, radius] (ARRAY)
-	ENVIRONMENT: Server
+		2 - [gun keys or [] for all, [x, y], "HE" or "SMOKE", rounds per gun, radius in metres or 0] (ARRAY)
+	USAGE:
+		[_group, "O-0006", [["V1"], [4150, 3350], "HE", 3, 0]] call brmh_cmd_fnc_startFire;
+	RETURNS: Nothing
+	ENVIRONMENT: Server, unscheduled
 */
 params [["_group", grpNull, [grpNull]], ["_order", "", [""]], ["_leg", [], [[]], 5]];
 _leg params ["_keys", "_aim", "_word", "_want", "_radius"];
@@ -20,9 +24,10 @@ if (_guns isEqualTo []) then {
 	private _mission = createHashMapFromArray [["key", _gun getVariable ["brmh_cmd_key", ""]], ["order", _order], ["state", "unable"], ["word", _word], ["want", _want], ["fired", 0], ["inAir", 0], ["aim", (_aim select [0, 2]) + [0]], ["radius", _radius], ["gun", _gun]];
 	_missions pushBack _mission;
 	private _crew = gunner _gun;
-	private _magazine = (getArtilleryAmmo [_gun]) param [(getArtilleryAmmo [_gun]) findIf {
+	// The first of the type asked for, or "": no index of -1 that could read from the end.
+	private _magazine = ((getArtilleryAmmo [_gun]) select {
 		([_x] call brmh_cmd_fnc_ammoWord) isEqualTo _word
-	}, ""];
+	}) param [0, ""];
 	if (isNull _gun or {
 		not alive _gun
 	}) then {
@@ -52,6 +57,12 @@ if (_guns isEqualTo []) then {
 	_gun setVariable ["brmh_cmd_mission", _mission];
 	_gun doWatch (_mission get "aim");
 	[_mission] call brmh_cmd_fnc_fireChunk;
+	// A mission already running on this gun ends here, through its machine, so a release step would run.
+	{
+		if ((_x get "GUN") isEqualTo _gun) then {
+			_x call ["#END", []];
+		};
+	} forEach brmh_cmd_fireActive;
 	brmh_cmd_fireActive = brmh_cmd_fireActive select {
 		(_x get "GUN") isNotEqualTo _gun
 	};

@@ -36,13 +36,18 @@ if (isNil "brmh_cmd_carries") then {
 if (isNil "brmh_cmd_treats") then {
 	brmh_cmd_treats = [];
 };
-// Strikes: how far out a guided bomb is released, and the drag of the engine's unguided bombs (docs/COMMANDER_CAS.md).
 // The game side's own diagnostics (brmh_cmd_fnc_log): the least level written to the RPT, and whether warnings and
 // errors also go to the observers' chat. Kept across battles, so they can be set by hand on a running game.
 if (isNil "BRMH_CMD_LOG_LEVEL") then {
 	BRMH_CMD_LOG_LEVEL = "INFO";
 	BRMH_CMD_LOG_SCREEN = false;
 };
+// Strikes: the next ACE laser code to give one, and until when ACE's GPS aim point is spoken for by a bomb in release.
+if (isNil "brmh_cmd_laserCount") then {
+	brmh_cmd_laserCount = 0;
+	brmh_cmd_gpsBusyUntil = 0;
+};
+// Strikes: how far out a guided bomb is released, and the drag of the engine's unguided bombs (docs/COMMANDER_CAS.md).
 BRMH_CMD_GUIDED_RELEASE_M = 2400;
 BRMH_CMD_BOMB_DRAG = 0.000225;
 BRMH_CMD_BOMB_TURN = 6.9;
@@ -65,8 +70,13 @@ if (isNil "brmh_cmd_men") then {
 if (isNil "brmh_cmd_careTimes") then {
 	brmh_cmd_careTimes = createHashMapFromArray [["field_s", 120], ["facility_s", 60], ["build_s", 60]];
 };
-// A leader who wakes takes command back, and his squad runs back to him, wherever it's been sent. So whoever's got it keeps it.
-if (isNil "brmh_cmd_downHandler") then {
+// A leader who wakes takes command back, and his squad runs back to him, wherever it's been sent. So whoever's got it
+// keeps it.
+// Replaced on every run, like the monitor, so a changed handler takes effect without a mission restart.
+if (not isNil "brmh_cmd_downHandler") then {
+	["ace_unconscious", brmh_cmd_downHandler] call CBA_fnc_removeEventHandler;
+};
+call {
 	brmh_cmd_downHandler = ["ace_unconscious", {
 		params ["_unit", "_down"];
 		if (_down) then {

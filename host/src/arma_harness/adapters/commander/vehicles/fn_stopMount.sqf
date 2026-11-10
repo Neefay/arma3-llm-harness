@@ -1,4 +1,15 @@
-// A new order stops a boarding partway, and says so. With none under way, the last one's record goes.
+/*
+	NAME: brmh_cmd_fnc_stopMount
+	DESCRIPTION: A new order stops a boarding partway, and says so: the mount record reads "stopped", and those still
+		on their way are sent back. A getting-off under way is ended and its record goes, as does the last one's when
+		nothing is under way.
+	PARAMETERS:
+		0 - Group (GROUP)
+	USAGE:
+		[_group] call brmh_cmd_fnc_stopMount;
+	RETURNS: Nothing
+	ENVIRONMENT: Server, unscheduled
+*/
 params ["_group"];
 private _machine = [_group] call brmh_cmd_fnc_boarding;
 if (isNil "_machine") exitWith {

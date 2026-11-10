@@ -1,4 +1,16 @@
-// Sets what a gun's main turret carries, from [["HE", 16], ["SMOKE", 4]]. Types not listed are taken away.
+/*
+	NAME: brmh_cmd_fnc_setAmmo
+	DESCRIPTION: Sets what a gun's main turret carries, by the commander's word for each kind of round
+		(brmh_cmd_fnc_ammoWord). A kind's rounds all go to the first magazine type of that kind the gun carries, in full
+		magazines and a last part one. Kinds not listed, and any other magazine type of a listed kind, are taken away.
+	PARAMETERS:
+		0 - Gun, local to this machine (OBJECT)
+		1 - Rounds by kind: [[word, rounds], ...], words as brmh_cmd_fnc_ammoWord gives them (ARRAY)
+	USAGE:
+		[_vehicle, [["HE", 16], ["SMOKE", 4]]] call brmh_cmd_fnc_setAmmo;
+	RETURNS: Nothing
+	ENVIRONMENT: Server, unscheduled
+*/
 params ["_vehicle", "_ammo"];
 private _wanted = createHashMapFromArray _ammo;
 private _carried = [];

@@ -1,6 +1,26 @@
-// The one thing that stops a mission once it's running. Combat modes and disableAI don't.
-params ["_group", "_order", "_keys"];
-private _guns = [_group, _keys] call brmh_cmd_fnc_gunsOf;
+/*
+	NAME: brmh_cmd_fnc_checkFire
+	DESCRIPTION: CHECK_FIRE: stops a station's guns and ends their fire missions. doStop is the one thing that stops a
+		mission once it's running; combat modes and disableAI don't. Each gun's record in the packet becomes
+		"checked", keeping the rounds it fired and those still in the air. With no gun at all, one keyless row says so.
+	PARAMETERS:
+		0 - Group (GROUP)
+		1 - Order id (STRING)
+		2 - Gun keys, or [] for every gun the station crews (ARRAY)
+	USAGE:
+		[_group, "O-0007", ["V1"]] call brmh_cmd_fnc_checkFire;
+	RETURNS: Nothing
+	ENVIRONMENT: Server, unscheduled
+*/
+params [["_group", grpNull, [grpNull]], ["_order", "", [""]], ["_keys", [], [[]]]];
+// Only its own guns: one crewed by another station is that station's to stop.
+private _guns = ([_group, _keys] call brmh_cmd_fnc_gunsOf) select {
+	not isNull _x and {
+		isNull gunner _x or {
+			group gunner _x isEqualTo _group
+		}
+	}
+};
 private _rows = [];
 {
 	private _gun = _x;

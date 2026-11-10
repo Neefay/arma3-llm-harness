@@ -1,7 +1,11 @@
-// A strike: bombs on a grid, whatever is seen there. The pilot flies the run on engine waypoints, from a point 5 km out
-// on the heading given (or straight from where he is), and the release is timed by script, each frame, for the grid.
-// With ACE the bombs are ACE's own and guided: a laser shone straight down on the grid, or the GPS aim point.
-// Without ACE they fall where the release puts them (docs/COMMANDER_CAS.md).
+// A strike: bombs on a grid, whatever is seen there. The pilot flies the run on engine waypoints, from a point 9 km out
+// (BRMH_CMD_RUN_IN_M) on the heading given (or straight from where he is), and the release is timed by script, each
+// frame, for the grid. With ACE the bombs are ACE's own and guided: a laser shone straight down on the grid, or the GPS
+// aim point. Without ACE they fall where the release puts them (docs/COMMANDER_CAS.md).
+// States: inbound (to the run-in point), run (the release checked every frame by brmh_cmd_fnc_strikeRun's handler),
+// and away (bombs gone, then off target). A first run that passes the grid without a release goes around once.
+// Losing the pilot ends it from any state, and on any ending he goes back to his hold. Made by
+// brmh_cmd_fnc_strikeOrder, and stepped every 2 s with the other builds (brmh_cmd_fnc_stepBuilds).
 brmh_cmd_strikeMachine = [
 	["KIND", "strike"],
 	["INITIAL", "inbound"],
@@ -53,7 +57,9 @@ brmh_cmd_strikeMachine = [
 					_this get "GRID"
 				}, "", "no release"]
 			]],
-			["DEADLINE", [240, {
+			["DEADLINE", [{
+				_this get "RUN_S"
+			}, {
 				_this get "GRID"
 			}, "", "no release"]]
 		]],
@@ -75,7 +81,9 @@ brmh_cmd_strikeMachine = [
 			}, _laser, 60] call CBA_fnc_waitAndExecute;
 		};
 		if (alive _vehicle) then {
-			_vehicle flyInHeight (_vehicle getVariable ["brmh_cmd_flyHeight", 300]);
+			if (_vehicle isKindOf "Plane") then {
+				_vehicle flyInHeight (_vehicle getVariable ["brmh_cmd_flyHeight", 300]);
+			};
 			_group setBehaviour "AWARE";
 			[_group, _group getVariable ["brmh_cmd_hold", getPosATL _vehicle]] call brmh_cmd_fnc_holdAir;
 		};

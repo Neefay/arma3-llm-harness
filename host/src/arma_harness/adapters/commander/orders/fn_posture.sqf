@@ -1,3 +1,15 @@
+/*
+	NAME: brmh_cmd_fnc_posture
+	DESCRIPTION: Sets a squad's speed, formation, behaviour and combat mode, each only if given.
+	PARAMETERS:
+		0 - Squad (GROUP)
+		1 - Posture: [speed, formation, behaviour, combat mode], in the engine's own words; "" leaves a setting
+		    alone (ARRAY)
+	USAGE:
+		[_group, ["LIMITED", "", "STEALTH", ""]] call brmh_cmd_fnc_posture;
+	RETURNS: Nothing
+	ENVIRONMENT: Server, unscheduled
+*/
 params ["_group", "_posture"];
 _posture params ["_speed", "_formation", "_behaviour", "_combatMode"];
 if (_speed isNotEqualTo "") then {

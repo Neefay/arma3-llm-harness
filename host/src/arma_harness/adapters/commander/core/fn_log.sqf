@@ -17,7 +17,7 @@
 params [["_source", "", [""]], ["_level", "INFO", [""]], ["_message", "", [""]], ["_args", [], [[]]]];
 private _levels = ["DEBUG", "INFO", "WARNING", "ERROR"];
 private _rank = (_levels find toUpperANSI _level) max 0;
-if (_rank < ((_levels find BRMH_CMD_LOG_LEVEL) max 0)) exitWith {};
+if (_rank < ((_levels find toUpperANSI BRMH_CMD_LOG_LEVEL) max 0)) exitWith {};
 private _line = format ["[Commander:%1] %2: %3", _source, ["Debug", "Info", "Warning", "Error"] # _rank, format ([_message] + _args)];
 diag_log text _line;
 if (BRMH_CMD_LOG_SCREEN and {

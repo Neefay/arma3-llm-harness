@@ -1,12 +1,16 @@
 /*
 	NAME: brmh_cmd_fnc_treatOrder
-	DESCRIPTION: A station's medics go to downed men, one at a time each, and treat them. The time depends on where the man
-		is: see brmh_cmd_careTimes. Early on it stops him dying, and at the end he gets up.
+	DESCRIPTION: A station's medics go to downed men, one at a time each, and treat them. The time depends on where the
+		man is: see brmh_cmd_careTimes. Early on it stops him dying, and at the end he gets up. The men are queued here
+		and handed out by brmh_cmd_fnc_stepTreats. A man the squad was already waiting to treat moves to this order.
 	PARAMETERS:
 		0 - Group (GROUP)
 		1 - Order id (STRING)
-		2 - Who: [[man key, place], ...], or nobody for everyone down within 100 m (ARRAY)
-	ENVIRONMENT: Server
+		2 - Who: [[man key, place], ...], or [] for everyone down within 100 m (ARRAY)
+	USAGE:
+		[_group, "O-0011", [["m3", [3410, 2980]], ["m5", [3415, 2990]]]] call brmh_cmd_fnc_treatOrder;
+	RETURNS: Nothing
+	ENVIRONMENT: Server, unscheduled
 */
 params [["_group", grpNull, [grpNull]], ["_order", "", [""]], ["_who", [], [[]]]];
 private _medics = (units _group) select {
@@ -65,8 +69,8 @@ private _queue = [];
 if (_queue isEqualTo []) exitWith {};
 // Told again about someone it's still waiting on: this order has him now, or he'd get two medics.
 {
-	if ((_x get "group") isEqualTo _group) then {
-		_x set ["queue", (_x get "queue") - _queue];
+	if ((_x get "GROUP") isEqualTo _group) then {
+		_x set ["QUEUE", (_x get "QUEUE") - _queue];
 	};
 } forEach brmh_cmd_treats;
-brmh_cmd_treats pushBack (createHashMapFromArray [["group", _group], ["order", _order], ["queue", _queue]]);
+brmh_cmd_treats pushBack (createHashMapFromArray [["GROUP", _group], ["ORDER", _order], ["QUEUE", _queue]]);
