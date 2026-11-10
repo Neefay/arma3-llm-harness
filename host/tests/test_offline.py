@@ -272,6 +272,43 @@ def test_claim_name_refuses_live_holder(tmp_path, monkeypatch, no_arma):
     assert h.claim_name("Athena")["others"] == ["Zeus"]
 
 
+def run_with_server(harness, pid, mode="launched", kind="server"):
+    from arma_harness.harness import Proc, RunState
+
+    harness._save(RunState(run_id="r", mode=mode, mission="commander", folder="", token="t", bridge_pid=pid,
+                           adapters=[], overrides={}, procs=[Proc(pid, kind, "server", "", "")], started=0.0))
+
+
+def test_a_run_whose_server_has_gone_doesnt_block_the_next(tmp_path, monkeypatch, no_arma):
+    from arma_harness.harness import Harness
+
+    monkeypatch.setenv("BRMH_HOME", str(tmp_path))
+    h = Harness()
+    run_with_server(h, 999999)
+    assert h.forget_dead_run() is True and h.state() is None
+    assert h.forget_dead_run() is False  # and nothing to do with no run at all
+
+
+def test_a_run_whose_server_is_up_is_left_alone(tmp_path, monkeypatch, no_arma):
+    import os
+
+    from arma_harness.harness import Harness
+
+    monkeypatch.setenv("BRMH_HOME", str(tmp_path))
+    h = Harness()
+    run_with_server(h, os.getpid())
+    assert h.forget_dead_run() is False and h.state() is not None
+
+
+def test_a_game_the_user_started_is_never_forgotten(tmp_path, monkeypatch, no_arma):
+    from arma_harness.harness import Harness
+
+    monkeypatch.setenv("BRMH_HOME", str(tmp_path))
+    h = Harness()
+    run_with_server(h, 999999, mode="attached", kind="attached")
+    assert h.forget_dead_run() is False and h.state() is not None
+
+
 def test_claimed_names_get_distinct_colors(tmp_path, monkeypatch, no_arma):
     from arma_harness.harness import Harness, agent_color
 

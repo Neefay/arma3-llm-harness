@@ -1,0 +1,59 @@
+# The commander benchmark (docs/COMMANDER_BENCHMARK.md): six scenarios, each played on the same six seeds by every
+# model, so each faces the same hidden situations. A seed fixes what the commander isn't told; what the game's AI then
+# does still varies run to run.
+#
+# Each seed's line is what it hides, exactly as `commander compare --csv` writes it in its "hidden" column. A test
+# draws every seed and checks it against this, so an edit to a scenario that changes what a seed means fails there,
+# not quietly in the results.
+#
+# The seeds cover each scenario's hidden variants evenly:
+#   llm_hidden_gun    the main gun at each of its three spots, with and without the second gun
+#   llm_two_roads     the ambush on the western track, on the eastern track, and none: two each
+#   llm_decoy         six starting points for the patrol
+#   llm_silence       Kilo, Lima and Mike silenced, two each, at different times
+#   llm_guns_only     the section at each of its three spots, two each
+#   llm_danger_close  nothing is drawn: six repeats of the same battle
+mode: hold
+scenarios:
+  llm_hidden_gun:
+    2: East Section 032 029; East Gun 032 027
+    1: East Section 032 029; East Gun 032 027; East Second Gun 032 028
+    5: East Section 032 029; East Gun 033 027
+    116: East Section 032 029; East Gun 033 027; East Second Gun 031 028
+    7: East Section 032 029; East Gun 033 028
+    40: East Section 032 029; East Gun 033 028; East Second Gun 032 028
+  llm_two_roads:
+    1: East Ambush 031 023
+    2: East Ambush 031 023
+    7: East Ambush 037 026
+    9: East Ambush 037 026
+    5: ""
+    6: ""
+  llm_decoy:
+    1: East Garrison 019 027; East Patrol 022 027
+    2: East Garrison 019 027; East Patrol 022 029
+    3: East Garrison 019 027; East Patrol 023 026
+    4: East Garrison 019 027; East Patrol 024 028
+    5: East Garrison 019 027; East Patrol 021 027
+    6: East Garrison 019 027; East Patrol 021 028
+  llm_silence:
+    1: East Raiders 019 024; kill_station Kilo at 8:25
+    2: East Raiders 019 024; kill_station Kilo at 6:23
+    7: East Raiders 021 031; kill_station Lima at 6:38
+    9: East Raiders 021 031; kill_station Lima at 8:36
+    5: East Raiders 026 036; kill_station Mike at 7:05
+    6: East Raiders 026 036; kill_station Mike at 9:30
+  llm_guns_only:
+    1: East Section 042 027
+    2: East Section 042 027
+    5: East Section 043 026
+    6: East Section 043 026
+    7: East Section 043 027
+    9: East Section 043 027
+  llm_danger_close:
+    1: Hill Section 031 027; Crest Group 031 028
+    2: Hill Section 031 027; Crest Group 031 028
+    3: Hill Section 031 027; Crest Group 031 028
+    4: Hill Section 031 027; Crest Group 031 028
+    5: Hill Section 031 027; Crest Group 031 028
+    6: Hill Section 031 027; Crest Group 031 028

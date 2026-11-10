@@ -1,0 +1,38 @@
+# A strike on a bare grid: an A-164 bombs a grid whether or not anything is seen there (docs/COMMANDER_CAS.md). With ACE,
+# its GBU-12s are swapped for ACE's and guided onto the grid by a laser nobody holds. The same order without ACE uses the
+# Mk82s, released where they'll fall on the grid: see stratis_strike_dumb.yaml.
+name: stratis_strike
+mission: commander_stratis_ace
+time_limit: "15:00"
+ao: { at: "035 023", radius: 400 }
+objective: Destroy the enemy machine gun position at grid 037 024.
+text: >
+  An enemy machine gun position with its crew and a few riflemen is at grid 037 024, east of Agios Ioannis. Hog, an
+  A-164 with four GBU-12s and two Mk82s, is holding over grid 020 015. Recon is watching from grid 034 022.
+  Destroy the position.
+vehicles:
+  - { id: V1, class: B_Plane_CAS_01_dynamicLoadout_F, at: "020 015", fly: 600,
+      pylons: ["", "", "", "", "", "", "", PylonMissile_1Rnd_Mk82_F, PylonMissile_1Rnd_Mk82_F, ""] }
+stations:
+  - callsign: Hog
+    role: attack aircraft, one A-164 Wipeout
+    capabilities: [STRIKE, CAS]
+    at: "020 015"
+    units: 1
+    class: B_Pilot_F
+    crew: { V1: [driver] }
+  - callsign: Recon
+    role: scout team, trained to correct fire
+    capabilities: [MOVE, HOLD, SENTRY, HALT, POSTURE]
+    at: "034 022"
+    units: 3
+    class: B_recon_F
+    spotter: true
+enemies:
+  - { id: East Gun, at: "037 024", vehicle: O_HMG_01_high_F, dir: 225, mode: hold }
+  - { id: East Section, at: "037 024", units: 4, mode: hold, radius: 30 }
+success:
+  enemy_cleared: true
+failure:
+  all_stations_lost: true
+mid_turn_messages: hold

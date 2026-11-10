@@ -11,7 +11,49 @@ from ..sqf import strip_comments
 
 
 def load_sqf(name: str) -> str:
+    if name == "commander_boot.sqf":  # the name it had as one file, still used by spikes
+        return load_commander()
     return strip_comments(resources.files(__package__).joinpath(name).read_text(encoding="utf-8"))
+
+
+def commander_files() -> list:
+    """Commander mode's game side, in the order it's run: its state, the machines' declarations (data), one file per
+    function, and the monitor that starts it all."""
+    folder = resources.files(__package__).joinpath("commander")
+    files = sorted((entry for entry in _walk(folder) if entry.name.endswith(".sqf")), key=lambda entry: entry.name)
+    seen = [entry.name for entry in files]
+    twice = sorted({name for name in seen if seen.count(name) > 1})
+    if twice:  # two files would define one function, and the last one loaded would quietly win
+        raise ValueError(f"commander SQF files with the same name in two folders: {', '.join(twice)}")
+    machines = [entry for entry in files if entry.name.startswith("machine_")]
+    functions = [entry for entry in files if entry.name.startswith("fn_")]
+    return [folder.joinpath("init.sqf"), *machines, *functions, folder.joinpath("start.sqf")]
+
+
+def _walk(folder) -> list:
+    """Every file under a folder, its subfolders' too. The folders are only for people: a function is named by its
+    file, wherever it is."""
+    found = []
+    for entry in folder.iterdir():
+        found += _walk(entry) if entry.is_dir() else [entry]
+    return found
+
+
+def commander_source() -> str:
+    """The game side as one program, comments kept. A function's file holds its header and body, as a CfgFunctions
+    file would, and is defined here as brmh_cmd_fnc_<name>."""
+    parts = []
+    for entry in commander_files():
+        text = entry.read_text(encoding="utf-8").rstrip("\n")
+        if entry.name.startswith("fn_"):
+            body = "\n".join("\t" + line if line else line for line in text.split("\n"))
+            text = f"brmh_cmd_fnc_{entry.name[3:-4]} = {{\n{body}\n}};"
+        parts.append(text)
+    return "\n\n".join(parts) + "\n"
+
+
+def load_commander() -> str:
+    return strip_comments(commander_source())
 
 
 def boot_items(adapters: list[str], overrides: dict) -> list[dict]:

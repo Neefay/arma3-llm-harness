@@ -1,0 +1,34 @@
+# Close air support: a Blackfoot holding south-west of Agios Ioannis, and an enemy squad in the open that goes to ground
+# when it sees the helicopter, which the engine's own spotting misses. The pilot's search is what finds them.
+# The pilot attacks only what he finds himself around the grid he's given (docs/COMMANDER_CAS.md).
+name: stratis_cas
+mission: commander_stratis
+time_limit: "15:00"
+ao: { at: "035 023", radius: 400 }
+objective: Destroy the enemy squad in the open around grid 037 024.
+text: >
+  An enemy squad has been seen in the open around grid 037 024, east of Agios Ioannis. Hawg, an AH-99 Blackfoot, is
+  holding over grid 025 018. Recon is watching from grid 034 022. Destroy the squad.
+vehicles:
+  - { id: V1, class: B_Heli_Attack_01_dynamicLoadout_F, at: "025 018", fly: 150 }
+stations:
+  - callsign: Hawg
+    role: attack helicopter, one AH-99 Blackfoot
+    capabilities: [CAS]
+    at: "025 018"
+    units: 2
+    class: B_Helipilot_F
+    crew: { V1: [driver, gunner] }
+  - callsign: Recon
+    role: scout team
+    capabilities: [MOVE, HOLD, SENTRY, HALT, POSTURE]
+    at: "034 022"
+    units: 3
+    class: B_recon_F
+enemies:
+  - { id: East Squad, at: "037 024", units: 6, mode: hold, radius: 40 }
+success:
+  enemy_cleared: true
+failure:
+  all_stations_lost: true
+mid_turn_messages: hold

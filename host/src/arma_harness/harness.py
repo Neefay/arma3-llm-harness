@@ -159,8 +159,21 @@ class Harness:
 
     # -- lifecycle -----------------------------------------------------------------------------
 
+    def forget_dead_run(self) -> bool:
+        """A run we launched whose server has exited is over, however it went. Without this it blocks the next start,
+        with an error about a bridge that nothing will ever answer on. An attached game is the user's, so it's left."""
+        st = self.state()
+        if st is None or st.mode != "launched":
+            return False
+        server = next((p for p in st.procs if p.kind == "server"), None)
+        if server is None or procutil.alive(server.pid, server.exe or None):
+            return False
+        self.stop()
+        return True
+
     def start(self, mission: str | None = None, hcs: int = 0, client: bool = False,
               overrides: dict | None = None, timeout: float = 180) -> dict:
+        self.forget_dead_run()
         if self.state():
             raise HarnessError("a run is already active; stop it first (arma_stop)")
         profile = self.config.mission(mission)

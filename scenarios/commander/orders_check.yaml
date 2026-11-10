@@ -1,0 +1,45 @@
+# Plumbing check for every building and CBA order, with nobody to fight. Used by host/tests/live_commander.py.
+name: orders_check
+mission: commander
+time_limit: "9:00"
+ao: { at: "041 041", radius: 400 }
+text: >
+  A check of every order type. There is no enemy.
+stations:
+  - callsign: Occupy
+    role: test squad
+    capabilities: [MOVE, HOLD, CLEAR, OCCUPY, CORDON, ATTACK, DEFEND, PATROL_AREA, SWEEP, HALT, POSTURE]
+    at: "038 039"
+    units: 4
+  - callsign: Cordon
+    role: test squad
+    capabilities: [MOVE, HOLD, CLEAR, OCCUPY, CORDON, ATTACK, DEFEND, PATROL_AREA, SWEEP, HALT, POSTURE]
+    at: "039 039"
+    units: 4
+  - callsign: Defend
+    role: test squad
+    capabilities: [MOVE, HOLD, CLEAR, OCCUPY, CORDON, ATTACK, DEFEND, PATROL_AREA, SWEEP, HALT, POSTURE]
+    at: "040 039"
+    units: 4
+  - callsign: Attack
+    role: test squad
+    capabilities: [MOVE, HOLD, CLEAR, OCCUPY, CORDON, ATTACK, DEFEND, PATROL_AREA, SWEEP, HALT, POSTURE]
+    at: "041 037"
+    units: 4
+  - callsign: Sweep
+    role: test squad
+    capabilities: [MOVE, HOLD, CLEAR, OCCUPY, CORDON, ATTACK, DEFEND, PATROL_AREA, SWEEP, HALT, POSTURE]
+    at: "042 039"
+    units: 4
+  - callsign: Patrol
+    role: test squad
+    capabilities: [MOVE, HOLD, CLEAR, OCCUPY, CORDON, ATTACK, DEFEND, PATROL_AREA, SWEEP, HALT, POSTURE]
+    at: "043 039"
+    units: 4
+  - callsign: Clear
+    role: test squad
+    capabilities: [MOVE, HOLD, CLEAR, OCCUPY, CORDON, ATTACK, DEFEND, PATROL_AREA, SWEEP, HALT, POSTURE]
+    at: "044 039"
+    units: 4
+debounce: { quiet_s: 3, ceiling_s: 15 }
+mid_turn_messages: hold

@@ -1,0 +1,34 @@
+# Plumbing check for casualties beyond the plan in casevac_rv. Used by host/tests/live_commander.py.
+name: casevac_cases
+mission: commander_ace
+time_limit: "30:00"
+text: >
+  A check of casualties. There is no enemy.
+medical: { field_s: 25, facility_s: 10, build_s: 10 }
+vehicles:
+  - { id: V2, class: B_Truck_01_medical_F, at: "052 060" }
+  - { id: V1, class: B_Truck_01_transport_F, at: "049 062" }
+stations:
+  - callsign: Bravo
+    role: infantry squad, with no medic
+    capabilities: [MOVE, HOLD, MOUNT, DISMOUNT, CARRY, UNLOAD, TREAT, HALT, POSTURE]
+    at: "050 060"
+    units: 6
+  - callsign: Charlie
+    role: infantry squad
+    capabilities: [MOVE, HOLD]
+    at: "065 060"
+    units: 4
+  - callsign: Lone
+    role: a squad about to be wiped out
+    capabilities: [MOVE]
+    at: "058 060"
+    units: 4
+  - callsign: Medics
+    role: medical team
+    capabilities: [MOVE, HOLD, MOUNT, DISMOUNT, CARRY, TREAT, AID_POST]
+    at: "050 055"
+    units: 3
+    medics: 2
+debounce: { quiet_s: 3, ceiling_s: 15 }
+mid_turn_messages: hold

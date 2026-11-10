@@ -1,0 +1,22 @@
+# Failure variant: Alpha disappears partway, and no report says so. Only the commander's own timer can catch it.
+name: poc_a_to_b_lost
+mission: demo_vr
+time_limit: "3:00"
+text: >
+  Alpha is at point A, grid 030 030. Get Alpha to point B, grid 034 030.
+stations:
+  - callsign: Alpha
+    role: infantry section
+    capabilities: [MOVE, HOLD, HALT, POSTURE]
+    at: "030 030"
+    units: 4
+markers:
+  - { id: B, kind: objective, label: Point B, at: "034 030" }
+success:
+  station: Alpha
+  within_m: 10
+  of: "034 030"
+events:
+  - { at: "0:30", action: delete_station, station: Alpha }
+debounce: { quiet_s: 3, ceiling_s: 15 }
+mid_turn_messages: hold

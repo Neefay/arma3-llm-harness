@@ -1,0 +1,1479 @@
+"""The running commander: turns game events into radio traffic and wakes, and carries out its tool calls.
+
+Only four event types are ever read from the game: cmd_tick, cmd_report, cmd_truth and killed. Truth and kills go
+straight to files for review. Tool results reveal nothing about what happened to a unit: consequences arrive by radio,
+or don't.
+"""
+from __future__ import annotations
+
+import math
+import re
+import threading
+import time
+import traceback
+from dataclasses import asdict
+from typing import Protocol
+
+from . import map as map_mod
+from . import orders as orders_mod
+from . import reports
+from . import scenario as scenario_mod
+from .orders import Invalid, format_time, parse_grid, parse_time
+from .records import Records
+from .reports import Tracker, format_grid
+from .scenario import Scenario
+from .terrain import Terrain, place_kind
+from .wake import Wake, WakeLogic
+
+PACKET_FRESH_S = 6
+CLOCK_COAST_S = 3
+GAME_LOST_S = 15
+SUCCESS_GRACE_S = 10
+RECORD_AFTER_END_S = 15  # the last deaths and final positions, for the after-action review
+TRAFFIC_CAP = 25
+MAX_SCHEDULES = 20
+MIN_REPEAT_S = 30
+MARKER_KINDS = {"enemy", "friendly", "objective", "phase_line", "area", "danger", "hypothesis", "note"}
+MARKER_CONFIDENCE = {"low", "medium", "high"}
+NOTES_LIMIT = 1500
+QUESTION_TOPICS = {"position", "task", "strength", "casualties", "ammo", "contacts", "eta", "vehicles"}
+ORDER_CODE = "_this call brmh_cmd_fnc_order"
+DELETE_CODE = "_this call brmh_cmd_fnc_deleteStation"
+KNOCK_DOWN_CODE = "_this call brmh_cmd_fnc_knockDown"
+KILL_CODE = "_this call brmh_cmd_fnc_killStation"
+LEAVE_CODE = "_this call brmh_cmd_fnc_airLeave"
+SHOW_CODE = "_this call brmh_cmd_fnc_show"
+MIRROR_CODE = "_this call brmh_cmd_fnc_mirror"
+
+
+class Game(Protocol):
+    def events(self, since: int, wait: float) -> dict: ...
+    def exec(self, code: str, args: list) -> dict: ...
+
+
+# Each station's report, as the game's brmh_cmd_fnc_packet builds it. A field left off this list never reaches anything
+# that reads it, with no error, so test_packet_fields.py checks it against the game's code.
+PACKET_FIELDS = (
+    "callsign", "pos", "grid", "dir", "speed", "able", "wounded", "baseline", "leader", "rounds", "rounds_baseline",
+    "behaviour", "speed_mode", "spread", "combat_mode", "order", "unable", "leg", "legs", "clearing", "cleared",
+    "placed", "contacts", "suppression", "ruined", "blocked", "seen_vehicles", "seen_ruins", "mounted", "mount",
+    "missions",
+    "gun_ammo", "limping", "casualties", "up", "medical")
+PACKET_HOST_FIELDS = ("t", "under_way", "targets_listed", "contact_ref")  # added here, after the game's report arrives
+# Each group in the truth record, as brmh_cmd_fnc_truth builds it. Only the review and the objectives read it.
+TRUTH_GROUP_FIELDS = ("group", "side", "able", "down", "mounted", "limping", "leader_limping", "units", "pos")
+
+# An order to the whole squad takes over from the rest of a chained order. POSTURE, fire orders, and orders about the
+# wounded leave it running, as they leave everything else.
+CANCELS_A_CHAIN = {"replace", "halt", "mount", "dismount", "chain"}
+AIR_PACE = 60  # m/s, about a Blackfoot's cruise; only for the "minutes out" a pilot gives
+STRIKE_PACE = 125  # m/s, an A-164 out to its run-in point and back in, as flown on Stratis
+RUN_IN_M = 9000  # BRMH_CMD_RUN_IN_M in adapters/commander/init.sqf: where a strike's run starts
+
+
+def strike_route(start: list, aim: list, heading: float) -> float:
+    """How far a strike flies before its bombs land: to the run-in point on the heading, or straight at the grid from
+    far enough out when no heading was given (brmh_cmd_fnc_strikeOrder)."""
+    away = math.dist(start, aim)
+    if heading < 0:
+        if away > RUN_IN_M - 1000:
+            return away
+        heading = math.degrees(math.atan2(aim[0] - start[0], aim[1] - start[1]))
+    back = math.radians(heading + 180)
+    run_in = [aim[0] + RUN_IN_M * math.sin(back), aim[1] + RUN_IN_M * math.cos(back)]
+    return math.dist(start, run_in) + RUN_IN_M
+
+
+class Runtime:
+    def __init__(self, game: Game, scenario: Scenario, records: Records, deliver, world_size: float = 0,
+                 clock=time.monotonic, buildings: list[dict] | None = None, vehicles: list[dict] | None = None,
+                 terrain: Terrain | None = None):
+        self.game, self.scenario, self.records, self.deliver = game, scenario, records, deliver
+        self.world_size = world_size
+        self.buildings = buildings or []
+        self.terrain = terrain  # the ground, as the commander's paper map shows it; None on a world without one
+        self.wall = clock
+        self.lock = threading.RLock()
+        self.mission_t: float | None = None
+        self.seen_at = 0.0
+        self.packets: dict[str, dict] = {}
+        self.game_lost_since: float | None = None
+        self.game_lost_said = False
+        self.dirty = False
+
+        saved = records.load_state()
+        self.t0: float | None = saved.get("t0")
+        self.turn: int = saved.get("turn", 0)
+        self.cursor: int | None = saved.get("cursor")
+        self.delivered: int = saved.get("delivered", 0)
+        self.ended: str = saved.get("ended", "")
+        self.ended_at: float | None = saved.get("ended_at")
+        self.restarted: bool = saved.get("restarted", False)
+        self.outbox: list[dict] = saved.get("outbox", [])
+        self.fire_orders: dict[str, dict] = saved.get("fire_orders", {})
+        self.casualties: dict[str, dict] = saved.get("casualties", {})
+        self.destroyed: dict[str, float] = saved.get("destroyed", {})
+        self.vehicles: dict[str, dict] = saved.get("vehicles") or {
+            vehicle["id"]: {"id": vehicle["id"], "key": vehicle["id"], "name": vehicle["name"], "at": vehicle["at"],
+                            "t": None, "wrecked": False}
+            for vehicle in vehicles or [] if vehicle.get("known", True)}
+        self.objectives_due: dict[str, dict] = saved.get("objectives_due", {})  # met, and waiting for last words
+        self.objectives_done: dict[str, float] = saved.get("objectives_done", {})
+        self.next_id: dict[str, int] = saved.get("next_id", {})
+        self.schedules: dict[str, dict] = saved.get("schedules", {})
+        self.missed: dict[str, int] = saved.get("missed", {})
+        self.checked: dict[str, float] = saved.get("checked", {})
+        self.last_checkin: dict[str, str] = saved.get("last_checkin", {})
+        self.markers: dict[str, dict] = saved.get("markers", {
+            m["id"]: {"id": m["id"], "kind": m.get("kind", "note"), "at": m["at"], "label": m.get("label", ""),
+                      "confidence": "", "sources": [], "expires": None, "t": None}
+            for m in scenario.markers.values()})
+        self.routes: dict[str, dict] = saved.get("routes", {})
+        self.chains: dict[str, dict] = saved.get("chains", {})
+        self.last_heard: dict[str, float] = saved.get("last_heard", {})
+        self.positions: dict[str, dict] = saved.get("positions", {})
+        self.events_done: list[int] = saved.get("events_done", [])
+        self.left: dict[str, float] = saved.get("left", {})  # aircraft gone off station, and when
+        self.cas_grids: dict[str, list] = saved.get("cas_grids", {})  # the grid each pilot was last sent to
+        self.turn_row: dict | None = saved.get("turn_row")
+        # A battle saved by an older version may have fields that have since been renamed: start those afresh.
+        known = Tracker.__dataclass_fields__
+        self.trackers = {k: Tracker(**{field: value for field, value in v.items() if field in known})
+                         for k, v in saved.get("trackers", {}).items()}
+        if "wake" in saved:
+            fields = WakeLogic.__dataclass_fields__
+            self.wake = WakeLogic(**{field: value for field, value in saved["wake"].items() if field in fields})
+        else:
+            self.wake = WakeLogic(quiet_s=scenario.quiet_s, ceiling_s=scenario.ceiling_s,
+                                  mode=scenario.mid_turn_messages)
+        self.radio: list[dict] = records.read("radio")
+        # Rows are written as they happen, and the counters only when the state is saved: after a crash between the
+        # two, an order could get an id already used, and its squad would never acknowledge it.
+        for prefix, rows in (("R", self.radio), ("O", records.read("orders"))):
+            used = [int(row["id"].split("-")[1]) for row in rows if str(row.get("id", "")).startswith(f"{prefix}-")]
+            self.next_id[prefix] = max([self.next_id.get(prefix, 1), *(number + 1 for number in used)])
+
+    # -- clock -----------------------------------------------------------------------------------
+
+    def now(self) -> float:
+        """Mission time. It coasts briefly between ticks, and stops if ticks stop, as when the game is paused."""
+        if self.mission_t is None:
+            return 0.0
+        return self.mission_t + min(self.wall() - self.seen_at, CLOCK_COAST_S)
+
+    def rel(self, t: float | None = None) -> float:
+        return (self.now() if t is None else t) - (self.t0 or 0.0)
+
+    def _id(self, prefix: str) -> str:
+        number = self.next_id.get(prefix, 1)
+        self.next_id[prefix] = number + 1
+        return f"{prefix}{number}" if prefix in "WSMVT" else f"{prefix}-{number:04d}"
+
+    # -- game side -------------------------------------------------------------------------------
+
+    def step(self, wait: float = 0.5) -> None:
+        """One pass of the background loop: read events, run scenario events, deliver any wake due."""
+        try:
+            if self.cursor is None:
+                self.cursor = int(self.game.events(1 << 60, 0).get("next", 0))
+            result = self.game.events(self.cursor, wait)
+        except Exception as exc:  # any failure here means the game is out of reach
+            self._game_lost(exc)
+            return
+        with self.lock:
+            self.game_lost_since, self.game_lost_said = None, False
+            for event in result.get("events", []):
+                try:
+                    self._event(event)
+                except Exception:  # one bad event mustn't stop the battle: the cursor would never pass it
+                    self.records.operator_log(f"event skipped: {event}\n{traceback.format_exc()}")
+            self.cursor = result.get("next", self.cursor)
+            self.tick()
+
+    def _game_lost(self, exc: Exception) -> None:
+        with self.lock:
+            if self.game_lost_since is None:
+                self.game_lost_since = self.wall()
+                self.records.operator_log(f"game unreachable: {exc}")
+            if self.t0 is not None and not self.ended and not self.game_lost_said \
+                    and self.wall() - self.game_lost_since >= GAME_LOST_S:
+                self.game_lost_said = True
+                self.wake.notice("System fault: the connection to the battle has been lost. This is not a battle "
+                                 "event. Nothing can be reported or ordered until it returns.")
+                self.tick()
+
+    def _event(self, event: dict) -> None:
+        if event.get("k") == "mission" and event.get("state") == "start" and self.t0 is not None:
+            self._mission_restarted()
+            return
+        if event.get("k") != "evt":
+            return
+        kind = event.get("type")
+        if kind == "killed":
+            self._kill(event)
+            return
+        if kind not in ("cmd_tick", "cmd_report", "cmd_truth", "cmd_impact"):
+            return
+        self.mission_t, self.seen_at = float(event.get("t", 0)), self.wall()
+        if kind == "cmd_report":
+            self._packet(event)
+        elif kind == "cmd_truth":
+            self._truth(event)
+        elif kind == "cmd_impact":
+            self._impact(event)
+        self.dirty = True
+
+    def _vehicle_id(self, key: str) -> str:
+        """The commander's id for a game vehicle, or nothing if it hasn't been told about it."""
+        return next((vehicle["id"] for vehicle in self.vehicles.values() if vehicle["key"] == key), "")
+
+    def _target_rows(self, callsign: str, packet: dict) -> None:
+        """Enemy weapons and vehicles a squad sees, followed by the key the game gives each real one: one entry on the
+        commander's list per gun, however many squads report it, as the owner chose. The entry holds only what was
+        reported: kind, model once it's known, who saw it, and where from them. Never a grid."""
+        x, y = packet["pos"]
+        for contact in packet.get("contacts") or []:
+            key = contact.get("key")
+            if not key:
+                continue
+            target_id = self._vehicle_id(key)
+            entry = self.vehicles.get(target_id) if target_id else None
+            if entry is None and contact["age_s"] > reports.CONTACT_FRESH_S:
+                continue  # only what's been seen just now gets a place on the list, and an id
+            if entry is None:
+                target_id = self._unused_id("T", self.vehicles)
+                entry = self.vehicles[target_id] = {"id": target_id, "key": key, "enemy": True, "state": "active",
+                                                    "kind": contact["kind"], "model": "", "name": contact["kind"],
+                                                    "at": None, "t": None, "wrecked": False, "said": False}
+            contact["id"] = target_id
+            if contact["age_s"] <= reports.CONTACT_FRESH_S:
+                dx, dy = contact["pos"][0] - x, contact["pos"][1] - y
+                entry.update(kind=contact["kind"], seen_by=callsign, t=packet["t"],
+                             where=f"{reports.rough_range(math.hypot(dx, dy)).replace('roughly ', 'about ')} "
+                                   f"{reports.compass(dx, dy)} of {callsign}")
+                if contact.get("name"):
+                    entry.update(model=contact["name"])
+                entry["name"] = f"{entry['kind']} ({entry['model']})" if entry["model"] else entry["kind"]
+                if entry["state"] == "abandoned":  # somebody's on it again
+                    entry["state"] = "active"
+        packet["targets_listed"] = [one for one, entry in self.vehicles.items() if entry.get("said")]
+
+    def _sightings(self, callsign: str, packet: dict, enemy_only: bool = False) -> None:
+        """What a squad can see, turned into news: vehicles the commander hasn't heard of, or that have changed since it
+        last heard, and buildings it still thinks are standing."""
+        t = packet["t"]
+        for key, name, grid, alive in packet.get("seen_vehicles") or []:
+            spoken = format_grid(grid)
+            vehicle = self.vehicles.get(self._vehicle_id(key))
+            if enemy_only and not (vehicle and vehicle.get("enemy")):
+                continue
+            if vehicle is None:
+                if not alive:
+                    continue
+                vehicle_id = self._new_vehicle_id()
+                self.vehicles[vehicle_id] = {"id": vehicle_id, "key": key, "name": name, "at": spoken, "t": t,
+                                             "wrecked": False}
+                self._say(callsign, f"{name}, nobody on it, grid {spoken}. Listed as {vehicle_id}.", reports.ROUTINE,
+                          None, t)
+                continue
+            if not alive and not vehicle.get("wrecked"):
+                vehicle.update(wrecked=True, at=spoken, t=t, state="destroyed", seen_by=callsign)
+                words = "is destroyed" if vehicle.get("enemy") else "is wrecked"
+                self._say(callsign, f"{vehicle['id']} {words}, grid {spoken}.", reports.ROUTINE, None, t)
+            elif alive and vehicle.get("enemy") and vehicle.get("state") == "active":
+                # Its crew gone: a gun nobody's on can still be manned again.
+                vehicle.update(state="abandoned", at=spoken, t=t, seen_by=callsign)
+                self._say(callsign, f"{vehicle['id']}, {vehicle['name']}, abandoned, nobody on it, grid {spoken}.",
+                          reports.ROUTINE, None, t)
+            elif alive and not vehicle.get("enemy") and vehicle.get("at") != spoken:
+                vehicle.update(at=spoken, t=t)
+                self._say(callsign, f"{vehicle['id']}, {name}, nobody on it, is at grid {spoken}.", reports.ROUTINE,
+                          None, t)
+        for building in [] if enemy_only else packet.get("seen_ruins") or []:
+            if building not in self.destroyed:
+                self.destroyed[building] = t
+                self._say(callsign, f"{building} is destroyed.", reports.ROUTINE, None, t)
+
+    def _new_vehicle_id(self) -> str:
+        return self._unused_id("V", self.vehicles)
+
+    def _unused_id(self, prefix: str, taken: dict) -> str:
+        """The next id of a kind that nothing has yet: the commander or the scenario may have used one already."""
+        while True:
+            new_id = self._id(prefix)
+            if new_id not in taken:
+                return new_id
+
+    def _in_combat(self, callsign: str) -> bool:
+        tracker, packet = self.trackers.get(callsign), self.packets.get(callsign)
+        return bool(tracker and packet and tracker.in_combat(packet, packet["t"]))
+
+    def _send_later(self, callsign: str, delay: float, t: float, **message) -> None:
+        """A squad in combat takes a while to get a message out. Its messages still go in the order it said them."""
+        waiting = [entry["due"] for entry in self.outbox if entry["callsign"] == callsign]
+        self.outbox.append({"callsign": callsign, "due": max([t + delay, *waiting]), **message})
+        self.dirty = True
+
+    def _send_due(self) -> None:
+        now = self.now()
+        due = [entry for entry in self.outbox if entry["due"] <= now]
+        self.outbox = [entry for entry in self.outbox if entry["due"] > now]
+        for entry in due:
+            callsign = entry["callsign"]
+            packet = self.packets.get(callsign)
+            if packet is None or now - packet["t"] > PACKET_FRESH_S:
+                self.records.operator_log(f"{format_time(self.rel())} {callsign} was lost with a message unsent")
+                continue
+            if "topics" in entry:
+                self._answer_now(callsign, entry)
+                continue
+            if entry.get("checked"):
+                self.checked[entry["checked"]] = now
+            if entry.get("destroyed"):
+                self.destroyed[entry["destroyed"]] = now
+            self._say(callsign, entry["text"], entry["precedence"], entry.get("grid"), now)
+            self.dirty = True
+
+    def _answer_now(self, callsign: str, entry: dict) -> None:
+        """A delayed answer, from what the squad knows by the time it gets to answer."""
+        text, grid = self._reply_to(callsign, entry["topics"])
+        key = f"{entry['checkin']}:{callsign}" if entry.get("checkin") else ""
+        if key and self.last_checkin.get(key) == text:
+            self._log_radio(callsign, "HQ", text, "checkin_unchanged")
+            self._heard(callsign, grid, self.now())
+            return
+        if key:
+            self.last_checkin[key] = text
+        self._say(callsign, text, reports.ROUTINE, grid, self.now())
+
+    def _mission_restarted(self) -> None:
+        self.restarted = True
+        self.outbox = []
+        self.routes, self.trackers, self.packets, self.chains = {}, {}, {}, {}
+        self.wake.timers, self.schedules, self.missed = {}, {}, {}
+        self.wake.notice("The mission has restarted. All stations, orders and timers have been reset.")
+        self.dirty = True
+
+    def _packet(self, event: dict) -> None:
+        callsign = event.get("callsign")
+        if callsign not in self.scenario.stations:
+            return
+        packet = {key: event.get(key) for key in PACKET_FIELDS}
+        packet["missions"] = [[self._vehicle_id(row[0]), *row[1:]] for row in packet.get("missions") or []]
+        packet["gun_ammo"] = [[self._vehicle_id(row[0]), *row[1:]] for row in packet.get("gun_ammo") or []]
+        packet["mounted"] = [[self._vehicle_id(row[0]), *row[1:]] for row in packet.get("mounted") or []]
+        if packet.get("mount"):
+            packet["mount"] = [self._vehicle_id(packet["mount"][0]), *packet["mount"][1:]]
+        packet["t"] = float(event.get("t", 0))
+        self._casualty_rows(callsign, packet)
+        self._target_rows(callsign, packet)
+        if callsign in self.cas_grids:
+            packet["contact_ref"] = self.cas_grids[callsign]
+        self.packets[callsign] = packet
+        if self.t0 is None or self.ended:
+            return
+        tracker = self._tracker(callsign)
+        tracker.note_movement(packet, self.routes.get(callsign))
+        said = tracker.update(packet, self.routes.get(callsign), packet["t"], self.buildings)
+        for one in tracker.gone:
+            entry = next((entry for entry in self.casualties.values() if entry["id"] == one), None)
+            if entry and entry["squad"] == callsign:
+                entry["state"] = "gone"
+        for one in tracker.listed:
+            if one in self.vehicles:
+                self.vehicles[one]["said"] = True
+        for one in tracker.located:
+            entry = next((entry for entry in self.casualties.values() if entry["id"] == one), None)
+            if entry:
+                entry.update(said_pos=entry["pos"], said_grid=entry["grid"], said_vehicle=entry["vehicle"],
+                             said_t=packet["t"])
+        in_combat = tracker.in_combat(packet, packet["t"])
+        for report in said:
+            # A squad out of the fight still can't get ahead of what it hasn't finished saying.
+            if in_combat or any(entry["callsign"] == callsign for entry in self.outbox):
+                delay = reports.report_delay(packet, report.precedence) if in_combat else 0
+                self._send_later(callsign, delay, packet["t"], text=report.text, precedence=report.precedence,
+                                 grid=report.grid, checked=report.checked, destroyed=report.destroyed)
+                continue
+            if report.checked:
+                self.checked[report.checked] = packet["t"]
+            if report.destroyed:
+                self.destroyed[report.destroyed] = packet["t"]
+            self._say(callsign, report.text, report.precedence, report.grid, packet["t"])
+        # Nobody takes stock of empty cars in a firefight, but the enemy's gun falling silent or going up is news then
+        # above all.
+        self._sightings(callsign, packet, enemy_only=in_combat)
+        self._advance_chain(callsign, packet, tracker)
+
+    def _in_battle(self, t: float) -> bool:
+        """Whether a truth event belongs to this battle's record. A server can outlive its battle, and the game it's
+        watching can move on to another mission while its session stays open."""
+        rel = self.rel(t)
+        if self.t0 is None or self.restarted or rel < 0:
+            return False
+        return self.ended_at is None or rel <= self.ended_at + RECORD_AFTER_END_S
+
+    def _casualty_rows(self, callsign: str, packet: dict) -> None:
+        """Puts the commander's own ids on the game's rows, and keeps its list of who's down from what it's told."""
+        x, y = packet["pos"] or (0, 0)
+        rows = []
+        for key, name, cx, cy, vehicle, aboard, own, handled in packet.get("casualties") or []:
+            entry = self.casualties.get(key)
+            new = entry is None
+            if new:
+                entry = self.casualties[key] = {"id": f"C{len(self.casualties) + 1}", "key": key, "name": name,
+                                                "squad": callsign, "first_t": packet["t"]}
+            grid = reports.grid_at(cx, cy)
+            where = self._vehicle_id(vehicle) if aboard else ""
+            entry.update(pos=[cx, cy], grid=grid, t=packet["t"], vehicle=where, state="down")
+            if own:
+                entry["squad"] = callsign
+            rows.append({"id": entry["id"], "name": name, "dx": cx - x, "dy": cy - y, "grid": grid, "vehicle": where,
+                         "own": own, "new": new, "handled": handled})
+        packet["casualties"] = rows
+        known = self.casualties
+        packet["up"] = [known[key]["id"] for key in packet.get("up") or [] if key in known]
+        medical = []
+        for order, kind, key, name, state, detail in packet.get("medical") or []:
+            grid = ""
+            if kind == "post" and state == "up":
+                detail, grid = self._post_up(detail, packet["t"])
+            elif isinstance(detail, str) and detail:
+                detail = self._vehicle_id(detail) or detail
+            medical.append([order, kind, known[key]["id"] if key in known else key, name, state, detail, grid])
+        packet["medical"] = medical
+
+    def _post_up(self, detail: list, t: float) -> tuple[str, str]:
+        key, grid = detail[0], format_grid(detail[1])
+        existing = self._vehicle_id(key)
+        if existing:
+            return existing, grid
+        post_id = next(f"A{number}" for number in range(1, len(self.vehicles) + 2) if f"A{number}" not in self.vehicles)
+        self.vehicles[post_id] = {"id": post_id, "key": key, "name": "Aid post", "at": grid, "t": t, "wrecked": False}
+        return post_id, grid
+
+    def _tracker(self, callsign: str) -> Tracker:
+        if callsign not in self.trackers:
+            self.trackers[callsign] = Tracker(spotter=self.scenario.stations[callsign].get("spotter", False))
+        return self.trackers[callsign]
+
+    def _impact(self, event: dict) -> None:
+        """A real shell landed. What each station makes of it comes out in its reports, and the truth of it goes only to
+        the review."""
+        t = float(event.get("t", 0))
+        if not self._in_battle(t):
+            return
+        order = self.fire_orders.get(event.get("order") or "") or {}
+        ammo, pos = event.get("ammo") or "", event.get("pos")
+        self.records.shell({"t": round(self.rel(t), 1), "order": event.get("order") or None, "gun": event.get("gun"),
+                            "side": event.get("side"), "ammo": ammo, "pos": pos, "aim": order.get("aim"),
+                            "heard": event.get("heard")})
+        if self.t0 is None or self.ended:
+            return
+        for callsign, distance, dx, dy, seen in event.get("heard") or []:
+            if callsign in self.scenario.stations:
+                self._tracker(callsign).impacts.append({
+                    "t": t, "pos": pos, "ammo": ammo, "distance": distance, "dx": dx, "dy": dy, "seen": seen,
+                    "order": event.get("order") or "", "aim": order.get("aim"),
+                    "observer": order.get("observer") == callsign})
+
+    def _truth(self, event: dict) -> None:
+        if not self._in_battle(float(event.get("t", 0))):
+            return
+        self.records.truth({"t": round(self.rel(float(event.get("t", 0))), 1), "groups": event.get("groups"),
+                            "vehicles": event.get("vehicles") or []})
+        if not self.ended:
+            self._judge(event.get("groups") or [], event.get("vehicles") or [])
+
+    def _kill(self, event: dict) -> None:
+        """For the after-action review only. It's written to its own file, and nothing the commander sees reads it."""
+        if not self._in_battle(float(event.get("t", 0))):
+            return
+        self.records.kill({"t": round(self.rel(float(event.get("t", 0))), 1),
+                           **{key: event.get(key) for key in ("victim", "side", "victimPos", "killer", "killerSide",
+                                                              "weapon", "distance")}})
+
+    def _judge(self, groups: list[dict], vehicles: list | None = None) -> None:
+        """The harness alone decides how a battle ends. The commander only hears the result."""
+        able = {group.get("group"): group.get("able", 0) for group in groups}
+        lost = self._failed(groups, able, vehicles or [])
+        if lost:
+            self._end(f"Mission failed: {lost}")
+            return
+        if self.scenario.failure.get("all_stations_lost") and all(
+                able.get(callsign, 1) == 0 for callsign in self.scenario.stations):
+            self._end("All stations have been lost.")
+            return
+        for objective in self.scenario.objectives:
+            key = objective["id"]
+            if key in self.objectives_done:
+                continue
+            met = self._met(objective["success"], groups, able)
+            if not met:
+                # Higher command's word is believed over everything, so it has to still be true when it's given.
+                self.objectives_due.pop(key, None)
+            elif key not in self.objectives_due:
+                # True position can get there seconds before the group reports arriving. Let its last words through.
+                self.objectives_due[key] = {"at": self.rel() + SUCCESS_GRACE_S, "met": met}
+
+    def _fails_if(self) -> list[str]:
+        return scenario_mod.failure_words(self.scenario.failure, self.scenario.stations, self.scenario.vehicles)
+
+    def _failed(self, groups: list[dict], able: dict, vehicles: list) -> str:
+        """Why the battle is lost, if one of the scenario's failure conditions holds now. From truth: what happened,
+        whatever anyone has reported."""
+        failure = self.scenario.failure
+        stations = self.scenario.stations
+        seen = {group.get("group"): group for group in groups if group.get("group") in stations}
+        pct = failure.get("casualties_pct")
+        if pct and seen:
+            start = sum(station.get("units", 1) for station in stations.values())
+            standing = sum(able.get(callsign, station.get("units", 1)) for callsign, station in stations.items())
+            if start and (start - standing) * 100 >= pct * start:
+                return f"{start - standing} of your {start} men are dead or down."
+        alive = {key: up for key, up in vehicles}
+        for item in failure.get("critical") or []:
+            group = seen.get(item)
+            if group is not None and not group.get("able") and not group.get("down"):
+                return f"{item} has been lost."
+            if item in alive and not alive[item]:
+                return f"{item} has been destroyed."
+        return ""
+
+    def _met(self, success: dict, groups: list[dict], able: dict) -> str | None:
+        """What's been achieved, if this objective's condition holds now."""
+        if success.get("enemy_cleared"):
+            enemies = self.scenario.enemies
+            if enemies and all(able.get(enemy["id"], 1) == 0 for enemy in enemies):
+                return "the enemy has been cleared"
+        elif "stations" in success:
+            target, spoken = parse_grid(success["of"], self.world_size)
+
+            def there(group: dict) -> bool:
+                """Every living man, because a leader getting there isn't a team getting there. "units" only has the men
+                on their feet, and one who's down is still alive and still one of them, wherever he's lying."""
+                down = group.get("down") or []
+                return bool(group.get("able")) and all(
+                    math.dist(unit[:2], target) <= success["within_m"] for unit in (group.get("units") or []) + down
+                ) and not (success.get("on_foot") and (group.get("mounted") or down))
+
+            wanted = {group.get("group"): group for group in groups if group.get("group") in success["stations"]}
+            if len(wanted) == len(success["stations"]) and all(there(group) for group in wanted.values()):
+                how = "on foot at" if success.get("on_foot") else "at"
+                names = " and ".join(success["stations"])
+                return f"{names} {'are' if len(success['stations']) > 1 else 'is'} {how} grid {spoken}"
+        elif "men" in success:
+            # Men, not squads: a convoy that gets there with too few hasn't got there.
+            target, spoken = parse_grid(success["of"], self.world_size)
+            there = sum(1 for group in groups if group.get("group") in self.scenario.stations
+                        for unit in group.get("units") or [] if math.dist(unit[:2], target) <= success["within_m"])
+            if there >= success["men"]:
+                return f"{there} men are at grid {spoken}"
+        elif "station" in success:
+            target, _ = parse_grid(success["of"], self.world_size)
+            for group in groups:
+                if group.get("group") == success["station"] and group.get("able") and group.get("pos") \
+                        and math.dist(group["pos"], target) <= success["within_m"]:
+                    return f"{success['station']} reached grid {success['of']}"
+        return None
+
+    def _complete_objectives(self, rel: float) -> None:
+        """Each its own event, said by someone who can see what the commander can't, so it can be believed."""
+        met = ""
+        for objective in self.scenario.objectives:
+            due = self.objectives_due.get(objective["id"])
+            if due and rel >= due["at"]:
+                del self.objectives_due[objective["id"]]
+                self.objectives_done[objective["id"]] = round(rel, 1)
+                met = due["met"]
+                self._show(f"OBJECTIVE COMPLETE: {objective['text']}")
+                self.wake.notice(f"OBJECTIVE COMPLETE: {objective['text']} Higher command confirms that {met}. This is "
+                                 "certain, whatever your own map says.")
+                self.records.append("radio_events", {"t": round(rel, 1), "objective_complete": objective["id"],
+                                                     "text": objective["text"], "met": met})
+                self.dirty = True
+        if met and len(self.objectives_done) == len(self.scenario.objectives):
+            many = len(self.scenario.objectives) > 1
+            self._end("Objective achieved: all objectives are complete." if many else f"Objective achieved: {met}.")
+
+    def _end(self, reason: str) -> None:
+        self.ended, self.ended_at = reason, self.rel()
+        self.outbox = []
+        self.wake.timers, self.schedules = {}, {}
+        self._show(f"MISSION END: {reason}")
+        self.wake.notice(f"MISSION END. {reason} No further orders are needed. End your turn.")
+        self.records.append("radio_events", {"t": round(self.rel(), 1), "mission_end": reason})
+        self.dirty = True
+
+    def tick(self) -> None:
+        """Scenario events, the time limit, and any wake due. Nothing runs until the mission has started."""
+        with self.lock:
+            if self.t0 is None:
+                return
+            rel = self.rel()
+            for index, event in enumerate(self.scenario.events):
+                if index not in self.events_done and rel >= event["at_s"]:
+                    self.events_done.append(index)
+                    self._scenario_event(event)
+            for callsign, station in self.scenario.stations.items():
+                due = station.get("on_station_s")
+                if due is not None and callsign not in self.left and rel >= due and not self.ended:
+                    self._leave(callsign)
+            if not self.ended:
+                self._complete_objectives(rel)
+            if not self.ended and rel >= self.scenario.time_limit_s:
+                total = len(self.scenario.objectives)
+                done = f" {len(self.objectives_done)} of {total} objectives complete." if total > 1 else ""
+                self._end(f"Time limit reached.{done}")
+            self._fire_schedules()
+            self._send_due()
+            wake = self.wake.poll(self.now())
+            if wake is not None:
+                self._deliver(wake)
+            if self.dirty:
+                self.save()
+
+    def _scenario_event(self, event: dict) -> None:
+        if event["action"] == "knock_down":
+            self._game_exec(KNOCK_DOWN_CODE, [event["station"], event.get("count", 1)])
+        else:
+            code = {"delete_station": DELETE_CODE, "kill_station": KILL_CODE}[event["action"]]
+            self._game_exec(code, [event["station"]])
+        self.records.operator_log(f"{format_time(self.rel())} scenario event: {event['action']} {event['station']}")
+        self.records.append("radio_events", {"t": round(self.rel(), 1),
+                                             "scenario_event": f"{event['action']} {event['station']}"})
+        self.dirty = True
+
+    def _leave(self, callsign: str) -> None:
+        """An aircraft at the end of its time on station: it says so, and flies off. Nothing more can be sent to it."""
+        self.left[callsign] = round(self.rel(), 1)
+        self._game_exec(LEAVE_CODE, [callsign])
+        self._say(callsign, "Bingo fuel, leaving the area.", reports.PRIORITY, None, self.now())
+        self.dirty = True
+
+    def _game_exec(self, code: str, args: list) -> None:
+        """Failures go to the operator's log only. The commander must see the same result either way."""
+        try:
+            result = self.game.exec(code, args)
+            if not result.get("ok"):
+                self.records.operator_log(f"exec failed: {code} {args} -> {result}")
+        except Exception as exc:
+            self.records.operator_log(f"exec failed: {code} {args} -> {exc}")
+
+    # -- what a human observer sees in game, when the scenario has one. Nothing here reads anything back. -------
+
+    def _show(self, text: str) -> None:
+        if self.scenario.spectator:
+            self._game_exec(SHOW_CODE, [text])
+
+    def _mirror(self, marker: dict, removed: bool = False) -> None:
+        if self.scenario.spectator:
+            at = marker["at"] if isinstance(marker["at"], list) else [marker["at"]]
+            points = [marker["pos"]] if marker.get("pos") else [parse_grid(grid, self.world_size, precise=True)[0]
+                                                                for grid in at]
+            self._game_exec(MIRROR_CODE, [marker["id"], marker["kind"], points, marker.get("label", ""),
+                                          marker.get("confidence", ""), removed])
+
+    # -- radio ------------------------------------------------------------------------------------
+
+    def _log_radio(self, sender: str, to: str, text: str, kind: str, precedence: str = reports.ROUTINE,
+                   t: float | None = None, **extra) -> dict:
+        row = {"id": self._id("R"), "t": round(self.rel(t), 1), "from": sender, "to": to, "text": text, "kind": kind,
+               "precedence": precedence, **extra}
+        self.radio.append(row)
+        self.records.append("radio", row)
+        self.dirty = True
+        self._show(f"{sender}: {text}")
+        return row
+
+    def _heard(self, callsign: str, grid: str | None, t: float) -> None:
+        self.last_heard[callsign] = t
+        self.missed.pop(callsign, None)
+        if grid:
+            self.positions[callsign] = {"grid": grid, "t": t}
+
+    def _say(self, callsign: str, text: str, precedence: str, grid: str | None, t: float) -> None:
+        self._log_radio(callsign, "HQ", text, "report", precedence, t, grid=grid)  # the sender's own, if it gave it
+        self._heard(callsign, grid, t)
+        self.wake.message(t)
+
+    # -- turns and briefings -----------------------------------------------------------------------
+
+    def _deliver(self, wake: Wake) -> None:
+        if wake.fallback:
+            self._close_turn("assumed over: no end-turn call")
+        else:
+            self._close_turn("interrupted: a wake was delivered during this turn")
+        for timer in wake.timers:
+            self._advance(self.schedules.get(timer["id"]))
+        self.turn += 1
+        text = self.briefing(wake)
+        self.delivered = len(self.radio)
+        self.turn_row = {"turn": self.turn, "start": round(self.rel(), 1), "mode": self.wake.mode,
+                         "woke_on": wake.reason(), "messages": wake.messages, "timers": [t["id"] for t in wake.timers]}
+        self.dirty = True
+        self.deliver(text, {"turn": str(self.turn), "woke_on": wake.reason()})
+
+    def _close_turn(self, note: str) -> None:
+        if self.turn_row is None:
+            return
+        row = {**self.turn_row, "end": round(self.rel(), 1), "note": note}
+        row["duration"] = round(row["end"] - row["start"], 1)
+        self.records.append("turns", row)
+        self.turn_row = None
+
+    def briefing(self, wake: Wake | None = None) -> str:
+        reason = wake.reason() if wake else "request"
+        lines = [f"{format_time(self.rel())} | turn {self.turn} | woke on: {reason}"]
+        if not self.ended:
+            # A long quiet stretch of routine checks drifted away from this once: a real commander has it in mind.
+            left = max(0, round(self.scenario.time_limit_s - self.rel()))
+            many = len(self.scenario.objectives) > 1
+            lines += ["", f"{'OBJECTIVES' if many else 'OBJECTIVE'}, {left // 60:02d}:{left % 60:02d} left"]
+            lines += [("Done: " if objective["id"] in self.objectives_done else "") + objective["text"]
+                      for objective in self.scenario.objectives]
+            failing = self._fails_if()
+            if failing:
+                lines += ["", "THE MISSION FAILS IF", *failing]
+        if wake and wake.notices:
+            lines += ["", "NOTICE", *wake.notices]
+        if wake and wake.timers:
+            lines += ["", "TIMERS DUE"]
+            for timer in wake.timers:
+                late = self.now() - timer["due"]
+                delay = f", delivered {round(late)} s late" if late >= 1 else ""
+                lines.append(f"{timer['id']}  due {format_time(self.rel(timer['due']))}{delay}: \"{timer['note']}\"")
+        traffic = self._traffic()
+        if traffic:
+            lines += ["", "TRAFFIC", *traffic]
+        if self.missed:
+            lines += ["", "OVERDUE"]
+            for callsign, count in self.missed.items():
+                checks = "check-in" if count == 1 else "check-ins"
+                lines.append(f"{callsign}: missed {count} scheduled {checks}.")
+        lines += ["", "NET"]
+        for callsign in self.scenario.stations:
+            heard = self.last_heard.get(callsign)
+            when = f"last heard {_ago(self.now() - heard)}" if heard is not None else "not heard yet"
+            lines.append(f"{callsign}  {when}")
+        lines += self._map_lines()
+        if self.checked:
+            lines += ["", "BUILDINGS CHECKED"]
+            lines += ["  ".join(f"{building} {_ago(self.now() - t).replace(' ago', '')}"
+                                for building, t in sorted(self.checked.items(), key=lambda item: item[1]))]
+        if self.destroyed:
+            lines += ["", "BUILDINGS DESTROYED", "  ".join(sorted(self.destroyed))]
+        own = [vehicle for vehicle in self.vehicles.values() if not vehicle.get("enemy")]
+        if own:
+            lines += ["", "VEHICLES", *(self._vehicle_line(vehicle) for vehicle in own)]
+        # Only once a squad has said it: the list mustn't get ahead of the radio.
+        enemy = [vehicle for vehicle in self.vehicles.values() if vehicle.get("enemy") and vehicle.get("said")]
+        if enemy:
+            lines += ["", "ENEMY WEAPONS AND VEHICLES", *(self._vehicle_line(vehicle) for vehicle in enemy)]
+        down = [entry for entry in self.casualties.values() if entry.get("state") == "down"]
+        if down:
+            lines += ["", "CASUALTIES", *(self._casualty_line(entry) for entry in down)]
+        if self.schedules:
+            lines += ["", "SCHEDULED"]
+            for entry in sorted(self.schedules.values(), key=lambda e: e["due"]):
+                repeat = f", every {_clock(entry['every'])}" if entry.get("every") else ""
+                lines.append(f"{entry['id']}  {format_time(self.rel(entry['due']))}{repeat}  {entry['words']}")
+        notes = self.records.notes()
+        if notes:
+            lines += ["", "YOUR NOTES", notes]
+        return "\n".join(lines)
+
+    def _traffic(self) -> list[str]:
+        rows = [r for r in self.radio[self.delivered:] if r["kind"] == "report"]
+        hidden = 0
+        if len(rows) > TRAFFIC_CAP:
+            urgent = [r for r in rows if r["precedence"] != reports.ROUTINE]
+            room = max(0, TRAFFIC_CAP - len(urgent))
+            routine = [r for r in rows if r["precedence"] == reports.ROUTINE]
+            kept = {r["id"] for r in urgent + (routine[-room:] if room else [])}
+            hidden = len(rows) - len(kept)
+            rows = [r for r in rows if r["id"] in kept]
+        lines = [_radio_line(r) for r in rows]
+        if hidden:
+            lines.insert(0, f"(+{hidden} earlier routine messages: see commander_log)")
+        return lines
+
+    def _map_lines(self) -> list[str]:
+        lines = ["", "YOUR MAP"]
+        for callsign, place in self.positions.items():
+            lines.append(f"{callsign}  grid {place['grid']}  reported {_ago(self.now() - place['t'])}")
+        for marker in self.markers.values():
+            lines.append(self._marker_line(marker))
+        if len(lines) == 2:
+            lines.append("Nothing plotted yet.")
+        return lines
+
+    def _casualty_line(self, entry: dict) -> str:
+        """What it's been told. The game's own row moves with him, and printing that would be a live tracker on whoever
+        is carrying him, in a fight or not."""
+        if entry.get("said_vehicle"):
+            where = f"on {entry['said_vehicle']}"
+        else:
+            where = f"grid {entry['said_grid']}" if entry.get("said_grid") else "place not given"
+        told = entry.get("said_t", entry["first_t"])
+        return f"{entry['id']}  {entry['name']}  {entry['squad']}'s  {where}  reported {_ago(self.now() - told)}"
+
+    def _vehicle_line(self, vehicle: dict) -> str:
+        when = "as briefed" if vehicle.get("t") is None else f"reported {_ago(self.now() - vehicle['t'])}"
+        if vehicle.get("enemy"):
+            place = f"grid {vehicle['at']}" if vehicle.get("at") else vehicle.get("where", "")
+            return (f"{vehicle['id']}  enemy {vehicle['name']}  {vehicle['state']}, {place}, "
+                    f"by {vehicle.get('seen_by')}  {when}")
+        state = "wrecked  " if vehicle.get("wrecked") else ""
+        return f"{vehicle['id']}  {vehicle['name']}  {state}grid {vehicle['at']}  {when}"
+
+    def _marker_line(self, marker: dict) -> str:
+        at = marker["at"]
+        place = f"grids {'; '.join(at)}" if isinstance(at, list) else f"grid {at}"
+        if marker.get("building"):
+            place = f"in {marker['building']}, {place}"
+        parts = [f"{marker['id']}  {marker['kind']} {marker.get('label', '')}".rstrip(), place]
+        if marker.get("confidence"):
+            parts.append(marker["confidence"])
+        if marker.get("t") is not None:
+            parts.append(_ago(self.rel() - marker["t"]).replace(" ago", " old"))
+        if marker.get("expires") is not None and self.rel() >= marker["expires"]:
+            parts.append("STALE")
+        return "  ".join(parts)
+
+    def save(self) -> None:
+        self.records.save_state({
+            "t0": self.t0, "turn": self.turn, "cursor": self.cursor, "delivered": self.delivered,
+            "ended": self.ended, "ended_at": self.ended_at, "restarted": self.restarted, "outbox": self.outbox,
+            "destroyed": self.destroyed, "vehicles": self.vehicles, "fire_orders": self.fire_orders,
+            "casualties": self.casualties,
+            "objectives_due": self.objectives_due, "objectives_done": self.objectives_done,
+            "next_id": self.next_id, "routes": self.routes, "chains": self.chains, "schedules": self.schedules,
+            "missed": self.missed,
+            "markers": self.markers, "checked": self.checked, "last_checkin": self.last_checkin,
+            "last_heard": self.last_heard,
+            "positions": self.positions, "events_done": self.events_done, "turn_row": self.turn_row,
+            "left": self.left, "cas_grids": self.cas_grids,
+            "trackers": {k: asdict(v) for k, v in self.trackers.items()}, "wake": asdict(self.wake),
+        })
+        self.dirty = False
+
+    # -- tools -----------------------------------------------------------------------------------
+
+    def _used(self) -> None:
+        self.wake.tool_used(self.now())
+        self.dirty = True
+
+    def mission(self) -> dict:
+        """Starts the mission clock on the first call: until then, the battle hasn't begun for the commander."""
+        with self.lock:
+            if self.mission_t is None:
+                return {"ready": False, "text": "The net isn't up yet. Call commander_mission again in a few seconds."}
+            if self.t0 is None:
+                self.t0 = self.now()
+                self.turn = 1
+                self.delivered = len(self.radio)
+                self.turn_row = {"turn": 1, "start": 0.0, "mode": self.wake.mode, "woke_on": "mission start",
+                                 "messages": 0, "timers": []}
+                self.wake.turn_started(self.now())
+                for callsign in self.scenario.stations:
+                    self.last_heard.setdefault(callsign, self.now())
+                self._show("The battle has started.")
+                for marker in self.markers.values():
+                    self._mirror(marker)
+            self._used()
+            self.save()
+            return {
+                "time": format_time(self.rel()), "mission": self.scenario.text,
+                "time_limit": format_time(self.scenario.time_limit_s),
+                "fails_if": self._fails_if(),
+                "objectives": [{"text": objective["text"], "done": objective["id"] in self.objectives_done}
+                               for objective in self.scenario.objectives],
+                "roster": self.roster()["stations"],
+                "markers": [{"id": m["id"], "kind": m["kind"], "label": m.get("label"), "at": m["at"],
+                             **({"building": m["building"]} if m.get("building") else {})}
+                            for m in self.markers.values()],
+                "buildings": [{"id": b["id"], "type": b["name"], "grid": b["at"], "positions": b["positions"]}
+                              for b in self.buildings],
+                "vehicles": [{"id": v["id"], "type": v["name"], "grid": v["at"]} for v in self.vehicles.values()
+                             if not v.get("enemy")],
+                "enemy_materiel": [{"id": v["id"], "type": v["name"], "state": v["state"], "seen_by": v.get("seen_by"),
+                                    "where": f"grid {v['at']}" if v.get("at") else v.get("where")}
+                                   for v in self.vehicles.values() if v.get("enemy") and v.get("said")],
+                **({"places": self.places()} if self.terrain else {}),
+                "casualties": [{"id": entry["id"], "name": entry["name"], "squad": entry["squad"],
+                                "grid": entry.get("said_grid") or None, "on": entry.get("said_vehicle") or None}
+                               for entry in self.casualties.values() if entry.get("state") == "down"],
+                "ended": self.ended or None,
+            }
+
+    def roster(self) -> dict:
+        with self.lock:
+            stations = []
+            for station in self.scenario.stations.values():
+                heard = self.last_heard.get(station["callsign"])
+                stations.append({"callsign": station["callsign"], "role": station["role"],
+                                 "capabilities": station["capabilities"],
+                                 "corrects_fire": station.get("spotter", False),
+                                 "medics": station.get("medics", 0),
+                                 **({"on_station_until": format_time(station["on_station_s"])}
+                                    if station.get("on_station_s") is not None else {}),
+                                 **({"left_the_area": True} if station["callsign"] in self.left else {}),
+                                 "last_heard": _ago(self.now() - heard) if heard is not None else "not yet"})
+            return {"stations": stations}
+
+    def order(self, request: dict) -> dict:
+        with self.lock:
+            self._require_started()
+            order_id = self._send_order(request)
+            self._used()
+            self.save()
+            return {"order": order_id, "sent": True}
+
+    def _validate(self, request: dict) -> dict:
+        return orders_mod.validate(request, self.scenario.stations, self.markers, self.world_size, self.buildings,
+                                   self.vehicles, {entry["id"]: entry for entry in self.casualties.values()})
+
+    def _send_order(self, request: dict, via: str = "") -> str:
+        checked = self._validate(request)
+        callsign = checked["to"]
+        if callsign in self.left:
+            raise Invalid(f"{callsign} has left the area. Nothing more can be sent to it.")
+        if checked["mode"] in ("cas", "strike"):
+            aim = checked["engine_legs"][0][0]
+            self.cas_grids[callsign] = [aim[0], aim[1]]
+        dropping = ""
+        previous = self.routes.get(callsign) or {}
+        appending = checked["mode"] == "append" and previous.get("kind") == "route"
+        if appending and previous["legs"] and previous["legs"][-1]["type"] in orders_mod.ENDLESS:
+            raise Invalid(f"{previous['legs'][-1]['type']} runs until replaced, so nothing can be added after it. "
+                          "Send a new order.")
+        not_waypoints = [leg["type"] for leg in previous.get("legs") or [] if leg["type"] not in orders_mod.LEG_TYPES]
+        if appending and not_waypoints:  # its reports would follow the CLEAR and never the legs after it
+            raise Invalid(f"{not_waypoints[0]} isn't a route of waypoints, so nothing can be added after it. Send a "
+                          "new order, or one with the whole task.")
+        # Appending to nothing is a new route, so it takes over like one.
+        mode = "replace" if checked["mode"] == "append" and not appending else checked["mode"]
+        one_man = mode == "mount" and checked["route"].get("seat")  # the rest of the squad carries on
+        if callsign in self.chains and mode in CANCELS_A_CHAIN and not one_man:
+            dropping = ", then ".join(self.chains.pop(callsign)["left"])
+        if checked["mode"] != "chain":
+            return self._issue(checked, request, via, dropping=dropping)
+        steps = [reports.step_words(one) for one in checked["checked"]]
+        first = checked["checked"][0]
+        says = f"Copy, {', then '.join(steps)}.{self._chain_estimate(callsign, checked['checked'])}"
+        order_id = self._issue(first, checked["requests"][0], via, says=says, dropping=dropping)
+        self.chains[callsign] = {"order": order_id, "mode": first["mode"], "seen": False,
+                                 "requests": checked["requests"][1:], "left": steps[1:]}
+        return order_id
+
+    def _advance_chain(self, callsign: str, packet: dict, tracker: Tracker) -> None:
+        """The next step of a chained order, once the one before has really finished. The order's id only tells it the
+        game has got it: a POSTURE or fire order sent meanwhile changes the id, and doesn't end the step."""
+        chain = self.chains.get(callsign)
+        if not chain or self.ended:
+            return
+        # Its own id, or any later one: a POSTURE sent straight after can reach the game first, and replace the id
+        # before any report shows it. An order that ends the chain has already deleted it.
+        chain["seen"] = chain["seen"] or _order_number(packet.get("order")) >= _order_number(chain["order"])
+        if not chain["seen"]:
+            return
+        outcome = reports.step_outcome(chain["mode"], chain["order"], packet, tracker.route_done)
+        if outcome is None:
+            return
+        words = "Stopping there, waiting for orders."
+        if outcome == "done":
+            request = chain["requests"].pop(0)
+            chain["left"].pop(0)
+            try:
+                checked = self._validate(request)
+                chain.update(order=self._issue(checked, request, then=True), mode=checked["mode"], seen=False)
+                words = ""
+            except Invalid as exc:  # it was fine when ordered, but the commander's list has changed since
+                words = f"{exc} Stopping there, waiting for orders."
+        if words:
+            self._say(callsign, words, reports.PRIORITY, None, packet["t"])
+        if words or not chain["requests"]:
+            del self.chains[callsign]
+        self.dirty = True
+
+    def _chain_estimate(self, callsign: str, steps: list[dict]) -> str:
+        """Roughly how long the whole of it takes, for planning. Some steps can't be told in advance, so "at least"."""
+        packet = self.packets.get(callsign)
+        if not packet:
+            return ""
+        pos, riding = packet["pos"], reports.pace_of(packet)[1] == "by vehicle"
+        posture = steps[0]["posture"]
+        foot, total, sure = reports.foot_pace(packet, posture[0], posture[2]), 0.0, not self._in_combat(callsign)
+        aboard = {row[0] for row in packet.get("mounted") or []}
+        for step in steps:
+            mode, route = step["mode"], step.get("route") or {}
+            if mode == "mount":
+                where = self._vehicle_place(route.get("vehicle"))
+                if where and route.get("vehicle") not in aboard:
+                    total += math.dist(pos, where) / foot
+                    pos = where
+                riding = not route.get("seat")
+            elif mode == "dismount":
+                riding = False
+            elif mode == "fire":
+                sure = False  # how long the guns take isn't known until they fire
+            elif mode in reports._CARE_MODES:
+                sure = False
+                # Unloading happens where they are, which by then needn't be where the commander's list has the truck.
+                if step.get("dest") and mode != "unload":
+                    carrying = mode == "carry"
+                    pace = reports.PACE_CARRYING if carrying else foot
+                    total += math.dist(pos, step["dest"]) / pace + (reports.CARRY_LIFT_S if carrying else 0)
+                    pos = step["dest"]
+            else:
+                for leg in route.get("legs") or []:
+                    if "pos" in leg:
+                        total += math.dist(pos, leg["pos"]) / (reports.PACE_DRIVING if riding else foot)
+                        pos = leg["pos"]
+        if not sure:
+            return f" At least {reports._time_words(max(total, 60)).replace('about ', '')} in all."
+        return f" {reports._sentence(reports._time_words(total))} in all." if total >= 30 else ""
+
+    def _vehicle_place(self, vehicle_id: str | None) -> list[float] | None:
+        where = self.vehicles.get(vehicle_id, {}).get("at")
+        return parse_grid(where, self.world_size, precise=True)[0] if where else None
+
+    def _issue(self, checked: dict, request: dict, via: str = "", says: str = "", then: bool = False,
+               dropping: str = "") -> str:
+        order_id = self._id("O")
+        callsign = checked["to"]
+        previous = self.routes.get(callsign)
+        mode, route = checked["mode"], checked["route"]
+        if mode == "posture":
+            base = previous or {"kind": "posture", "legs": []}
+            route = {**base, "keeps_progress": order_id, "acknowledge": "Copy.", "keeps_done": True}
+        elif mode in ("fire", "checkfire", "cas", "strike", "carry", "unload", "treat", "post"):
+            # About the gun, or the wounded, alone: the rest of the squad carries on with whatever it was doing.
+            base = previous or {"kind": "posture", "legs": []}
+            words = says or checked["words"] + self._care_estimate(mode, request, checked, callsign)
+            route = {**base, "keeps_progress": order_id, "acknowledge": reports.stepped(words, then, dropping),
+                     "keeps_done": True}
+        elif mode == "append" and previous and previous.get("kind") == "route":
+            words = reports.leg_words(route["legs"])
+            route = {"kind": "route", "legs": previous["legs"] + route["legs"], "keeps_progress": order_id,
+                     "acknowledge": f"Copy, then {words}."}
+        elif mode == "append":
+            mode = "replace"
+        if route and mode == "mount":
+            route["walk_to"] = self._vehicle_place(route.get("vehicle"))
+            if route.get("seat") and previous and previous.get("kind") == "route":
+                # One man sent to a seat. The squad's route is still its route, and it still reports on it.
+                words = f"Copy, mounting {route['vehicle']} as {route['seat']}."
+                route = {**previous, "keeps_progress": order_id, "acknowledge": reports.stepped(words, then, dropping),
+                         "keeps_done": True}
+        if route and "keeps_progress" not in route:
+            route.update(says=says, then=then, dropping=dropping)
+        self.routes[callsign] = route
+        self._game_exec(ORDER_CODE, [callsign, order_id, mode, checked["engine_legs"], checked["posture"]])
+        suffix = f" (timed, {via})" if via else " (next step)" if then else ""
+        self._log_radio("HQ", callsign, f"{order_id}: {_order_words(request)}{suffix}", "order")
+        self.records.append("orders", {"id": order_id, "t": round(self.rel(), 1), "request": request, "via": via})
+        if mode == "fire":
+            self.fire_orders[order_id] = {"aim": checked["mission"]["aim"], "observer": checked["mission"]["observer"]}
+            # What it believed when it fired, so a review can tell the fog from a bug if this kills its own men.
+            self.records.append("fire_missions", {
+                "id": order_id, "t": round(self.rel(), 1), "by": callsign, **checked["mission"],
+                "markers": list(self.markers.values()),
+                "positions": {name: {**place, "t": round(self.rel(place["t"]), 1)}
+                              for name, place in self.positions.items()},
+                "last_heard": {name: round(self.rel(t), 1) for name, t in self.last_heard.items()}})
+        return order_id
+
+    def _care_estimate(self, mode: str, request: dict, checked: dict, callsign: str) -> str:
+        """How far and how long, from what the squad and the commander know, for orders about the wounded."""
+        packet = self.packets.get(callsign)
+        if mode == "cas" and packet:  # an aircraft's own last report, at a helicopter's cruising speed
+            away = math.dist(packet["pos"], checked["engine_legs"][0][0])
+            return f" {reports._sentence(reports._time_words(max(away / AIR_PACE, 30)))} out."
+        if mode == "strike" and packet:  # out to the run-in point, then the run, as the game side flies it
+            aim, _bombs, heading = checked["engine_legs"][0]
+            flight = strike_route(packet["pos"], aim, heading) / STRIKE_PACE
+            return f" {reports._sentence(reports._time_words(flight))} out."
+        if mode not in ("carry", "treat", "post") or not packet:
+            return ""
+        in_combat = self._in_combat(callsign)
+        foot = reports.foot_pace(packet, checked["posture"][0], checked["posture"][2])
+        leg = (request.get("legs") or [{}])[0]
+        known = {entry["id"]: entry for entry in self.casualties.values()}
+        named = [known[one].get("said_pos") or known[one]["pos"] for one in leg.get("casualties") or [] if one in known]
+        x, y = packet["pos"]
+        nearby = [[row["dx"] + x, row["dy"] + y] for row in packet.get("casualties") or []]
+        hurt = named or nearby
+        if mode == "post":
+            setup = self.scenario.medical.get("build_s", 60)
+            return (reports.estimate(math.dist(packet["pos"], checked["dest"]), foot, "on foot", in_combat)
+                    + f" Then {reports._time_words(setup)} to set up.")
+        if not hurt:
+            return ""
+        if mode == "treat":
+            reach = max(math.dist(packet["pos"], one) for one in hurt)
+            return reports.estimate(reach, foot, "on foot to reach them", in_combat)
+        if not checked.get("dest"):
+            return ""
+        far = max(math.dist(one, checked["dest"]) for one in hurt)
+        return reports.estimate(far, reports.PACE_CARRYING, "carrying them", in_combat, reports.CARRY_LIFT_S)
+
+    def _ask_targets(self, to, topics) -> list[str]:
+        if topics is not None and not (isinstance(topics, list) and all(isinstance(t, str) for t in topics)):
+            raise Invalid(f'topics is a list, such as ["position", "contacts"], not {topics!r}.')
+        if not isinstance(to, str):
+            raise Invalid(f"to is one callsign, or all, not {to!r}. Ask each station separately.")
+        unknown = set(topics or []) - QUESTION_TOPICS
+        if unknown:
+            raise Invalid(f"Unknown topics {sorted(unknown)}: use {sorted(QUESTION_TOPICS)}.")
+        if to == "all":
+            return list(self.scenario.stations)
+        if to in self.scenario.stations:
+            return [to]
+        raise Invalid(f"Unknown callsign {to!r}. See commander_roster.")
+
+    def _reply_to(self, callsign: str, topics: list[str] | None) -> tuple[str | None, str | None]:
+        """(words, grid they state) from the station's latest packet, or (None, None) if it can't answer."""
+        packet = self.packets.get(callsign)
+        if packet is None or self.now() - packet["t"] > PACKET_FRESH_S:
+            return None, None
+        in_combat = self._in_combat(callsign)
+        states_grid = "position" in topics if topics is not None else not in_combat
+        grid = format_grid(packet["grid"]) if states_grid else None
+        return reports.answer(packet, self.routes.get(callsign), topics, self.buildings, in_combat), grid
+
+    def ask(self, to: str, topics: list[str] | None = None) -> dict:
+        with self.lock:
+            self._require_started()
+            topics = topics or None
+            targets = self._ask_targets(to, topics)
+            wants = "SITREP" if not topics else ", ".join(topics)
+            replies = []
+            for callsign in targets:
+                self._log_radio("HQ", callsign, f"Question: {wants}", "question")
+                text, grid = self._reply_to(callsign, topics)
+                if text is None:
+                    self._log_radio(callsign, "HQ", "No answer.", "no_answer")
+                    replies.append({"from": callsign, "text": "No answer."})
+                    continue
+                if self._in_combat(callsign):
+                    # It heard, and it'll answer when it can. Asking again doesn't make that any sooner.
+                    if not any(e["callsign"] == callsign and e.get("topics", 0) == topics for e in self.outbox):
+                        packet = self.packets[callsign]
+                        self._send_later(callsign, reports.report_delay(packet), self.now(), topics=topics)
+                    self._log_radio(callsign, "HQ", "Wait one.", "reply")
+                    self.last_heard[callsign] = self.now()
+                    self.missed.pop(callsign, None)
+                    replies.append({"from": callsign, "text": "Wait one."})
+                    continue
+                self._log_radio(callsign, "HQ", text, "reply")
+                self._heard(callsign, grid, self.now())
+                replies.append({"from": callsign, "text": text})
+            self._used()
+            self.save()
+            return {"replies": replies}
+
+    def schedule(self, do: dict, after=None, at=None, every=None, count=None, until=None) -> dict:
+        """Wakes give the commander a turn. Timed orders and questions go out on time without one."""
+        with self.lock:
+            self._require_started()
+            if (after is not None and at is not None) or (after is None and at is None and every is None):
+                raise Invalid("Give after or at, or every. every can be combined with after for its first time.")
+            kinds = [kind for kind in ("wake", "order", "ask") if isinstance(do, dict) and do.get(kind)]
+            if len(kinds) != 1:
+                raise Invalid('do needs one of: {"wake": "why"}, {"order": {...}} or {"ask": {"to": ...}}.')
+            kind, what = kinds[0], do[kinds[0]]
+            if len(self.schedules) >= MAX_SCHEDULES:
+                raise Invalid(f"At most {MAX_SCHEDULES} schedules can be active.")
+            interval = parse_time(every) if every is not None else None
+            if interval is not None and interval < MIN_REPEAT_S:
+                raise Invalid(f"Schedules can repeat at most every {_clock(MIN_REPEAT_S)}.")
+            if at is not None:
+                first = parse_time(at)
+            else:
+                first = self.rel() + (parse_time(after) if after is not None else interval)
+            if first <= self.rel():
+                raise Invalid(f"{format_time(first)} has already passed. It's {format_time(self.rel())}.")
+            if kind == "wake" and not isinstance(what, str):
+                raise Invalid('A wake needs a note: {"wake": "why you want to wake"}.')
+            if kind in ("order", "ask") and not isinstance(what, dict):
+                raise Invalid(f'A scheduled {kind} needs its fields, such as {{"{kind}": {{"to": "Alpha", ...}}}}.')
+            if count is not None and (isinstance(count, bool) or not isinstance(count, int) or count < 1):
+                raise Invalid("count must be a whole number of times, 1 or more.")
+            if kind == "order":
+                self._validate(what)  # with the vehicle and casualty lists, as a live order is checked
+            if kind == "ask":
+                self._ask_targets(what.get("to"), what.get("topics"))
+            base = self.t0 or 0.0
+            entry = {"id": self._id("W" if kind == "wake" else "S"), "kind": kind, "what": what, "due": base + first,
+                     "every": interval, "count": count, "until": base + parse_time(until) if until else None,
+                     "words": _schedule_words(kind, what)}
+            if kind == "wake":
+                self.wake.add_timer(entry["id"], entry["due"], what.strip())
+            self.schedules[entry["id"]] = entry
+            self.records.append("schedule", {"id": entry["id"], "t": round(self.rel(), 1), "due": first, "kind": kind,
+                                             "every": interval, "words": entry["words"]})
+            self._used()
+            self.save()
+            return {"id": entry["id"], "first": format_time(first), "time_now": format_time(self.rel())}
+
+    def _fire_schedules(self) -> None:
+        now = self.now()
+        for entry in sorted(self.schedules.values(), key=lambda e: e["due"]):
+            if entry["kind"] == "wake" or entry["due"] > now:
+                continue
+            if entry["kind"] == "order":
+                try:
+                    self._send_order(entry["what"], entry["id"])
+                except Invalid as exc:  # a marker it relied on has since been retired
+                    self.records.operator_log(f"{entry['id']} couldn't fire: {exc}")
+                    self.wake.notice(f"Your timed order {entry['id']} couldn't go out: {exc}")
+            else:
+                self._timed_ask(entry)
+            self._advance(entry)
+            self.dirty = True
+
+    def _timed_ask(self, entry: dict) -> None:
+        topics = entry["what"].get("topics") or None
+        wants = "SITREP" if not topics else ", ".join(topics)
+        for callsign in self._ask_targets(entry["what"].get("to"), topics):
+            self._log_radio("HQ", callsign, f"Question ({entry['id']}): {wants}", "question")
+            text, grid = self._reply_to(callsign, topics)
+            if text is None:
+                # Silence wakes nobody: it waits in the next briefing, under OVERDUE.
+                self._log_radio(callsign, "HQ", "No answer.", "no_answer")
+                self.missed[callsign] = self.missed.get(callsign, 0) + 1
+            elif self._in_combat(callsign):
+                packet = self.packets[callsign]
+                self._send_later(callsign, reports.report_delay(packet), self.now(), topics=topics, checkin=entry["id"])
+            elif self.last_checkin.get(f"{entry['id']}:{callsign}") == text:
+                # Nothing has changed, so it isn't worth a turn: the check-in still counts as being heard.
+                self._log_radio(callsign, "HQ", text, "checkin_unchanged")
+                self._heard(callsign, grid, self.now())
+            else:
+                self.last_checkin[f"{entry['id']}:{callsign}"] = text
+                self._say(callsign, text, reports.ROUTINE, grid, self.now())
+
+    def _advance(self, entry: dict | None) -> None:
+        """After a schedule fires: drop it, or set up its next time."""
+        if entry is None:
+            return
+        if entry.get("count"):
+            entry["count"] -= 1
+        due = entry["due"] + (entry.get("every") or 0)
+        finished = not entry.get("every") or entry.get("count") == 0 or (entry.get("until") and due > entry["until"])
+        if finished:
+            self.schedules.pop(entry["id"], None)
+            return
+        entry["due"] = due
+        if entry["kind"] == "wake":
+            self.wake.add_timer(entry["id"], due, entry["what"].strip())
+
+    def unschedule(self, schedule_id: str) -> dict:
+        with self.lock:
+            existed = self.schedules.pop(schedule_id, None) is not None
+            self.wake.cancel_timer(schedule_id)
+            self.records.append("schedule", {"id": schedule_id, "t": round(self.rel(), 1), "cancelled": existed})
+            self._used()
+            self.save()
+            return {"cancelled": existed}
+
+    def mark(self, args: dict) -> dict:
+        """Create or update a marker. The map holds belief: only the commander changes or retires it."""
+        with self.lock:
+            self._require_started()
+            marker_id = None if args.get("id") is None else str(args["id"])  # 5 and "5" are the same marker
+            if marker_id is not None and not re.fullmatch(r"[A-Za-z0-9_-]{1,16}", marker_id):
+                raise Invalid("A marker id is up to 16 letters, digits, - or _.")
+            if any(building["id"] == marker_id for building in self.buildings):
+                raise Invalid(f"{marker_id} is a building's id. Choose another for this marker.")
+            existing = self.markers.get(marker_id, {})
+            if not existing and not args.get("at"):
+                raise Invalid("A new marker needs at: a grid or building id, or a list of them for a line or area.")
+            place = self._marker_place(args["at"]) if args.get("at") else {
+                key: existing[key] for key in ("at", "building", "pos") if key in existing}
+            kind = str(args.get("kind") or existing.get("kind") or "note").lower()
+            if kind not in MARKER_KINDS:
+                raise Invalid(f"Bad kind {kind!r}: use one of {', '.join(sorted(MARKER_KINDS))}.")
+            confidence = str(args.get("confidence") or existing.get("confidence") or "").lower()
+            if confidence and confidence not in MARKER_CONFIDENCE:
+                raise Invalid(f"Bad confidence {confidence!r}: use low, medium or high.")
+            expires = parse_time(args["expires"]) if args.get("expires") else existing.get("expires")
+            marker = {"id": marker_id or self._unused_id("M", self.markers), "kind": kind, **place,
+                      "label": args.get("label", existing.get("label", "")), "confidence": confidence,
+                      "sources": args.get("sources", existing.get("sources", [])), "expires": expires,
+                      "t": round(self.rel(), 1)}
+            self.markers[marker["id"]] = marker
+            self.records.append("markers", marker)
+            self._mirror(marker)
+            self._used()
+            self.save()
+            return {"id": marker["id"], "time_now": format_time(self.rel())}
+
+    def _marker_place(self, at) -> dict:
+        """A grid or a building id, or a list of them for a line or area. On a building, a marker is pinned to its
+        exact position, which a grid can't give."""
+        known = {building["id"]: building for building in self.buildings}
+        if isinstance(at, list):
+            if len(at) < 2:
+                raise Invalid("A line or area needs at least 2 grids.")
+            return {"at": [self._spoken_grid(item, known) for item in at]}
+        if isinstance(at, str) and at.strip() in known:
+            building = known[at.strip()]
+            return {"at": building["at"], "building": building["id"], "pos": list(building["pos"])}
+        return {"at": self._spoken_grid(at, known)}
+
+    def _spoken_grid(self, at, known: dict[str, dict]) -> str:
+        name = str(at).strip()
+        if name in known:
+            return known[name]["at"]
+        if re.fullmatch(r"B\d+", name):
+            raise Invalid(f"There's no building {name}. Your buildings are listed in commander_mission.")
+        return parse_grid(at, self.world_size, precise=True)[1]
+
+    def unmark(self, marker_id: str) -> dict:
+        with self.lock:
+            marker = self.markers.pop(marker_id, None)
+            if marker is None:
+                raise Invalid(f"No marker {marker_id!r}. Your markers are listed in every briefing.")
+            self.records.append("markers", {"id": marker_id, "t": round(self.rel(), 1), "retired": True})
+            self._mirror(marker, removed=True)
+            self._used()
+            self.save()
+            return {"retired": marker_id}
+
+    def end_turn(self, note: str = "", messages_only: bool = False) -> dict:
+        with self.lock:
+            self._require_started()
+            if not self.ended and not self.wake.can_end_turn(messages_only):
+                return {"ended": False, "error": "No wake is scheduled. Set one with commander_schedule, or pass "
+                                                 "messages_only=true to wait only for incoming messages."}
+            self.wake.end_turn(messages_only)
+            self._close_turn(note)
+            self.dirty = True
+            self.save()
+            return {"ended": True, "mission_over": bool(self.ended)}
+
+    def map_image(self, center=None, radius=None) -> dict:
+        """The commander's map as a picture: what it has been told, and nothing else."""
+        with self.lock:
+            self._require_started()
+            ao = self.scenario.ao
+            if center:
+                known = {building["id"]: building for building in self.buildings}
+                place, _ = orders_mod.resolve_place(center, {**self.markers, **known}, self.world_size)
+            elif ao:
+                place = parse_grid(ao["at"], self.world_size)[0]
+            else:
+                place = [self.world_size / 2, self.world_size / 2]
+            size = orders_mod.number(radius or (ao or {}).get("radius", 500), "radius")
+            if not 50 <= size <= 5000:
+                raise Invalid("radius must be between 50 and 5000 metres.")
+            positions = {callsign: {"grid": place_["grid"], "age": _ago(self.now() - place_["t"])}
+                         for callsign, place_ in self.positions.items()}
+            caption = (f"{format_time(self.rel())}. Your beliefs and last reports, not live. Green: buildings checked. "
+                       f"Grid lines every {100 if size <= 800 else 500 if size <= 3000 else 1000} m.")
+            if self.terrain:
+                caption += " Contours every " + ("10" if size <= 800 else "20") + " m."
+            # A snapshot: drawing takes half a second, and the radio shouldn't wait for it.
+            drawing = (place, size, [dict(b) for b in self.buildings], [dict(m) for m in self.markers.values()],
+                       positions, dict(self.checked), caption, dict(self.destroyed),
+                       [dict(v) for v in self.vehicles.values()
+                        if v.get("at") and (v.get("said") or not v.get("enemy"))], self.terrain)
+            self._used()
+        return {"png": map_mod.render(*drawing), "text": caption}
+
+    def ground(self, at, to=None) -> dict:
+        """What the map says about the ground at a place, or whether the ground lies between two. The map is common
+        knowledge, so this reads nothing from the game."""
+        with self.lock:
+            self._require_started()
+            if not self.terrain:
+                raise Invalid("Your map has no terrain on it here.")
+            known = {**self.markers, **{building["id"]: building for building in self.buildings}}
+            a, a_grid = orders_mod.resolve_place(at, known, self.world_size)
+            if to in (None, ""):
+                text = self.terrain.describe(*a, a_grid)
+            else:
+                b, b_grid = orders_mod.resolve_place(to, known, self.world_size)
+                text = self.terrain.sight_words(tuple(a), a_grid, tuple(b), b_grid, reports.grid_at)
+            self._used()
+            return {"text": text}
+
+    def places(self) -> list[dict]:
+        """The named places on the commander's map, nearest the area of operations first."""
+        if not self.terrain:
+            return []
+        ao = self.scenario.ao
+        centre = parse_grid(ao["at"], self.world_size)[0] if ao else [self.world_size / 2] * 2
+        rows = sorted(self.terrain.places, key=lambda row: math.dist(centre, row[2:4]))
+        return [{"name": name, "kind": place_kind(kind), "grid": reports.grid_at(x, y)} for name, kind, x, y in rows]
+
+    def brief(self) -> dict:
+        with self.lock:
+            self._used()
+            return {"briefing": self.briefing()}
+
+    def notes(self, text: str) -> dict:
+        with self.lock:
+            if not isinstance(text, str):
+                raise Invalid("Notes are text.")
+            if len(text) > NOTES_LIMIT:
+                raise Invalid(f"Notes are limited to {NOTES_LIMIT} characters. These are {len(text)}.")
+            self.records.set_notes(text)
+            self._used()
+            return {"saved": True}
+
+    def log(self, since=None, sender: str | None = None, limit: int = 50) -> dict:
+        with self.lock:
+            start = parse_time(since) if since else 0
+            rows = [r for r in self.radio if r["t"] >= start and (not sender or r["from"] == sender)]
+            self._used()
+            count = int(orders_mod.number(limit if limit is not None else 50, "limit"))
+            return {"log": [_radio_line(r) for r in rows[-max(1, count):]]}
+
+    def _require_started(self) -> None:
+        if self.t0 is None:
+            raise Invalid("Call commander_mission first.")
+        # Back after a restart, the clock reads 0 until the game's first tick: "after 2:00" would be long past, and
+        # every station would seem silent.
+        if self.mission_t is None:
+            raise Invalid("The net isn't up yet. Try again in a few seconds.")
+
+
+def _clock(seconds: float) -> str:
+    return f"{int(seconds) // 60}:{int(seconds) % 60:02d}"
+
+
+def _schedule_words(kind: str, what) -> str:
+    if kind == "wake":
+        return f'wake: "{what}"'
+    if kind == "order":
+        return f"{what.get('to')}: {_order_words(what)}"
+    topics = ", ".join(what.get("topics") or []) or "SITREP"
+    return f"{what.get('to')}: {topics}"
+
+
+def _order_number(order_id) -> int:
+    """O-0012 is 12. Anything else, such as no order yet, comes before every order."""
+    match = re.fullmatch(r"O-(\d+)", str(order_id or ""))
+    return int(match[1]) if match else -1
+
+
+def _ago(seconds: float) -> str:
+    seconds = max(0, round(seconds))
+    return f"{seconds} s ago" if seconds < 120 else f"{round(seconds / 60)} min ago"
+
+
+def _radio_line(row: dict) -> str:
+    flash = "FLASH " if row["precedence"] == reports.FLASH else ""
+    stamp = format_time(row["t"])[2:]
+    return f"[{stamp}] {flash}{row['from']}: {row['text']}"
+
+
+def _order_words(request: dict) -> str:
+    legs = ", ".join(f"{leg.get('type')} {leg.get('at', leg.get('vehicle', ''))}".strip() +
+                     (f" {' '.join(leg['casualties'])}" if leg.get("casualties") else "")
+                     for leg in request.get("legs") or [] if isinstance(leg, dict))
+    return legs or "order"

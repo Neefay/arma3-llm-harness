@@ -1,0 +1,44 @@
+# Combat test: three squads and a recon team against a garrisoned village and a patrol.
+# The enemy's strength and layout are not in the mission text: the commander has to find them.
+name: take_the_village
+mission: commander
+time_limit: "20:00"
+spectator: true
+ao: { at: "041 041", radius: 400 }
+objective: Clear the village around grid 041 041.
+text: >
+  Enemy forces of unknown strength hold the village around grid 041 041. Your force is about 500 metres to the south,
+  around grid 041 035. Clear the village. You don't know where the enemy is, so find them before you commit.
+stations:
+  - callsign: Alpha
+    role: infantry squad
+    capabilities: [MOVE, HOLD, SEARCH, CLEAR, OCCUPY, CORDON, ATTACK, DEFEND, PATROL_AREA, SWEEP, SENTRY, PATROL, HALT, POSTURE]
+    at: "039 035"
+    units: 8
+  - callsign: Bravo
+    role: infantry squad
+    capabilities: [MOVE, HOLD, SEARCH, CLEAR, OCCUPY, CORDON, ATTACK, DEFEND, PATROL_AREA, SWEEP, SENTRY, PATROL, HALT, POSTURE]
+    at: "041 035"
+    units: 8
+  - callsign: Charlie
+    role: infantry squad
+    capabilities: [MOVE, HOLD, SEARCH, CLEAR, OCCUPY, CORDON, ATTACK, DEFEND, PATROL_AREA, SWEEP, SENTRY, PATROL, HALT, POSTURE]
+    at: "043 035"
+    units: 8
+  - callsign: Recon
+    role: scout team, small and easily lost
+    capabilities: [MOVE, HOLD, SENTRY, PATROL, PATROL_AREA, CORDON, HALT, POSTURE]
+    at: "041 036"
+    units: 3
+    class: B_recon_F
+enemies:
+  - { id: East Garrison, at: "041 041", units: 8, mode: garrison, radius: 110 }
+  - { id: East Patrol, at: "042 039", units: 6, mode: patrol, radius: 150 }
+markers:
+  - { id: O1, kind: objective, label: The village, at: "041 041" }
+success:
+  enemy_cleared: true
+failure:
+  all_stations_lost: true
+debounce: { quiet_s: 3, ceiling_s: 15 }
+mid_turn_messages: hold
