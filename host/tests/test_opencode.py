@@ -186,3 +186,157 @@ def test_no_opencode_server_running_is_said_not_raised():
             raise OSError("OpenCode's background server isn't running")
 
     assert opencode.restart_server(Service(), opencode.Path("C:/w"), "commander").startswith("not restarted")
+
+
+# -- the lockdown, checked through OpenCode's own permission evaluation ------------------------------------------------
+
+class Permissions:
+    """OpenCode answering permission checks: everything denied but what's in ``allowed``."""
+
+    def __init__(self, allowed=("commander_commander_order",)):
+        self.allowed, self.calls = set(allowed), []
+
+    def call(self, method, path, body=None):
+        self.calls.append((method, path, body))
+        if path == "/api/session":
+            return {"data": {"id": "ses_check"}}
+        if method == "DELETE":
+            return {}
+        return {"data": {"id": "per_1", "effect": "allow" if body["action"] in self.allowed else "deny"}}
+
+
+def test_policies_back_the_lockdown_up():
+    """The desktop app gives its sessions the browser, in rules after the workspace's: only a policy stops that."""
+    config = opencode.workspace_config(["py"], "oc.exe", opencode.Path("C:/w"), "commander")
+    assert config["policies"] == [{"action": "tool.use", "resource": "*", "effect": "deny"},
+                                  {"action": "tool.use", "resource": "commander_*", "effect": "allow"}]
+
+
+def test_the_lockdown_holds_when_only_the_commanders_tools_are_allowed():
+    assert opencode.check_lockdown(Permissions(), "ses_a", "commander") == {
+        "ok": True, "allowed_outside": [], "commander_tools_allowed": True}
+
+
+def test_a_tool_left_open_fails_the_lockdown():
+    result = opencode.check_lockdown(Permissions({"commander_commander_order", "browser"}), "ses_a", "commander")
+    assert not result["ok"]
+    assert result["allowed_outside"] == ["browser:*"]
+
+
+def test_the_commanders_own_tools_denied_fails_it_too():
+    assert not opencode.check_lockdown(Permissions(set()), "ses_a", "commander")["ok"]
+
+
+def test_the_probes_cover_every_built_in_and_the_arma_server():
+    probed = {action for action, _ in opencode.DENIED}
+    assert {"read", "edit", "shell", "webfetch", "websearch", "subagent", "skill", "execute", "browser",
+            "question", "arma_arma_exec"} <= probed
+
+
+def test_the_lockdown_check_uses_a_throwaway_session_and_deletes_it(tmp_path, monkeypatch):
+    from arma_harness.commander import operator
+    from arma_harness.config import Home
+
+    monkeypatch.setenv(opencode.CLI_ENV, "oc.exe")
+    service = Permissions()
+    result = operator.check_opencode_lockdown(Home(tmp_path), service)
+    assert result["ok"]
+    create = service.calls[0]
+    assert create[:2] == ("POST", "/api/session") and create[2]["agent"] == "commander"
+    assert create[2]["location"]["directory"].endswith("workspace-opencode")
+    assert service.calls[-1][:2] == ("DELETE", "/api/session/ses_check")
+
+
+def test_the_session_is_reported_once_found():
+    service = FakeService({"ses_b": r"C:\cmd\workspace-opencode"}, ["ses_b"])
+    found = []
+    route = opencode.Wakes(service, r"C:\cmd\workspace-opencode", [].append, found.append)
+    route.tool_called()
+    route.tool_called()
+    time.sleep(0.1)
+    assert found == ["ses_b"]
+
+
+# -- the review, from an OpenCode session -----------------------------------------------------------------------------
+
+def opencode_messages():
+    def assistant(t, parts, output=10):
+        return {"type": "assistant", "time": {"created": t * 1000},
+                "model": {"id": "gpt-6-luna", "providerID": "openai"},
+                "tokens": {"input": 100, "output": output, "reasoning": 2, "cache": {"read": 1000, "write": 0}},
+                "content": parts}
+
+    def tool(name, given=None):
+        return {"type": "tool", "name": f"commander_commander_{name}", "state": {"input": given or {}}}
+
+    return [
+        {"type": "user", "text": "start"},
+        assistant(100, [tool("mission")]),
+        assistant(103, [tool("order", {"to": "Alpha"}), {"type": "text", "text": "Alpha moving."}]),
+        assistant(105, [tool("end_turn")]),
+        {"type": "user", "text": '<channel source="commander" turn="2" woke_on="1 message">\nT+00:09 | turn 2'},
+        assistant(110, [{"type": "reasoning", "text": ""}, {"type": "tool", "name": "browser_open", "state": {}},
+                        tool("end_turn")], output=5),
+        {"type": "user", "text": "how did it go?"},
+        assistant(400, [{"type": "text", "text": "Well."}]),  # a chat with the operator afterwards: not the battle
+    ]
+
+
+def test_the_review_reads_an_opencode_session():
+    from arma_harness.commander import aar
+
+    session = aar._read_opencode(opencode_messages(), [(0.0, 1), (9.8, 2)])
+    assert session["model"] == "gpt-6-luna"
+    assert session["requests"] == 4  # the chat afterwards is left out
+    assert session["output_tokens"] == 35 and session["reasoning_tokens"] == 8
+    assert session["peak_context"] == 1100
+    assert session["tool_calls"] == 4
+    assert session["turns"][1]["actions"] == [{"t": 3.0, "tool": "order", "input": {"to": "Alpha"}}]
+    assert session["turns"][1]["said"] == [{"t": 3.0, "text": "Alpha moving."}]
+    assert 2 in session["turns"]
+    assert session["outside_lockdown_used"] == {"browser_open": 1}
+
+
+def battle_folder(tmp_path, lockdown):
+    folder = tmp_path / "run" / "commander-1" / "west"
+    folder.mkdir(parents=True)
+    (folder.parent / "battle.json").write_text("{}")
+    (folder / "state.json").write_text("{}")
+    (folder / "turns.jsonl").write_text(json.dumps({"turn": 1, "start": 0.0}) + "\n")
+    (folder / "client.json").write_text(json.dumps({"client": "opencode", "session": "ses_b", "lockdown": lockdown}))
+    return folder
+
+
+def test_the_review_keeps_the_export_and_falls_back_to_it(tmp_path):
+    from arma_harness.commander import aar
+
+    folder = battle_folder(tmp_path, {"ok": True, "allowed_outside": []})
+    info = json.loads((folder / "client.json").read_text())
+
+    class Export:
+        def call(self, method, path, body=None):
+            assert path == "/api/experimental/session/ses_b/export"
+            return {"data": {"messages": opencode_messages()}}
+
+    class Gone:
+        def call(self, method, path, body=None):
+            raise OSError("OpenCode isn't running")
+
+    first = aar.opencode_session(folder, info, Export())
+    assert (folder / aar.OPENCODE_EXPORT).exists()
+    assert aar.opencode_session(folder, info, Gone()) == first
+    assert first["tools_outside_lockdown"] == []
+
+
+def test_a_failed_lockdown_shows_in_the_review(tmp_path):
+    from arma_harness.commander import aar
+
+    folder = battle_folder(tmp_path, {"ok": False, "allowed_outside": ["browser:*"]})
+    (folder / aar.OPENCODE_EXPORT).write_text(json.dumps({"messages": opencode_messages()}))
+
+    class Gone:
+        def call(self, method, path, body=None):
+            raise OSError("no")
+
+    session = aar.opencode_session(folder, json.loads((folder / "client.json").read_text()), Gone())
+    assert session["tools_outside_lockdown"] == ["browser:*"]

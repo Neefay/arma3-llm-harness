@@ -219,7 +219,7 @@ Measured sizes (L x W x H, m): `Land_HBarrier_Big_F` 9 x 2.6 x 2.6, `Land_HBarri
 A separate mode where an LLM commands AI squads in a battle it can't see, only through radio-like `commander_*` tools, under fog of war. If you're asked to run or review a commander battle, you are its **operator**, not its commander.
 
 - **List the scenarios:** `arma-harness.exe commander list`. The `llm_*` ones are the benchmark, with their seeds.
-- **Set one up:** `arma-harness.exe commander start <scenario> [--seed N]`. It prints the command that launches the commander's own locked-down Claude Code session. Don't play the commander from your own session.
+- **Set one up:** `arma-harness.exe commander start <scenario> [--seed N]`. It prints the command that launches the commander's own locked-down Claude Code session, or with `--client opencode`, the OpenCode folder to open. Don't play the commander from your own session.
 - **Never help the commander.** Don't use the `arma_*` tools to tell it anything about the battle, or to change the battle while it runs. That breaks the fog of war, and with it what the battle measures. Golden rule 3 applies too: ask before starting a game.
 - **Afterwards:** `commander review` writes a replay page of the battle, and `commander compare <scenario> [--csv]` puts battles side by side.
 - **Docs:** running and scoring battles with real LLMs is in `docs/COMMANDER_BENCHMARK.md`; the design is in `docs/COMMANDER.md`, and the formal model in `docs/COMMANDER_MODEL.md`. The game side is `host/src/arma_harness/adapters/commander/`, one SQF file per function, linted with `tools/lint_commander.py`.

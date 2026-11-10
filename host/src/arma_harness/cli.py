@@ -114,7 +114,7 @@ def main(argv: list[str] | None = None) -> int:
     co.add_argument("--mode", choices=["hold", "deliver"], help="what happens to messages during a turn")
     co.add_argument("--watch", action="store_true", help="also open a game window, in the mission's observer slot")
     co.add_argument("--client", choices=["claude", "opencode"], default="claude",
-                    help="start: the agent the commander runs in (default: claude, Claude Code)")
+                    help="start, check-lockdown: the agent the commander runs in (default: claude, Claude Code)")
     co.add_argument("--seed", type=int, help="start: the seed for the scenario's random draws, to replay a battle")
     co.add_argument("--run", help="review: the run to review (default: the newest battle)")
     co.add_argument("--attempt", type=int, help="review: which battle in that run (default: the last)")
@@ -225,7 +225,7 @@ def _commander(h: Harness, a):
                 raise ValueError("commander start needs a scenario name")
             return operator.start(a.scenario, a.mode, h, watch=a.watch, seed=a.seed, client=a.client)
         case "check-lockdown":
-            return operator.check_lockdown(h.home)
+            return operator.check_lockdown(h.home, a.client)
         case "status":
             return operator.status(h.home)
         case "aar":

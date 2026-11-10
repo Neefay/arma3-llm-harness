@@ -53,13 +53,18 @@ def workspace_config(server_command: list[str], cli: str, workspace: Path, serve
     """The workspace's opencode.json: the commander's server and agent, and every other tool denied.
 
     Permissions are matched last rule first, so "deny everything" followed by "allow this server's tools" leaves only
-    those. The built-in primary agents are switched off, so the session can't be moved to one that has every tool.
+    those. But a session can carry rules of its own, after these: the desktop app gives each of its sessions its
+    browser. Policies are applied after every rule and can only take access away, so the same two statements there
+    are what really hold. The built-in primary agents are switched off too, so the session can't be moved to one with
+    every tool.
     """
     lockdown = [{"action": "*", "resource": "*", "effect": "deny"},
                 {"action": f"{server_name}_*", "resource": "*", "effect": "allow"}]
     return {
         "default_agent": AGENT,
         "permissions": lockdown,
+        "policies": [{"action": "tool.use", "resource": "*", "effect": "deny"},
+                     {"action": "tool.use", "resource": f"{server_name}_*", "effect": "allow"}],
         "agents": {
             AGENT: {"mode": "primary", "description": "Commands the battle by radio.", "system": SYSTEM,
                     "permissions": lockdown},
@@ -74,6 +79,27 @@ def workspace_config(server_command: list[str], cli: str, workspace: Path, serve
         "warming": False,  # it keeps the prompt cache warm with real, billed requests
         "snapshots": False,
     }
+
+
+# Every built-in tool's permission, as OpenCode's docs name them, and another MCP server's tool: the commander may use
+# none of them. The arma server's in particular would show it the whole battle.
+DENIED = [("read", "C:/x.txt"), ("edit", "C:/x.txt"), ("glob", "*"), ("grep", "x"), ("shell", "dir"),
+          ("subagent", "general"), ("skill", "*"), ("skill", "browser"), ("question", "*"), ("webfetch", "https://x"),
+          ("websearch", "x"), ("experimental_image_generate", "*"), ("external_directory", "C:/x"), ("execute", "*"),
+          ("opencode_list_mcp_resources", "*"), ("opencode_read_mcp_resource", "*"), ("browser", "*"),
+          ("todowrite", "*"), ("arma_arma_exec", "*")]
+
+
+def check_lockdown(service: Service, session: str, server_name: str) -> dict:
+    """Ask OpenCode what this session may do, without a model call: every probe in DENIED must be denied, and the
+    commander's own tools allowed. "ask" counts as allowed, since someone could say yes."""
+    def effect(action: str, resource: str) -> str:
+        body = {"action": action, "resources": [resource], "agent": AGENT}
+        return service.call("POST", f"/api/session/{session}/permission", body)["data"]["effect"]
+
+    allowed = [f"{action}:{resource}" for action, resource in DENIED if effect(action, resource) != "deny"]
+    own = effect(f"{server_name}_commander_order", "*") == "allow"
+    return {"ok": not allowed and own, "allowed_outside": allowed, "commander_tools_allowed": own}
 
 
 def _same_folder(a: str, b: str) -> bool:
@@ -140,8 +166,10 @@ class Wakes:
     RETRY_S = 5.0
     TRIES = 12
 
-    def __init__(self, service: Service, workspace: str, log: Callable[[str], None]):
-        self.service, self.workspace, self.log = service, workspace, log
+    def __init__(self, service: Service, workspace: str, log: Callable[[str], None],
+                 found: Callable[[str], None] | None = None):
+        """``found`` is told the session once it's known."""
+        self.service, self.workspace, self.log, self.found = service, workspace, log, found
         self.session: str | None = None
         self.queue: queue.Queue = queue.Queue()
         threading.Thread(target=self._work, daemon=True).start()
@@ -169,6 +197,8 @@ class Wakes:
             self.log(f"OpenCode: couldn't look up the commander's session: {exc}")
         if self.session:
             self.log(f"OpenCode: wakes go to session {self.session}")
+            if self.found is not None:  # a score of requests to OpenCode: the commander's tool call shouldn't wait
+                threading.Thread(target=self.found, args=(self.session,), daemon=True).start()
 
     def send(self, text: str, meta: dict, steer: bool = False) -> None:
         attributes = "".join(f' {key}="{value}"' for key, value in meta.items())

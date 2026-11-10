@@ -1,6 +1,7 @@
 """Operator side: setting up, watching and reviewing a battle. Never available to the commander."""
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import shutil
@@ -493,9 +494,11 @@ def judge_lockdown(received: tuple[set[str], set[str]] | None) -> dict:
             "commander_tools": len(expected & offered), "other_tools_allowed": sorted(offered & HARMLESS_TOOLS)}
 
 
-def check_lockdown(home: Home | None = None) -> dict:
+def check_lockdown(home: Home | None = None, client: str = "claude") -> dict:
     """Start a real one-shot session in the workspace and read which tools the client actually offered it. Asking
     the model proves little: a well-behaved one declines whether it's blocked or not. Uses one small model call."""
+    if client == "opencode":
+        return check_opencode_lockdown(home)
     home = home or Home()
     workspace = write_workspace(home)
     claude = shutil.which("claude")
@@ -516,6 +519,26 @@ def check_lockdown(home: Home | None = None) -> dict:
     return {**judge_lockdown(tools_received(rows)), "workspace": str(workspace), "note": (
         "This session ran without the channel flag, so an interactive session's list could differ. Rerun after any "
         "new client version, plugin or connector, because the deny list names tools one by one.")}
+
+
+def check_opencode_lockdown(home: Home | None = None, service: opencode.Service | None = None) -> dict:
+    """Open a throwaway session in the OpenCode workspace and ask OpenCode what it may do: no model call.
+
+    Every battle's own session is checked the same way when it starts, and the result kept in its client.json: that's
+    the check that counts, since the app that opens a session can give it rules of its own."""
+    folder = write_opencode_workspace(home)
+    service = service or opencode.Service(opencode.find_cli() or "opencode")
+    created = service.call("POST", "/api/session", {"location": {"directory": str(folder)}, "agent": opencode.AGENT,
+                                                   "title": "commander lockdown check"})
+    session = created["data"]["id"]
+    try:
+        result = opencode.check_lockdown(service, session, SERVER_NAME)
+    finally:
+        with contextlib.suppress(Exception):
+            service.call("DELETE", f"/api/session/{session}")
+    return {**result, "workspace": str(folder), "note": (
+        "Policies in the workspace's opencode.json deny every tool but the commander's. Rerun after any new OpenCode "
+        "version: a new built-in tool is probed only once it's added to opencode.DENIED.")}
 
 
 def stop(harness: Harness | None = None) -> dict:

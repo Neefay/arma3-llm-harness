@@ -493,6 +493,11 @@ def commander_session(folder: Path, projects: Path | None = None) -> dict | None
     window = _battle_window(folder)
     if window is None:
         return None
+    client = folder / "client.json"
+    if client.exists():
+        info = json.loads(client.read_text(encoding="utf-8"))
+        if info.get("client") == "opencode":
+            return opencode_session(folder, info)
     if projects is None:
         workspace = Home().root / "commander" / "workspace"
         projects = Path.home() / ".claude" / "projects" / re.sub(r"[^A-Za-z0-9]", "-", str(workspace))
@@ -571,6 +576,84 @@ def _read_session(file: Path, window: tuple[float, float], starts: list[tuple[fl
     return {"model": model, "requests": len(requests), "output_tokens": output_tokens, "peak_context": peak_context,
             "tool_calls": tool_calls, "turns": turns, "tools_outside_lockdown": outside,
             "outside_lockdown_used": {name: other_calls[name] for name in outside if other_calls[name]}}
+
+
+OPENCODE_EXPORT = "opencode_session.json"
+_OPENCODE_TOOL = "commander_commander_"
+
+
+def opencode_session(folder: Path, info: dict, service=None) -> dict | None:
+    """The same as commander_session, for a battle fought in OpenCode, from its session as OpenCode exports it.
+
+    The export is kept beside the battle's records, so a review still works once OpenCode has deleted the session,
+    and is fetched afresh whenever OpenCode can be reached, in case the battle was reviewed before it was over."""
+    from . import opencode
+
+    saved = folder / OPENCODE_EXPORT
+    try:
+        service = service or opencode.Service(opencode.find_cli() or "opencode")
+        export = service.call("GET", f"/api/experimental/session/{info['session']}/export")["data"]
+        saved.write_text(json.dumps(export), encoding="utf-8")
+    except Exception:
+        if not saved.exists():
+            return None
+        export = json.loads(saved.read_text(encoding="utf-8"))
+    starts = [(row["start"], row["turn"]) for row in Records(folder).read("turns") if "start" in row and "turn" in row]
+    session = _read_opencode(export.get("messages") or [], starts)
+    if session is not None:
+        lockdown = info.get("lockdown") or {}
+        session["tools_outside_lockdown"] = lockdown.get("allowed_outside", [])
+        if not lockdown.get("ok", False) and not session["tools_outside_lockdown"]:
+            session["tools_outside_lockdown"] = ["(the lockdown couldn't be checked)"]
+    return session
+
+
+def _read_opencode(messages: list[dict], starts: list[tuple[float, int]]) -> dict | None:
+    """As _read_session, from OpenCode's messages: oldest first, with every wake a user message of its own."""
+    turns: dict[int, dict] = {}
+    begun: float | None = None
+    model, requests, output_tokens, reasoning_tokens, peak_context, tool_calls = None, 0, 0, 0, 0, 0
+    other_calls: Counter[str] = Counter()
+    turn, typed_before, answering_person = 1, False, False
+    for message in messages:
+        kind = message.get("type")
+        if kind == "user":
+            woke = re.match(r'<channel source="commander" turn="(\d+)"', message.get("text") or "")
+            if woke:
+                turn, answering_person = int(woke[1]), False
+            else:  # as with Claude Code: "start" first, and a chat with a person after that
+                answering_person, typed_before = typed_before, True
+        elif kind == "assistant" and not answering_person:
+            model = model or (message.get("model") or {}).get("id")
+            tokens = message.get("tokens") or {}
+            cache = tokens.get("cache") or {}
+            requests += 1
+            output_tokens += tokens.get("output", 0)
+            reasoning_tokens += tokens.get("reasoning", 0)
+            peak_context = max(peak_context, tokens.get("input", 0) + cache.get("read", 0) + cache.get("write", 0))
+            moment = ((message.get("time") or {}).get("created") or 0) / 1000 or None
+            parts = message.get("content") or []
+            if begun is None and any(part.get("name") == f"{_OPENCODE_TOOL}mission" for part in parts):
+                begun = moment
+            at = 0.0 if begun is None or moment is None else round(max(0.0, moment - begun), 1)
+            turn = max([turn, *(number for start, number in starts if begun is not None and start <= at)])
+            entry = turns.setdefault(turn, {"said": [], "actions": []})
+            for part in parts:
+                if part.get("type") == "text" and (part.get("text") or "").strip():
+                    entry["said"].append({"t": at, "text": part["text"].strip()})
+                elif part.get("type") == "tool" and part.get("name", "").startswith(_OPENCODE_TOOL):
+                    tool_calls += 1
+                    tool = part["name"][len(_OPENCODE_TOOL):]
+                    if tool in _ACTIONS:
+                        given = (part.get("state") or {}).get("input") or {}
+                        entry["actions"].append({"t": at, "tool": tool, "input": given})
+                elif part.get("type") == "tool":
+                    other_calls[part.get("name", "")] += 1
+    if not tool_calls:
+        return None
+    return {"model": model, "requests": requests, "output_tokens": output_tokens, "reasoning_tokens": reasoning_tokens,
+            "peak_context": peak_context, "tool_calls": tool_calls, "turns": turns, "client": "opencode",
+            "tools_outside_lockdown": [], "outside_lockdown_used": dict(other_calls)}
 
 
 def _json(line: str) -> dict | None:

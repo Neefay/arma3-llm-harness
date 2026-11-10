@@ -325,12 +325,28 @@ def operator_log(server: Server, text: str) -> None:
         server.runtime.records.operator_log(text)
 
 
+def opencode_session(server: Server, service: opencode.Service, session: str) -> None:
+    """Note which OpenCode session fights this battle, for the review, and check what it may really use."""
+    try:
+        lockdown = opencode.check_lockdown(service, session, "commander")
+    except Exception as exc:
+        lockdown = {"ok": False, "error": f"couldn't be checked: {exc}"}
+    if not lockdown["ok"]:
+        operator_log(server, f"OpenCode: THE LOCKDOWN DOESN'T HOLD for session {session}: {lockdown}. The battle "
+                             "measures nothing like this: stop it, and fix the workspace's opencode.json.")
+    with contextlib.suppress(Exception):
+        folder = server.runtime.records.folder
+        (folder / "client.json").write_text(json.dumps(
+            {"client": "opencode", "session": session, "lockdown": lockdown}, indent=2), encoding="utf-8")
+
+
 def main() -> None:
     server = Server(still_current=is_current)
     if os.environ.get(opencode.CLIENT_ENV) == "opencode":
         service = opencode.Service(os.environ.get(opencode.CLI_ENV) or opencode.find_cli() or "opencode")
         server.route = opencode.Wakes(service, os.environ.get(opencode.WORKSPACE_ENV, os.getcwd()),
-                                      lambda text: operator_log(server, text))
+                                      lambda text: operator_log(server, text),
+                                      lambda session: opencode_session(server, service, session))
     server.serve()
 
 

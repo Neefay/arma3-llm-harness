@@ -235,7 +235,7 @@ steps:
 
 ## Commander mode
 
-An LLM commands AI squads in a battle it can't see. It knows only what its squads report by radio, as bearings and rough ranges, and orders them by grid, marker or building id: moves, building clearing, vehicles, fire missions, air support and casualty care. The harness scores each battle and replays it afterwards, the commander's picture beside the truth. It runs on a Claude Code subscription, through a locked-down session with its own MCP server.
+An LLM commands AI squads in a battle it can't see. It knows only what its squads report by radio, as bearings and rough ranges, and orders them by grid, marker or building id: moves, building clearing, vehicles, fire missions, air support and casualty care. The harness scores each battle and replays it afterwards, the commander's picture beside the truth. It runs in a locked-down agent session with its own MCP server: Claude Code, woken by channels, or OpenCode (`--client opencode`), which signs in to most other vendors' subscriptions and API keys.
 
 ```powershell
 host\.venv\Scripts\arma-harness.exe commander list                                # every scenario

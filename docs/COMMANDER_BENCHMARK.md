@@ -36,19 +36,23 @@ All six are on the `commander_stratis` profile, so ACE isn't needed. All six use
    & "C:\projects\other\arma-harness\host\.venv\Scripts\python.exe" "C:\projects\other\arma-harness\tools\build.py"
    ```
 
-2. **Claude Code with a subscription login.** Commander mode wakes the session through Claude Code channels, which need a claude.ai or Console login. Clear `ANTHROPIC_API_KEY` in the shell you launch from, or some modes bill API credits instead:
+2. **An agent client.** The commander runs in one of two, and each battle is set up for one:
+   - **Claude Code**, for Claude models. Commander mode wakes the session through Claude Code channels, which need a claude.ai or Console login. Clear `ANTHROPIC_API_KEY` in the shell you launch from, or some modes bill API credits instead:
 
-   ```powershell
-   Remove-Item Env:ANTHROPIC_API_KEY -ErrorAction SilentlyContinue
-   ```
+     ```powershell
+     Remove-Item Env:ANTHROPIC_API_KEY -ErrorAction SilentlyContinue
+     ```
 
-3. **Check the lockdown** once per Claude Code version. It proves the commander's session gets only its own tools, and it uses one small model call:
+   - **OpenCode 2**, for everything else: a ChatGPT, GitHub Copilot or other subscription login, an API key, OpenRouter or a local model, whatever OpenCode can sign in to. OpenCode has no channels; its background server takes the wakes instead, so the desktop app or `opencode service start` must be running. Battles are set up with `--client opencode`.
+
+3. **Check the lockdown** once per client version. It proves the commander's session gets only its own tools:
 
    ```powershell
    & "C:\projects\other\arma-harness\host\.venv\Scripts\arma-harness.exe" commander check-lockdown
+   & "C:\projects\other\arma-harness\host\.venv\Scripts\arma-harness.exe" commander check-lockdown --client opencode
    ```
 
-   It fails on any tool the session shouldn't have. Don't run a benchmark on a version that fails it.
+   It fails on any tool the session shouldn't have. Don't run a benchmark on a version that fails it. Claude Code's check uses one small model call; OpenCode's uses none, since OpenCode can be asked what a session may do. OpenCode's is also run on every battle's own session as it starts, because the app that opens a session can give it tools of its own (the desktop app gives each its browser): a battle that fails it says so in its operator log and on its review page, and doesn't count.
 
 ## 3. The protocol
 
@@ -57,7 +61,7 @@ You don't have to run it all. Every battle stands alone, so run one scenario on 
 The rules that make runs comparable:
 
 - **Same seeds for every model.** Play each scenario on the six seeds in `benchmark.yaml`. A shorter pass that still covers every variant: hidden gun 2, 1, 5, 116, 7, 40 (all six), two roads 1, 7, 5, decoy 1, 3, 5, silence 1, 7, 5, guns only 1, 5, 7, danger close 1, 2, 3.
-- **One fresh session per battle.** Start a new Claude Code session for each battle and close it when the battle ends. A session that carries over remembers the last battle.
+- **One fresh session per battle.** Start a new session for each battle and close it when the battle ends. A session that carries over remembers the last battle. In OpenCode, keep only one session running in the commander's workspace: wakes go to the one that's running, and with two they can't tell which.
 - **Nobody talks to the commander.** After typing `start`, don't send it anything. Its only input is the radio. Watching is fine (`--watch` opens a game window in the observer slot, and it can't help the commander), but don't intervene.
 - **The same doctrine for every model.** It's `host/src/arma_harness/commander/doctrine.md`, delivered by the server. Changing it is a different experiment: run every model again.
 - **Only finished battles count.** A battle that ends "unfinished" was cut short by the session or the game, not by the commander's play. Run that seed again.
@@ -81,16 +85,20 @@ To see every scenario, with the benchmark's first and their seeds:
    & "C:\projects\other\arma-harness\host\.venv\Scripts\arma-harness.exe" commander start llm_hidden_gun --seed 116
    ```
 
-   Repeating `start` with another scenario or seed reuses the running game and clears the last battle.
+   Repeating `start` with another scenario or seed reuses the running game and clears the last battle. For OpenCode, add `--client opencode`.
 
-2. **Launch the commander** from its workspace, a locked-down folder outside the repo. Name the model to benchmark:
+2. **Launch the commander** from its workspace, a locked-down folder outside the repo, and pick the model to benchmark.
+   - **Claude Code:**
 
-   ```powershell
-   Set-Location "C:\Users\ianri\AppData\Local\arma-harness\commander\workspace"
-   & claude --model opus --dangerously-load-development-channels server:commander
-   ```
+     ```powershell
+     Set-Location "C:\Users\ianri\AppData\Local\arma-harness\commander\workspace"
+     & claude --model opus --dangerously-load-development-channels server:commander
+     ```
 
-   Use the model names the `claude` CLI takes (`opus`, `sonnet`, `haiku`, or a full model id). The battle record reads the model actually used from the session transcript.
+     Use the model names the `claude` CLI takes (`opus`, `sonnet`, `haiku`, or a full model id).
+   - **OpenCode:** open `C:\Users\ianri\AppData\Local\arma-harness\commander\workspace-opencode` as a project in the desktop app (or run OpenCode's CLI with that folder), start a new session, and pick the model there. The agent is already **commander**: the workspace has switched the others off.
+
+   The battle record reads the model actually used from the session itself.
 
 3. **Type `start`** in the session. The commander loads its tools, reads its mission, and plays. Every later turn is started by the radio or by its own timers.
 
@@ -100,7 +108,7 @@ To see every scenario, with the benchmark's first and their seeds:
    & "C:\projects\other\arma-harness\host\.venv\Scripts\arma-harness.exe" commander status
    ```
 
-5. **Close the session** (`/exit`), and start the next battle with step 1.
+5. **Close the session** (`/exit` in Claude Code), and start the next battle with step 1. In OpenCode, the next `start` restarts the workspace's commander server, and its wakes go to whichever session is running at the commander's first call, so the old session only needs to be left alone.
 
 6. **When you're done for the day**, shut the game down:
 
@@ -148,7 +156,7 @@ Records go to `C:\Users\ianri\AppData\Local\arma-harness\runs\<run>\commander-<n
 | `friendly_fire_deaths` | Friendly deaths at the hands of his own side, by any weapon: the shells above, an aircraft's guns and rockets, or another squad |
 | `threat_reported_s` | When a station first listed an enemy weapon or vehicle (as T1, T2...) |
 | `silenced`, `silence_noticed_s` | The post a scenario silenced, and how long until the commander ordered or asked it anything. Empty means it never did |
-| `output_tokens` | Tokens the model wrote, from the transcript |
+| `output_tokens` | Tokens the model wrote, from the session. Claude Code counts its thinking in this; OpenCode counts reasoning separately (the review page has it as `reasoning_tokens`), and some providers hide reasoning altogether, so compare it only between models on the same client |
 
 ### What to look at in each scenario
 
