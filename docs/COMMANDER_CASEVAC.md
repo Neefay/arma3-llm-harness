@@ -75,7 +75,7 @@ The headless check passed while the demo failed for its first viewer, for two re
 
 ### 2.7 The carry as built
 
-`brmh_cmd_fnc_startCarry` in [fn_startCarry.sqf](../host/src/arma_harness/adapters/commander/fn_startCarry.sqf) is the controller, and [demo_carry.py](../host/tests/demo_carry.py) shows it, with `--check` to run headless as a test.
+`brmh_cmd_fnc_startCarry` in [fn_startCarry.sqf](../host/src/arma_harness/adapters/commander/casualties/carry/fn_startCarry.sqf) is the controller, and [demo_carry.py](../host/tests/demo_carry.py) shows it, with `--check` to run headless as a test.
 
 | Scene | Result |
 |---|---|

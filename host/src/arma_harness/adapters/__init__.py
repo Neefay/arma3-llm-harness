@@ -20,10 +20,23 @@ def commander_files() -> list:
     """Commander mode's game side, in the order it's run: its state, the machines' declarations (data), one file per
     function, and the monitor that starts it all."""
     folder = resources.files(__package__).joinpath("commander")
-    files = sorted((entry for entry in folder.iterdir() if entry.name.endswith(".sqf")), key=lambda entry: entry.name)
+    files = sorted((entry for entry in _walk(folder) if entry.name.endswith(".sqf")), key=lambda entry: entry.name)
+    seen = [entry.name for entry in files]
+    twice = sorted({name for name in seen if seen.count(name) > 1})
+    if twice:  # two files would define one function, and the last one loaded would quietly win
+        raise ValueError(f"commander SQF files with the same name in two folders: {', '.join(twice)}")
     machines = [entry for entry in files if entry.name.startswith("machine_")]
     functions = [entry for entry in files if entry.name.startswith("fn_")]
     return [folder.joinpath("init.sqf"), *machines, *functions, folder.joinpath("start.sqf")]
+
+
+def _walk(folder) -> list:
+    """Every file under a folder, its subfolders' too. The folders are only for people: a function is named by its
+    file, wherever it is."""
+    found = []
+    for entry in folder.iterdir():
+        found += _walk(entry) if entry.is_dir() else [entry]
+    return found
 
 
 def commander_source() -> str:

@@ -36,7 +36,7 @@ def main() -> int:
         (addon / "config.cpp").write_text(
             "class CfgPatches {\n\tclass brmhlint_cmd {\n\t\tunits[] = {};\n\t\tweapons[] = {};\n"
             "\t\trequiredVersion = 2.18;\n\t\trequiredAddons[] = {};\n\t};\n};\n", encoding="utf-8")
-        files = sorted(SOURCE.glob("*.sqf"))
+        files = sorted(SOURCE.rglob("*.sqf"))
         for source in files:
             shutil.copy(source, addon / "functions" / source.name)
         done = subprocess.run([str(find_hemtt()), "check"], check=False, cwd=project, capture_output=True,

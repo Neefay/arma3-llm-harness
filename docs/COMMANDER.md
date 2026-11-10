@@ -1034,7 +1034,9 @@ host/src/arma_harness/commander/
   operator.py       the operator's commands and the commander's workspace
   doctrine.md       the commander's instructions, delivered by the MCP server
 host/src/arma_harness/adapters/commander/          the game side, one file per function (fn_*.sqf) and per machine
-                                                    (machine_*.sqf), with init.sqf and start.sqf; the host joins them
+                                                    (machine_*.sqf), with init.sqf and start.sqf; the host joins them.
+                                                    Folders by area: core, orders, buildings, vehicles, fire, air,
+                                                    casualties (carry, treat, aidpost), reports, scenario, observer
 tools/lint_commander.py                              lints the game side with HEMTT, which doesn't see it otherwise
 addons/main/functions/fn_commanderEvents.sqf         @brmh's handlers for the game side's broadcasts (pose, observer chat)
 missions/brmh_commander.VR/                          the village, and the observer slot

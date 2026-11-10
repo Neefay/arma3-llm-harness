@@ -51,3 +51,23 @@ def test_the_checks_can_fail():
     assert len(sent_by("packet", 2)) > 30 and len(sent_by("truth", 3)) > 5
     assert {"pos", "leader", "mounted"} <= read_by("packet", "reports.py")
     assert Path(HOST / "runtime.py").exists()
+
+
+def test_two_files_with_one_name_are_refused(tmp_path, monkeypatch):
+    """The folders are only for people. Two fn_ files of one name would define one function twice, quietly."""
+    import pytest
+
+    from arma_harness import adapters
+
+    root = tmp_path / "commander"
+    for path in ("init.sqf", "start.sqf", "core/fn_able.sqf", "orders/fn_able.sqf"):
+        (root / path).parent.mkdir(parents=True, exist_ok=True)
+        (root / path).write_text("true\n", encoding="utf-8")
+
+    class Package:
+        def joinpath(self, name):
+            return root
+
+    monkeypatch.setattr(adapters.resources, "files", lambda package: Package())
+    with pytest.raises(ValueError, match="fn_able.sqf"):
+        adapters.commander_files()

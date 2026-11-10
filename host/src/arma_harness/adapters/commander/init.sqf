@@ -1,7 +1,8 @@
 /*
 	Commander mode, game side (runs on the server, comments are stripped by the host). Safe to re-run.
 	The host joins this folder into one program (adapters/__init__.py): this file, the machines' declarations
-	(machine_*.sqf), one file per function (fn_<name>.sqf, defined as brmh_cmd_fnc_<name>), then start.sqf.
+	(machine_*.sqf), one file per function (fn_<name>.sqf, defined as brmh_cmd_fnc_<name>), then start.sqf. The
+	subfolders are by area, for people only: a function is named by its file, wherever it is.
 	This code reads engine state and applies orders. Deciding what is worth reporting, and how to say it,
 	is left to the host (commander/reports.py), so that part can be tested without the game.
 
