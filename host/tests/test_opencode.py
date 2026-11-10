@@ -4,6 +4,7 @@ import json
 import subprocess
 import time
 import urllib.error
+from pathlib import Path
 
 import pytest
 
@@ -340,3 +341,55 @@ def test_a_failed_lockdown_shows_in_the_review(tmp_path):
 
     session = aar.opencode_session(folder, json.loads((folder / "client.json").read_text()), Gone())
     assert session["tools_outside_lockdown"] == ["browser:*"]
+
+
+def test_the_app_shows_a_wake_as_radio_traffic_and_the_model_gets_the_block():
+    service = FakeService({"ses_b": r"C:\cmd\workspace-opencode"}, ["ses_b"])
+    route, _ = wakes(service)
+    briefing = "T+01:40 | turn 3 | woke on: 1 message\n\nTRAFFIC\n[01:37] Alpha: Arrived."
+    route.send(briefing, {"turn": "3"})
+    settle(route)
+    body = service.prompts[0][1]
+    assert body["text"].startswith('<channel source="commander" turn="3">\nT+01:40 | turn 3')
+    # the app reads displayText only with comments and attachments beside it, as its own prompts have
+    assert body["metadata"] == {"displayText": opencode.display_text(briefing), "comments": [], "attachments": []}
+
+
+def test_the_display_lays_every_section_out():
+    briefing = "\n".join([
+        "T+15:02 | turn 23 | woke on: notice, 1 timer", "",
+        "OBJECTIVES, 03:20 left", "Done: Take the hill.", "Hold it.", "",
+        "NOTICE", "MISSION END. Time limit reached.", "",
+        "NET", "Hammer  last heard 2 min ago", "",
+        "TRAFFIC", "[01:37] Alpha: Arrived, grid 034 030.", "",
+        "OVERDUE", "Bravo: missed 2 scheduled check-ins.", "",
+        "VEHICLES", "V1  Mk6 Mortar  grid 020 020  as briefed", "",
+        "YOUR NOTES", "First line.", "", "NET is a word here, not a heading.",
+    ])
+    # Plain text: the app shows user messages without Markdown, keeping line breaks and spaces.
+    assert opencode.display_text(briefing).split("\n") == [
+        "📻 RADIO  ·  TURN 23  ·  ⏱️ T+15:02", "📢  Woke on notice, 1 timer", opencode.RULE, "",
+        "🎯 OBJECTIVES  ·  ⏳ 03:20 left", "✅  Take the hill.  (done)", "▫️  Hold it.", "",
+        "📢 NOTICE", "🏁  MISSION END. Time limit reached.", "",
+        "📶 NET", "•  Hammer — last heard 2 min ago", "",
+        "💬 TRAFFIC", "01:37  ▸  Alpha: Arrived, grid 034 030.", "",
+        "❗ OVERDUE", "•  Bravo: missed 2 scheduled check-ins.", "",
+        "🚙 VEHICLES", "•  V1 — Mk6 Mortar · grid 020 020 · as briefed", "",
+        "📝 YOUR NOTES", "┃ First line.", "┃", "┃ NET is a word here, not a heading.",
+    ]
+    assert not any(mark in opencode.display_text(briefing) for mark in ("**", "`", "###"))
+
+
+def test_every_heading_the_briefing_writes_has_a_mark():
+    import re
+
+    from arma_harness.commander import runtime
+
+    source = Path(runtime.__file__).read_text(encoding="utf-8")
+    written = set(re.findall(r'"([A-Z][A-Z ]+[A-Z])"\]', source)) | {"OBJECTIVE"}
+    written -= {"MISSION END"}
+    assert written <= {name for name, _ in opencode.SECTIONS}, written - {name for name, _ in opencode.SECTIONS}
+
+
+def test_a_briefing_in_another_shape_still_gets_a_header():
+    assert opencode.display_text("MISSION END").startswith("📻 RADIO  ·  MISSION END")

@@ -14,6 +14,7 @@ import base64
 import json
 import os
 import queue
+import re
 import shutil
 import subprocess
 import threading
@@ -160,6 +161,84 @@ def restart_server(service: Service, workspace: Path, name: str) -> str:
     return "restarted"
 
 
+# Each briefing section's heading, as runtime.briefing writes it, and its emoji. Matched on how a heading starts, since
+# the objective's carries the time left.
+SECTIONS = [
+    ("OBJECTIVE", "🎯"), ("THE MISSION FAILS IF", "⚠️"), ("NOTICE", "📢"), ("TIMERS DUE", "⏰"), ("TRAFFIC", "💬"),
+    ("OVERDUE", "❗"), ("NET", "📶"), ("YOUR MAP", "🗺️"), ("BUILDINGS CHECKED", "🏠"), ("BUILDINGS DESTROYED", "💥"),
+    ("VEHICLES", "🚙"), ("ENEMY WEAPONS AND VEHICLES", "🔴"), ("CASUALTIES", "🩹"), ("SCHEDULED", "📅"),
+    ("YOUR NOTES", "📝"),
+]
+WOKE = {"notice": "📢", "message": "💬", "timer": "⏰", "request": "🔎", "mission start": "🚩"}
+NOTICE_MARKS = {"MISSION END": "🏁", "OBJECTIVE COMPLETE": "✅", "System fault": "🛑",
+                "The mission has restarted": "🔄"}
+RULE = "─" * 30
+_RADIO = re.compile(r"^\[(\d+:\d\d)\] (.*)$")
+
+
+def _heading(line: str) -> str | None:
+    for name, mark in SECTIONS:
+        if line == name or line.startswith(name + ",") or (name == "OBJECTIVE" and line.startswith("OBJECTIVES")):
+            title, _, extra = line.partition(", ")
+            return f"{mark} {title}" + (f"  ·  ⏳ {extra}" if extra else "")
+    return None
+
+
+def _row(line: str) -> str:
+    """A row of the briefing's columns, two spaces apart: its label, then the rest."""
+    parts = [part.strip() for part in line.split("  ") if part.strip()]
+    if len(parts) == 1:
+        return f"•  {parts[0]}"
+    return f"•  {parts[0]} — " + " · ".join(parts[1:])
+
+
+def _item(section: str, line: str) -> str:
+    if "NOTES" in section:
+        return f"┃ {line}"  # the commander's own words, as it wrote them
+    if "NOTICE" in section:
+        return next((m for start, m in NOTICE_MARKS.items() if line.startswith(start)), "•") + f"  {line}"
+    if "OBJECTIVE" in section:
+        return f"✅  {line[len('Done: '):]}  (done)" if line.startswith("Done: ") else f"▫️  {line}"
+    if "BUILDINGS" in section:
+        return "•  " + " · ".join(part.strip() for part in line.split("  ") if part.strip())
+    radio = _RADIO.match(line)
+    if radio:
+        return f"{radio[1]}  ▸  {radio[2]}"
+    return _row(line)
+
+
+def display_text(briefing: str) -> str:
+    """What the desktop app shows for a wake, in place of the channel block the model reads.
+
+    The app draws a user message from its metadata's displayText when it has one, and reads that metadata only with
+    comments and attachments beside it, as its own prompts have. It shows user messages as plain text, keeping line
+    breaks and spaces but no Markdown, in a proportional font: so the layout is emoji, capitals, separators and lines.
+    The model and the review still get the whole block.
+    """
+    first, _, rest = briefing.partition("\n")
+    parts = [part.strip() for part in first.split("|")]
+    if len(parts) == 3 and parts[1].startswith("turn "):
+        clock, turn, woke = parts
+        reason = woke.removeprefix("woke on: ")
+        mark = next((m for word, m in WOKE.items() if word in reason), "🔔")
+        lines = [f"📻 RADIO  ·  {turn.upper()}  ·  ⏱️ {clock}", f"{mark}  Woke on {reason}", RULE]
+    else:
+        lines = [f"📻 RADIO  ·  {first}", RULE]
+    section = ""
+    for line in rest.split("\n"):
+        heading = None if "NOTES" in section else _heading(line)
+        if heading:
+            section = heading
+            lines += ["", heading]
+        elif line.strip():
+            lines.append(_item(section, line))
+        elif "NOTES" in section:
+            lines.append("┃")
+    while lines and lines[-1] in ("", "┃"):
+        lines.pop()
+    return "\n".join(lines)
+
+
 class Wakes:
     """Sends each wake into the commander's session, in order, on a thread of its own so the battle never waits."""
 
@@ -203,7 +282,8 @@ class Wakes:
     def send(self, text: str, meta: dict, steer: bool = False) -> None:
         attributes = "".join(f' {key}="{value}"' for key, value in meta.items())
         self.queue.put({"text": f'<channel source="commander"{attributes}>\n{text}\n</channel>',
-                        "delivery": "steer" if steer else "queue"})
+                        "delivery": "steer" if steer else "queue",
+                        "metadata": {"displayText": display_text(text), "comments": [], "attachments": []}})
 
     def _work(self) -> None:
         while True:
