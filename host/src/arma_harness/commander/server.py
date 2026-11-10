@@ -8,6 +8,7 @@ from __future__ import annotations
 import base64
 import contextlib
 import json
+import os
 import sys
 import threading
 import time
@@ -15,8 +16,10 @@ import traceback
 from importlib import resources
 
 from ..harness import HarnessError
+from . import opencode
 from .operator import is_current, load_current
 from .orders import Invalid
+from .wake import DELIVER
 
 # Delivered by the server, not as a CLAUDE.md: the tool lockdown denies Read, which also stops the client loading one.
 DOCTRINE = resources.files("arma_harness.commander").joinpath("doctrine.md").read_text(encoding="utf-8")
@@ -166,9 +169,22 @@ EARLIER_BATTLE = ("This session belongs to an earlier battle, which has been rep
                   "reaches the new one: tell the operator to open a new session.")
 
 
+# The MCP revisions this server speaks: the initialize handshake, with channel notifications. It must answer with one
+# of these, never echo a newer one: Claude Code doesn't register a server that negotiates 2026-07-28 (the stateless
+# revision, with no handshake) as a channel, and says nothing, so wakes would just stop.
+PROTOCOLS = ("2024-11-05", "2025-03-26", "2025-06-18")
+
+
+def _protocol(requested: str | None) -> str:
+    """The revision to answer with: the client's if this server speaks it, or else the newest it does."""
+    return requested if requested in PROTOCOLS else PROTOCOLS[-1]
+
+
 class Server:
-    def __init__(self, stdin=None, stdout=None, runtime_factory=load_current, still_current=None):
+    def __init__(self, stdin=None, stdout=None, runtime_factory=load_current, still_current=None, route=None):
+        """``route`` delivers wakes some other way than a Claude Code channel: an opencode.Wakes, for one."""
         self.stdin = stdin or sys.stdin.buffer
+        self.route = route
         self.stdout = stdout or sys.stdout.buffer
         self.write_lock = threading.Lock()
         self.runtime_lock = threading.Lock()
@@ -184,6 +200,10 @@ class Server:
             self.stdout.flush()
 
     def wake(self, text: str, meta: dict) -> None:
+        if self.route is not None:
+            mode = getattr(getattr(self.runtime, "wake", None), "mode", None)
+            self.route.send(text, meta, steer=mode == DELIVER)
+            return
         self.send({"jsonrpc": "2.0", "method": "notifications/claude/channel",
                    "params": {"content": text, "meta": meta}})
 
@@ -250,6 +270,8 @@ class Server:
         params = request.get("params") or {}
         name = params.get("name", "")
         is_error = False
+        if self.route is not None:
+            self.route.tool_called()
         try:
             result = self.call(name, params.get("arguments") or {})
             if name == "commander_map":
@@ -283,7 +305,7 @@ class Server:
                 with contextlib.suppress(Exception):
                     self.get_runtime()
                 self.send({"jsonrpc": "2.0", "id": rid, "result": {
-                    "protocolVersion": (request.get("params") or {}).get("protocolVersion", "2025-06-18"),
+                    "protocolVersion": _protocol((request.get("params") or {}).get("protocolVersion")),
                     "capabilities": {"experimental": {"claude/channel": {}}, "tools": {}},
                     "serverInfo": {"name": "commander", "version": "0.1.0"}, "instructions": DOCTRINE}})
             elif method == "tools/list":
@@ -296,8 +318,20 @@ class Server:
         self.stop.set()
 
 
+def operator_log(server: Server, text: str) -> None:
+    """For the operator, never the commander: the battle's own log once there is one, and the client's log always."""
+    print(text, file=sys.stderr, flush=True)
+    with contextlib.suppress(Exception):
+        server.runtime.records.operator_log(text)
+
+
 def main() -> None:
-    Server(still_current=is_current).serve()
+    server = Server(still_current=is_current)
+    if os.environ.get(opencode.CLIENT_ENV) == "opencode":
+        service = opencode.Service(os.environ.get(opencode.CLI_ENV) or opencode.find_cli() or "opencode")
+        server.route = opencode.Wakes(service, os.environ.get(opencode.WORKSPACE_ENV, os.getcwd()),
+                                      lambda text: operator_log(server, text))
+    server.serve()
 
 
 if __name__ == "__main__":

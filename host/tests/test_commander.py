@@ -3326,6 +3326,14 @@ def test_server_declares_the_channel_and_keeps_errors_clean():
     assert "error" in rows[7]
 
 
+@pytest.mark.parametrize(("requested", "answered"), [
+    ("2025-06-18", "2025-06-18"), ("2024-11-05", "2024-11-05"), ("2026-07-28", "2025-06-18"), (None, "2025-06-18")])
+def test_the_server_answers_with_a_revision_it_speaks(requested, answered):
+    """A newer revision echoed back would stop Claude Code registering it as a channel, with no error."""
+    from arma_harness.commander import server
+    assert server._protocol(requested) == answered
+
+
 def tool_reply(server: Server, stdout: io.BytesIO) -> str:
     server._tool({"id": 1, "params": {"name": "commander_roster"}})
     return json.loads(stdout.getvalue().splitlines()[-1])["result"]["content"][0]["text"]

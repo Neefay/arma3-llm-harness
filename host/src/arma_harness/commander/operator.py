@@ -12,6 +12,7 @@ from pathlib import Path
 from ..adapters import load_commander
 from ..config import Home
 from ..harness import Harness, HarnessError
+from . import opencode
 from . import scenario as scenario_mod
 from .orders import format_time, parse_grid
 from .records import Records
@@ -59,14 +60,42 @@ def write_workspace(home: Home | None = None) -> Path:
     return folder
 
 
-def launch_command(folder: Path) -> str:
+CLIENTS = ("claude", "opencode")
+
+
+def write_opencode_workspace(home: Home | None = None) -> Path:
+    """The folder an OpenCode commander session runs in: its server, its agent and the tool lockdown, in opencode.json.
+
+    Separate from Claude Code's, so neither client picks up the other's settings."""
+    home = home or Home()
+    cli = opencode.find_cli()
+    if cli is None:
+        raise HarnessError("OpenCode isn't installed, or isn't where it's looked for: set BRMH_OPENCODE_CLI to its "
+                           "command line (opencode or opencode-cli)")
+    folder = _commander_home(home) / "workspace-opencode"
+    folder.mkdir(parents=True, exist_ok=True)
+    command = [Path(sys.executable).as_posix(), "-m", "arma_harness.commander.server"]
+    (folder / "opencode.json").write_text(json.dumps(opencode.workspace_config(command, cli, folder, SERVER_NAME),
+                                                     indent=2) + "\n", encoding="utf-8")
+    return folder
+
+
+def launch_command(folder: Path, client: str = "claude") -> str:
+    if client == "opencode":
+        return (f'Open "{folder}" as a project in the OpenCode desktop app, or in a terminal:\n'
+                f'& "{opencode.find_cli()}" "{folder}"')
     return (f'cd "{folder}"\n'
             f"claude --dangerously-load-development-channels server:{SERVER_NAME}")
 
 
 def start(path: str, mode: str | None = None, harness: Harness | None = None, watch: bool = False,
-          seed: int | None = None) -> dict:
-    """Boot the scenario's mission if needed, put the stations on the net, and prepare the commander's records."""
+          seed: int | None = None, client: str = "claude") -> dict:
+    """Boot the scenario's mission if needed, put the stations on the net, and prepare the commander's records.
+
+    ``client`` is the agent the commander runs in: Claude Code, woken by a channel, or OpenCode, woken through its
+    server."""
+    if client not in CLIENTS:
+        raise HarnessError(f"client must be one of {', '.join(CLIENTS)}")
     h = harness or Harness()
     raw, seed, drawn = scenario_mod.draw(_read_raw(path), seed)
     if mode:
@@ -136,14 +165,20 @@ def start(path: str, mode: str | None = None, harness: Harness | None = None, wa
                "world_size": world_size, "buildings": buildings, "vehicles": vehicles,
                "terrain": str(terrain_file) if terrain_file else None}
     _current_file(h.home).write_text(json.dumps(current, indent=2), encoding="utf-8")
-    workspace = write_workspace(h.home)
+    workspace = write_opencode_workspace(h.home) if client == "opencode" else write_workspace(h.home)
+    server = None
+    if client == "opencode":
+        server = opencode.restart_server(opencode.Service(opencode.find_cli()), workspace, SERVER_NAME)
     observer = None
     if watch and not any(proc.kind == "client" for proc in state.procs):
         observer = h.client_start()
     return {"observer": observer, "scenario": scenario.name, "mode": scenario.mid_turn_messages, "run": state.run_id,
             "attempt": attempt, "seed": seed, "drawn": len(drawn),
-            "records": str(records_folder), "workspace": str(workspace), "launch": launch_command(workspace),
-            "then": 'Accept the prompts, then type: start'}
+            "records": str(records_folder), "workspace": str(workspace), "client": client,
+            **({"opencode_server": server} if server else {}),
+            "launch": launch_command(workspace, client),
+            "then": ('Start a new session there with the "commander" agent and the model you want, then type: start'
+                     if client == "opencode" else 'Accept the prompts, then type: start')}
 
 
 def _sample_terrain(h: Harness, scenario: scenario_mod.Scenario, world_size: float) -> Terrain:
