@@ -2,7 +2,7 @@
 
 You control a running Arma 3 game through the `arma_*` MCP tools. This page is everything you need. Follow it literally. It works the same in any agent (Claude Code, Codex, OpenCode, Gemini CLI, Cursor, VS Code...); the MCP tool `arma_guide` returns this page too.
 
-**No MCP tools?** Every tool is also a shell command: `host\.venv\Scripts\arma-harness.exe <command>` (from the repo root), printing JSON. `arma_status` -> `status`, `arma_exec(code, target)` -> `exec "<sqf>" --target server`, `arma_listen(since, timeout_s)` -> `listen --since N --timeout 25`, `arma_say(text)` -> `say "<text>"`, `arma_view` -> `view`, `arma_snapshot` -> `snapshot` (prints the PNG path; open it to look). Run `arma-harness.exe --help` for the rest.
+**No MCP tools?** Every tool is also a shell command: `host\.venv\Scripts\arma-harness.exe <command>` (from the repo root), printing JSON. `arma_status` -> `status`, `arma_exec(code, target)` -> `exec "<sqf>" --target server`, `arma_listen(since, timeout_s)` -> `listen --since N --timeout 25`, `arma_say(text)` -> `say "<text>"`, `arma_view` -> `view`, `arma_snapshot` -> `snapshot` (prints the PNG path; open it to look), `arma_commands(query)` -> `commands <words>`, `arma_run(name, args)` -> `run <name> '<json args>'`. Run `arma-harness.exe --help` for the rest.
 
 ## Golden rules
 
@@ -86,111 +86,44 @@ If a tool returns `bridge unreachable`, the game was closed or detached. Tell th
 
 - `arma_snapshot()` returns an image of exactly what the player sees. Use it for "what do you see", "this guy", "that house".
 - `arma_view(radius=300)` lists on-screen objects: `name`, `pos` (world [x,y,z]), `distance`, `screen` [x,y] (0..1, 0.5 = centre), `seen` (1 = clear line of sight). Match the image to this list using `screen` x/y to get world positions.
-- "This guy" = the unit nearest the centre of the screen. Recipe below.
+- "This guy" = the unit nearest the centre of the screen: `arma_run("unit_in_view")`.
 - `arma_snapshot(camera_pos=[x,y,z], camera_target=[x,y,z], hide_hud=true)` looks from anywhere (z is ATL), then restores the view. Use it to check your own work: from above (~90 m up, 30 m to the side) for layout, at eye level (z 1.8) for heights and facing. It works even while the player is in Zeus or Splendid Camera.
 
-## Recipes (tested; copy and adjust)
+## The command library (try it before writing SQF)
 
-All run with `target: "server"`.
+Tested commands for common jobs, run by name with checked arguments. They're faster and safer than SQF you write
+on the spot: each checks its classes and references and says plainly what's wrong.
 
-**Player position and facing**
-```sqf
-private _p = allPlayers # 0; [getPosATL _p, getDir _p, mapGridPosition _p]
-```
+- **Find one:** `arma_commands("spawn car")` returns the best matches, each with what it does, its parameters
+  (types, defaults), what it returns and an example. `arma_commands()` with no words is the whole index.
+- **Run it:** `arma_run("spawn_vehicle", {"class": "C_Offroad_01_F"})`. Arguments go by name; anything left out
+  takes its default. It runs on the right machine by itself. The answer is `{ok: true, result}` or
+  `{ok: false, error}` saying what to fix: fix it and run again, don't fall back to SQF for the same job.
+- **References you can pass:** `"player"`, a player's or unit's name, a net id from `arma_exec`, a grid such as
+  `"034 030"` for a place, or a `"made:N"` handle.
+- **Handles:** anything a command creates comes back with a `"made:N"` handle. `list_made` shows them, and
+  `delete_made("made:N")` (or `"all"`) removes it, crews and men included. Use it for "undo that" or "clear it up".
+- **Nothing fits?** Write SQF with `arma_exec` as below. If it's a job players will ask for again, tell the user it
+  could become a library command (one file in `host/src/arma_harness/library/<area>/`).
 
-**Spawn a vehicle next to the player**
-```sqf
-private _p = allPlayers # 0;
-private _pos = (_p getPos [15, getDir _p + 40]) findEmptyPosition [0, 50, "B_MRAP_01_hmg_F"];
-private _v = createVehicle ["B_MRAP_01_hmg_F", _pos, [], 0, "NONE"];
-_v setDir getDir _p; [getText (configOf _v >> "displayName"), round (_p distance _v)]
-```
-Classes: `B_MRAP_01_hmg_F` (Hunter HMG), `B_APC_Wheeled_01_cannon_F` (Badger IFV), `B_MBT_01_cannon_F` (tank), `B_Heli_Transport_01_F` (Ghost Hawk, spawn with `"FLY"` instead of `"NONE"`), `C_Offroad_01_F` (civilian car).
+The index:
 
-**Spawn an enemy squad at a place**
-```sqf
-private _at = [13993, 18709, 0];
-private _grp = [_at, east, (configFile >> "CfgGroups" >> "East" >> "OPF_F" >> "Infantry" >> "OIA_InfSquad")] call BIS_fnc_spawnGroup;
-[_grp, _at, 100] call BIS_fnc_taskPatrol;
-missionNamespace setVariable ["agent_enemy", _grp];
-count units _grp
-```
+| Area | Commands |
+|---|---|
+| player | `player_info` (where someone is: grid, position, facing, vehicle, squad) |
+| spawn | `spawn_vehicle`, `spawn_group` (an infantry group of a side, patrolling), `spawn_animal` |
+| units | `garrison` (men into the buildings around a place), `squad_weapons`, `squad_nvg`, `heal`, `teleport` |
+| world | `set_time_weather` (time, overcast, fog, rain; night with a full moon) |
+| tasks | `task_eliminate` (a task that completes when a group is dead) |
+| fire | `bombard` (an artillery barrage, refused within the safety distance of any player's side) |
+| find | `find_class` (classes by display name), `unit_in_view` ("this guy": who the player's looking at) |
+| markers | `arrow_above` (an arrow over something, to show the player) |
+| build | `measure_class`, `place_layout` (props from a layout around a centre) |
+| cleanup | `list_made`, `delete_made` |
 
-**Put units inside buildings** (after spawning `_grp`)
-```sqf
-private _houses = (nearestObjects [_at, ["House"], 120]) select {count (_x buildingPos -1) > 3};
-{ _x setPosATL (selectRandom ((selectRandom _houses) buildingPos -1)); _x disableAI "PATH" } forEach units _grp;
-```
-
-**Create a task that completes when they are all dead**
-```sqf
-private _grp = missionNamespace getVariable "agent_enemy";
-[west, "agentTask1", ["Eliminate the enemy.", "Clear the area", ""], getPosATL leader _grp, "ASSIGNED", 1, true, "attack"] call BIS_fnc_taskCreate;
-[_grp] spawn { params ["_g"]; waitUntil { sleep 2; ({alive _x} count units _g) == 0 }; ["agentTask1", "SUCCEEDED"] call BIS_fnc_taskSetState };
-true
-```
-Use a new task id (`agentTask2`, ...) each time.
-
-**Night, fog, weather**
-```sqf
-[[2035, 6, 10, 23, 30]] remoteExec ["setDate"];   // full moon: night stays visible
-0 setOvercast 0.3; 0 setFog [0.2, 0.01, 40]; forceWeatherChange; true
-```
-Daytime: same with hour 12. Most other dates at night are pitch black: keep 2035-06-10.
-
-**Give the squad night vision**
-```sqf
-{ if (hmd _x == "") then { _x linkItem "NVGoggles" } } forEach units group (allPlayers # 0); true
-```
-
-**Change the squad's weapons**
-```sqf
-private _swap = { params ["_u", "_w", "_mag", "_n"];
-  { _u removeMagazines _x } forEach (getArray (configFile >> "CfgWeapons" >> primaryWeapon _u >> "magazines"));
-  _u removeWeapon primaryWeapon _u;
-  for "_i" from 1 to _n do { _u addMagazine _mag };
-  _u addWeapon _w; _u selectWeapon _w; [name _u, primaryWeapon _u] };
-(units group (allPlayers # 0)) apply { [_x, "arifle_AKM_F", "30Rnd_762x39_Mag_F", 6] call _swap }
-```
-Weapons: `arifle_AKM_F` + `30Rnd_762x39_Mag_F`; `LMG_Zafir_F` + `150Rnd_762x54_Box`; `arifle_MX_F` + `30Rnd_65x39_caseless_mag`; `srifle_LRR_F` + `7Rnd_408_Mag`. **Before using any class, check it exists:** `isClass (configFile >> "CfgWeapons" >> "NAME")` (vehicles: `CfgVehicles`). If false, pick another and tell the user.
-
-**Find a weapon or vehicle by name**
-```sqf
-("toLowerANSI getText (_x >> 'displayName') find 'rpk' >= 0 and {getNumber (_x >> 'scope') == 2}" configClasses (configFile >> "CfgWeapons")) apply {configName _x}
-```
-
-**"This guy" (unit in front of the player)**: target `interface`
-```sqf
-private _dir = (positionCameraToWorld [0,0,0]) vectorFromTo (positionCameraToWorld [0,0,100]);
-private _c = ((player nearEntities ["CAManBase", 80]) - [player]) apply {
-  private _r = (getPosATL _x) vectorDiff (getPosATL player);
-  [(_r vectorDotProduct _dir) / ((vectorMagnitude _r) max 0.1), _x] } select {(_x # 0) > 0.8};
-_c sort false; if (_c isEqualTo []) then {"nobody"} else {[name ((_c # 0) # 1), typeOf ((_c # 0) # 1)]}
-```
-
-**Spawn an animal or civilian**
-```sqf
-private _p = allPlayers # 0; createAgent ["Goat_random_F", _p getPos [2, getDir _p], [], 0, "CAN_COLLIDE"]; true
-```
-Animals: `Goat_random_F`, `Sheep_random_F`, `Fin_random_F` (dog), `Hen_random_F`.
-
-**Marker arrow above something**
-```sqf
-private _a = createVehicle ["Sign_Arrow_Large_Blue_F", [0,0,0], [], 0, "CAN_COLLIDE"];
-_a setPosATL ((getPosATL TARGET) vectorAdd [0,0,4]); true
-```
-
-**Bombardment (with safety check)**: never hit within 250 m of the player's squad
-```sqf
-private _at = [13993, 18709, 0];
-private _near = selectMin ((units group (allPlayers # 0)) apply {_x distance2D _at});
-if (_near < 250) exitWith {["too close", round _near]};
-[_at] spawn { params ["_at"]; for "_i" from 1 to 30 do {
-  private _s = createVehicle ["Sh_155mm_AMOS", (_at getPos [random 120, random 360]) vectorAdd [0,0,150], [], 0, "CAN_COLLIDE"];
-  _s setVelocity [0,0,-150]; sleep 0.4 } };
-["firing", round _near]
-```
-If "too close", tell the user and do not fire.
+Common asks: "spawn me a car" is `spawn_vehicle`; "put enemies in that village" is `spawn_group`, then
+`garrison` and `task_eliminate`; "make it night" is `set_time_weather` with `hour` 23; "who's that?" is
+`unit_in_view`; "get rid of it" is `delete_made`.
 
 ## Building with objects (outposts, camps, clutter)
 
@@ -198,15 +131,14 @@ Learned the hard way. Follow these steps in order.
 
 1. **Check the world first.** `worldName` can change mid-session (a mission restart raises the bridge `epoch`). VR ground is at 5 m ASL, not 0.
 2. **Pick a clear, flat site that is not where the player stands.** Offset it 30-60 m from the squad, then check it: `nearestObjects [_c, [], 45]` (skip `CAManBase`) should be empty, and `getTerrainHeightASL` at the centre and corners should match.
-3. **Check classes and measure them** before laying anything out:
-   `_t = _cls createVehicleLocal [0,0,0]; _b = boundingBoxReal _t; deleteVehicle _t; (_b # 1) vectorDiff (_b # 0)` -> `[length, width, height]`. The long side is the model's x axis: at `dir 0` it runs east-west, at `dir 90` north-south. Lay walls end to end using the measured length.
-4. **Place with the recipe below.** `createSimpleObject` takes a **world position (ASL of the model centre)**, not ATL. Passing `[x, y, 0]` buries everything. Do not compute the offset yourself: put a temporary real object where you want it, copy its world position and orientation, then delete it. The same recipe puts small items on furniture: use `z` = the table top (camping table 0.8, workbench 0.95).
+3. **Check classes and measure them** before laying anything out: `arma_run("measure_class", {"class": ...})` -> `[length, width, height]`. The long side is the model's x axis: at `dir 0` it runs east-west, at `dir 90` north-south. Lay walls end to end using the measured length.
+4. **Place with `place_layout`** (`arma_commands("place_layout")`), or the SQF below when you need more control. `createSimpleObject` takes a **world position (ASL of the model centre)**, not ATL. Passing `[x, y, 0]` buries everything. Do not compute the offset yourself: put a temporary real object where you want it, copy its world position and orientation, then delete it. The same recipe puts small items on furniture: use `z` = the table top (camping table 0.8, workbench 0.95).
 5. **Get model paths from config** (`getText (configOf _t >> "model")`). `fileExists` returns false for `.p3d` files even when they exist, so do not use it.
-6. **Keep handles** in `missionNamespace` (`agent_outpost`, ...) so you can fix or delete things later. `deleteVehicle` works on simple objects (`allSimpleObjects` updates on the next frame; its `empty.p3d` entries at -1000,-1000 are the engine's, so leave them alone).
+6. **Keep handles**: `place_layout` returns a `made:N` handle that `delete_made` removes; with your own SQF, keep them in `missionNamespace` (`agent_outpost`, ...) so you can fix or delete things later. `deleteVehicle` works on simple objects (`allSimpleObjects` updates on the next frame; its `empty.p3d` entries at -1000,-1000 are the engine's, so leave them alone).
 7. **Look at it** with `arma_snapshot(camera_pos=...)` from above and from eye level, and fix what you see (for example, a sign showing its back: `_x setVectorDirAndUp [(vectorDir _x) vectorMultiply -1, vectorUp _x]`).
 8. **Simple objects are dead props**: no simulation, no building positions, a campfire cannot burn and a flag does not show its cloth. Use real objects (`createVehicle`) for anything that must work: `Land_Campfire_F` + `_f inflame true`, flags, vehicles.
 
-**Place simple objects from a layout** (offsets relative to a centre; `[class, [dx, dy, z], dir]`)
+**Place simple objects from a layout** by hand, as `place_layout` does (offsets relative to a centre; `[class, [dx, dy, z], dir]`)
 ```sqf
 private _c = [4040, 4060];
 private _L = [["Land_HBarrier_Big_F", [-22.5, 18, 0], 0], ["Land_Cargo_HQ_V1_F", [-12, 6, 0], 180], ["Land_CampingTable_F", [2.5, 7, 0], 0], ["Land_Laptop_unfolded_F", [2, 7, 0.8], 180]];

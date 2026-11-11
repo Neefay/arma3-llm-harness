@@ -10,7 +10,7 @@ Drive and observe Arma 3 from LLM agents and scripts. The harness is a standard 
 - run declarative test scenarios;
 - let an LLM command AI squads by radio, under fog of war, and score how it does ([commander mode](#commander-mode)).
 
-Agents get their instructions from [`AGENTS.md`](AGENTS.md): rules, where code runs, the chat loop and tested recipes.
+Agents get their instructions from [`AGENTS.md`](AGENTS.md): rules, where code runs, the chat loop, and the command library of tested commands for common jobs.
 
 **Dev only.** Everything binds to 127.0.0.1, the server runs in LAN mode without BattlEye, and the in-game probe stays inert unless the harness wrote a session file for that exact game process.
 
@@ -137,7 +137,7 @@ The harness is a standard MCP server (stdio), so any MCP-capable agent can drive
    ```
 
    These files are personal and git-ignored. A file that already exists is left alone unless you pass `--force` (the old one is kept as `.bak`); `--dry-run` shows what would be written. To use the harness from another project, for example your mission repo, register the same command there: `<repo>/host/.venv/Scripts/arma-harness-mcp.exe`.
-2. **The agent instructions.** [`AGENTS.md`](AGENTS.md) is the cheat sheet: rules, where code runs, the chat loop and tested recipes. Agents that don't load instruction files can get it from the `arma_guide` tool, or from `arma-harness guide` on the command line. Agents without MCP can use the CLI directly: every tool is a subcommand that prints JSON.
+2. **The agent instructions.** [`AGENTS.md`](AGENTS.md) is the cheat sheet: rules, where code runs, the chat loop and the command library. Agents that don't load instruction files can get it from the `arma_guide` tool, or from `arma-harness guide` on the command line. Agents without MCP can use the CLI directly: every tool is a subcommand that prints JSON.
 
 **In-game chat.** In Claude Code and OpenCode, `arma_chat_wake` lets each player message start the agent's turn. Claude Code needs launching with `claude --dangerously-load-development-channels server:arma` for that. Other clients loop on `arma_listen`.
 
@@ -155,6 +155,8 @@ The game processes survive MCP server restarts: they are started through WMI, ou
 | `arma_stop` | Stop the run (or detach from an attached game) |
 | `arma_hc_start`, `arma_client_start` | Add a headless client (for example, JIP) or a rendering client to a running server |
 | `arma_attach(pid?)` | Attach to a game you started yourself (SP, Eden preview, hosted MP) with `@Pythia` and `@brmh` loaded |
+| `arma_commands(query)` | The command library: tested commands for common jobs (spawning, weather, tasks, buildings, fire, cleanup...). No query: the index; words: the best matches, with parameters, return and an example. Each command is one SQF file with a header in `host/src/arma_harness/library/<area>/`. |
+| `arma_run(name, args)` | Run a library command by name, its arguments checked first (by name or in order, defaults filled in), on the machine it belongs on. References like `"player"`, a unit's name, a grid or a `"made:N"` handle resolve in game. Returns `{ok, result}` or `{ok: false, error}`. |
 | `arma_exec(code, target, args, scheduled)` | Run SQF. `target` is `server`, `clients`, `hcs`, `all`, `interface`, `owner:N` or `player:<name>`. Returns per-machine results and attributed errors (`aborted` when an error stopped the code). |
 | `arma_events(since, kinds, types, wait_s)` | Cursor-based event stream: `evt` (types `fsm`, `ctx`, `cmd`, `ctrl_evt`, `gui`, `attached`), `err`, `res`, `hello`, `bye`, `ext`, `mission` |
 | `arma_wait_for(match, since, timeout_s)` | Block until an event matches, e.g. `{"k":"evt","type":"fsm","dir":"enter","state":"GAME"}`. Supports the operators `$in`, `$re`, `$contains`, `$gt`, `$exists`, … |

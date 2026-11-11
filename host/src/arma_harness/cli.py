@@ -48,6 +48,13 @@ def main(argv: list[str] | None = None) -> int:
     a.add_argument("--pid", type=int)
     a.add_argument("--adapter", action="append", default=[])
     sub.add_parser("machines")
+    cm = sub.add_parser("commands", help="find tested commands in the command library (no words: the index)")
+    cm.add_argument("query", nargs="*", help="words, such as: spawn car")
+    ru = sub.add_parser("run", help="run a command from the library by name")
+    ru.add_argument("name")
+    ru.add_argument("args", nargs="?", help='its arguments as JSON, such as {"class": "C_Offroad_01_F"}')
+    ru.add_argument("--arg", action="append", default=[], metavar="NAME=VALUE",
+                    help="one argument (repeatable); the value is read as JSON if it can be, else as text")
     e = sub.add_parser("exec")
     e.add_argument("code", help="SQF, or @file.sqf")
     e.add_argument("--target", default="server")
@@ -182,6 +189,16 @@ def _dispatch(h: Harness, a):
             return h.attach(pid=a.pid, adapters_=a.adapter)
         case "machines":
             return h.machines()
+        case "commands":
+            from . import library
+
+            return library.search(" ".join(a.query))
+        case "run":
+            from . import library
+
+            given = json.loads(a.args) if a.args else {}
+            given.update({k: _value(v) for k, v in (o.split("=", 1) for o in a.arg)})
+            return library.run(h, a.name, given)
         case "exec":
             code = Path(a.code[1:]).read_text(encoding="utf-8") if a.code.startswith("@") else a.code
             return h.exec(code, a.target, timeout=a.timeout, scheduled=a.scheduled)

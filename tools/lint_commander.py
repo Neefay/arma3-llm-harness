@@ -22,14 +22,15 @@ SOURCE = REPO / "host" / "src" / "arma_harness" / "adapters" / "commander"
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
 
-def main() -> int:
+def lint(sources: list[Path], what: str) -> int:
+    """Lint every .sqf under ``sources`` as one throwaway addon. Shared with lint_library.py."""
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # HEMTT's report draws with box characters
     with tempfile.TemporaryDirectory(prefix="brmh_lint_") as tmp:
         project = Path(tmp)
         (project / ".hemtt").mkdir()
         shutil.copy(REPO / ".hemtt" / "lints.toml", project / ".hemtt" / "lints.toml")
         (project / ".hemtt" / "project.toml").write_text(
-            'name = "Commander lint"\nprefix = "brmhlint"\nmainprefix = "x"\n\n'
+            f'name = "{what} lint"\nprefix = "brmhlint"\nmainprefix = "x"\n\n'
             "[version]\nmajor = 0\nminor = 1\npatch = 0\ngit_hash = 0\n", encoding="utf-8")
         addon = project / "addons" / "cmd"
         (addon / "functions").mkdir(parents=True)
@@ -37,7 +38,12 @@ def main() -> int:
         (addon / "config.cpp").write_text(
             "class CfgPatches {\n\tclass brmhlint_cmd {\n\t\tunits[] = {};\n\t\tweapons[] = {};\n"
             "\t\trequiredVersion = 2.18;\n\t\trequiredAddons[] = {};\n\t};\n};\n", encoding="utf-8")
-        files = sorted(SOURCE.rglob("*.sqf"))
+        files = sorted(path for source in sources for path in source.rglob("*.sqf"))
+        names = [path.name for path in files]
+        clashes = sorted({name for name in names if names.count(name) > 1})
+        if clashes:
+            print(f"FAIL: two files share a name, so one would hide the other: {', '.join(clashes)}")
+            return 1
         for source in files:
             shutil.copy(source, addon / "functions" / source.name)
         done = subprocess.run([str(find_hemtt()), "check"], check=False, cwd=project, capture_output=True,
@@ -50,6 +56,10 @@ def main() -> int:
         return 1
     print(f"ok: {len(files)} files, no findings")
     return 0
+
+
+def main() -> int:
+    return lint([SOURCE], "Commander")
 
 
 if __name__ == "__main__":

@@ -344,3 +344,31 @@ def test_claimed_names_get_distinct_colors(tmp_path, monkeypatch, no_arma):
     assert len({tuple(c) for c in colors}) == len(names)
     assert h.agent_color("Hermes") == colors[1]
     assert h.agent_color("Unclaimed") == agent_color("Unclaimed")
+
+
+def test_a_kill_that_cant_be_waited_on_still_reports_the_process_gone(monkeypatch):
+    """Windows let stop kill a server started through WMI, then refused to let it wait: stop crashed after working."""
+    import psutil
+
+    from arma_harness import procutil
+
+    class Proc:
+        pid = 4242
+
+        def children(self, recursive=False):
+            return []
+
+        def kill(self):
+            killed.append(self.pid)
+
+    killed, alive = [], {4242}
+
+    def refuse(procs, timeout):
+        alive.clear()  # the kill worked
+        raise psutil.AccessDenied(pid=4242)
+
+    monkeypatch.setattr(psutil, "Process", lambda pid: Proc())
+    monkeypatch.setattr(psutil, "wait_procs", refuse)
+    monkeypatch.setattr(psutil, "pid_exists", lambda pid: pid in alive)
+    assert procutil.kill_tree(4242, timeout=2) is True
+    assert killed == [4242]

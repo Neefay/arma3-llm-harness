@@ -4,6 +4,7 @@ from __future__ import annotations
 import contextlib
 import ctypes
 import subprocess
+import time
 from pathlib import Path
 
 import psutil
@@ -69,7 +70,17 @@ def kill_tree(pid: int, timeout: float = 10) -> bool:
     for p in procs:
         with contextlib.suppress(psutil.NoSuchProcess):
             p.kill()
-    _, still = psutil.wait_procs(procs, timeout=timeout)
+    try:
+        _, still = psutil.wait_procs(procs, timeout=timeout)
+    except psutil.AccessDenied:
+        # Windows can let us kill a process we may not wait on: a server started through WMI, outside our job. Its
+        # stop then crashed after the kill had worked. Watch for it to be gone instead.
+        deadline = time.time() + timeout
+        still = procs
+        while still and time.time() < deadline:
+            still = [p for p in still if psutil.pid_exists(p.pid)]
+            if still:
+                time.sleep(0.2)
     return not still
 
 

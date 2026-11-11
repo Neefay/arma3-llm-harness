@@ -15,7 +15,7 @@ import anyio
 from mcp.server.mcpserver import Context, Image, MCPServer
 from mcp.server.stdio import stdio_server
 
-from . import agents, chatwake, scenario
+from . import agents, chatwake, library, scenario
 from .adapters import rounds_framework as rounds
 from .bridge import BridgeError
 from .harness import Harness, HarnessError, check_agent_name
@@ -25,7 +25,9 @@ Arma 3 dev harness. Typical flow:
 1. arma_status: what is running, and the mission profiles. arma_start(mission=...) boots a headless dedicated
    server (~20 s). hcs=N adds headless clients; client=true adds a rendering client (opens a game
    window) needed for arma_snapshot and arma_gui_text.
-2. arma_exec runs SQF (unscheduled by default) on target server | clients | hcs | all | interface |
+2. arma_commands finds a tested command for a common job (spawning, weather, tasks, buildings, cleanup...) and
+   arma_run runs it by name with checked arguments: try these before writing SQF.
+   arma_exec runs SQF (unscheduled by default) on target server | clients | hcs | all | interface |
    owner:N | player:<name> and returns one result per machine, with script errors attributed to the call.
    Comments are fine. Lint non-trivial SQF first if an SQF linter tool is available.
 3. Observe with arma_events (cursor-based; pass back "next") and arma_wait_for (block on a match).
@@ -128,6 +130,27 @@ def arma_attach(pid: int | None = None, adapters: list[str] | None = None) -> di
     """Attach to a game the user started themselves (SP, Eden preview, or hosting MP) that loads @Pythia
     and @brmh. pid is optional when exactly one Arma process runs."""
     return h().attach(pid=pid, adapters_=adapters)
+
+
+@server.tool()
+@safe
+def arma_commands(query: str = "") -> dict:
+    """The command library: tested commands for common jobs, to run with arma_run instead of writing SQF. With no
+    query, the index of every command by area. With words, such as "spawn car", "night fog" or "this guy", the
+    best matches in full: what each does, its parameters with types and defaults, what it returns, and an example.
+    References are things you can say: "player", a unit's or player's name, a net id, a grid such as "034 030", or
+    a "made:N" handle a command returned."""
+    return library.search(query)
+
+
+@server.tool()
+@safe
+def arma_run(name: str, args: dict | list | None = None) -> dict:
+    """Run a library command by name (see arma_commands) on the machine it belongs on, with its arguments checked
+    first: {"class": "C_Offroad_01_F"} by name, or a list in parameter order; anything left out takes its default.
+    Returns {ok: true, result} or {ok: false, error} with what to fix. Things it makes come back with a "made:N"
+    handle: delete_made removes them."""
+    return library.run(h(), name, args)
 
 
 @server.tool()
