@@ -9,6 +9,7 @@ import sys
 import threading
 import time
 import traceback
+from pathlib import Path
 from typing import Any
 
 import anyio
@@ -52,6 +53,28 @@ _agent_name = os.environ.get("BRMH_AGENT_NAME", "").strip() or "Claude"
 _wake: chatwake.ChatWake | None = None
 _wake_via: str | None = None
 
+# The harness's own files, as this server loaded them. OpenCode's background service keeps a folder's MCP servers
+# running across sessions and after its app is closed, so a server can go on running code the harness has since
+# changed: chat in an agent's channel didn't reach a GPT-6 session for that, while a fresh Claude Code one heard it.
+_PACKAGE = Path(__file__).parent
+RESTART = ("Restart this MCP server to load it: in OpenCode, run `opencode service restart` (or close and reopen the "
+           "desktop app); in Claude Code, /mcp and reconnect arma, or start a new session.")
+
+
+def _code_stamp() -> float:
+    return max((path.stat().st_mtime for pattern in ("*.py", "*.sqf")
+                for path in _PACKAGE.rglob(pattern)), default=0.0)
+
+
+_LOADED = _code_stamp()
+
+
+def code_changed() -> str | None:
+    """Whether the harness's code on disk is newer than what this server loaded, said for the agent to pass on."""
+    if _code_stamp() <= _LOADED:
+        return None
+    return f"The harness's code has changed since this MCP server started, so it's running the old version. {RESTART}"
+
 
 def h() -> Harness:
     global _harness
@@ -85,8 +108,11 @@ def arma_guide() -> str:
 def arma_status() -> dict:
     """Run state: mode, mission, processes, bridge health, connected machines (owner ids, kinds), and
     `listener`: chat_observer_installed (per machine), listen_call_waiting_now, and messages to Claude
-    since the last arma_listen started (unread if no call is waiting)."""
-    return h().status()
+    since the last arma_listen started (unread if no call is waiting). `server_code` says if this MCP server is
+    running older code than the harness now has: pass that on to the user."""
+    status = h().status()
+    stale = code_changed()
+    return {**status, "server_code": stale or "current"}
 
 
 @server.tool()
@@ -404,6 +430,11 @@ async def arma_chat_wake(on: bool = True, test: bool = True, ctx: Context = None
     h().set_wake(_agent_name, via)
     note = ("Claude Code delivers these only when it was launched with --dangerously-load-development-channels "
             "server:arma." if via.startswith("claude") else "Messages that arrive mid-turn wait for the turn to end.")
+    note += (f" Players can type to you in the {_agent_name} radio channel without starting with your name; tell "
+             "the user that, in one line.")
+    stale = code_changed()
+    if stale:
+        note += f" Also tell the user: {stale}"
     if test:
         def send_test() -> None:
             time.sleep(1)  # after this call's answer, so the test arrives as a wake of its own

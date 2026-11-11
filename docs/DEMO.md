@@ -26,7 +26,7 @@ That is the part a heuristic mission script can't do.
      Without the flag, the agent's test wake never arrives, and it falls back to the listen loop below.
    - **Other clients** loop on `arma_listen` (or `arma-harness listen --since <next>`): the agent handles each message, replies with `arma_say`, and listens again.
 
-Talk to Claude by starting a chat message (any channel) with `claude`, `@claude` or `hey claude`. A "Claude thinking..." hint appears at once. The answer takes 10 to 40 seconds, so cut the waits in the edit.
+Talk to Claude in its own radio channel, called Claude, which appears once it starts listening: switch the chat to it with the channel keys (by default `,` and `.`, or check Controls) and type normally, without its name. In any other channel, start the message with `claude`, `@claude` or `hey claude`. A "Claude thinking..." hint appears at once. The answer takes 10 to 40 seconds, so cut the waits in the edit.
 
 ## Run of show (about 3 minutes of footage)
 

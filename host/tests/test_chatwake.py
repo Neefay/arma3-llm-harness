@@ -18,6 +18,7 @@ def test_a_wake_says_who_said_what_and_what_to_do():
     assert text.startswith("Nife: zeus, spawn a Hunter next to me")
     assert "- Rifleman by Nife (MX, 120 m)" in text
     assert "arma_say" in text and "Don't call arma_listen" in text
+    assert "first say so in game" in text  # a big job gets a word first, so the player knows it's being done
     assert meta == {"from": "Nife", "to": "Zeus", "seq": "42"}
     assert display == "💬 Nife → Zeus: zeus, spawn a Hunter next to me"
 
@@ -335,3 +336,13 @@ def test_the_wake_note_survives_the_listeners_own_updates(tmp_path, monkeypatch)
     h.set_wake("Zeus", "claude code channel")
     h.claim_name("Zeus")  # as every listen does
     assert h._listener("Zeus")["wake"] == "claude code channel"
+
+
+def test_a_server_running_older_code_says_so(monkeypatch):
+    """OpenCode's service kept a server running after the harness changed: the agent's channel went unheard."""
+    from arma_harness import mcp_server
+
+    assert mcp_server.code_changed() is None
+    monkeypatch.setattr(mcp_server, "_LOADED", mcp_server._code_stamp() - 60)
+    warning = mcp_server.code_changed()
+    assert "running the old version" in warning and "opencode service restart" in warning

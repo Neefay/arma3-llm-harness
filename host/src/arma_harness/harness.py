@@ -540,24 +540,25 @@ class Harness:
 
     def listen(self, name: str = "Claude", since: int | None = None, timeout: float = 25,
                ack: str | None = "thinking...") -> dict:
-        """Block until a player types a chat message addressed to ``name`` ("zeus, ...", "@zeus ...",
-        "hey zeus ...", any case) or to everyone ("everyone, ..."). Returns the message, the kills since
-        ``since``, and the cursor to pass back next time so nothing said in between is missed. ``ack``
-        is shown at once as a hint on the sender's machine, so players see the message landed while the
-        reply is being worked out."""
+        """Block until a player types a chat message addressed to ``name``: anything typed in its own radio
+        channel, named after it, or anywhere else starting with its name ("zeus, ...", "@zeus ...", "hey zeus ...",
+        any case), or to everyone ("everyone, ..."). Returns the message, the kills since ``since``, and the
+        cursor to pass back next time so nothing said in between is missed. ``ack`` is shown at once as a hint on
+        the sender's machine, so players see the message landed while the reply is being worked out."""
         self.claim_name(name)
         obs = self.observe()
         if not obs.get("ok"):
             raise HarnessError(f"could not install observers: {obs}")
         b = self.bridge()
         start = b.cursor() if since is None else since
+        channel = self.agent_channel(name)  # made now, not at the first reply, so players can type in it at once
         with _LISTENERS:
             state = self._listener(name)
             state.update({"since": start, "started": time.time(), "deadline": time.time() + timeout,
-                          "finished": None})
+                          "finished": None, "channel": channel})
             self._listener(name, state)
         try:
-            return self._listen(b, name, start, timeout, ack)
+            return self._listen(b, name, start, timeout, ack, channel)
         finally:
             with _LISTENERS:
                 state = self._listener(name)
@@ -578,9 +579,9 @@ class Harness:
                 and time.time() < (st.get("deadline") or 0)
             unread = []
             if st.get("since") is not None:
-                rx = _address_rx(st["name"])
+                to_it = _addressed(st["name"], st.get("channel") or 0)
                 evs = b.events(since=st["since"], limit=5000).get("events", [])
-                unread = [e.get("text") for e in evs if e.get("type") == "chat" and rx.search(e.get("text") or "")]
+                unread = [e.get("text") for e in evs if to_it(e)]
             sessions.append({"name": st["name"], "session_alive": alive, "listen_call_waiting_now": waiting,
                              "chat_wake": (st.get("wake") or "off") if alive else "off",
                              "last_listen_since": st.get("since"), "messages_since_last_listen_started": unread[-5:]})
@@ -591,9 +592,8 @@ class Harness:
                        "all the time when its chat_wake is on: then each message to it starts its turn.",
         }
 
-    def _listen(self, b: Bridge, name: str, start: int, timeout: float, ack: str | None) -> dict:
-        rx = _address_rx(name).pattern
-        is_chat = matcher({"k": "evt", "type": "chat", "text": {"$re": rx}})
+    def _listen(self, b: Bridge, name: str, start: int, timeout: float, ack: str | None, channel: int = 0) -> dict:
+        is_chat = _addressed(name, channel)
         # A mission restart removes the observers: reinstall them once the player's machine is back
         # (its hello), and keep waiting.
         is_restart = matcher({"k": "mission", "state": "start"})
@@ -604,8 +604,8 @@ class Harness:
         # meant to check what is waiting, not to skip the check.
         while ev is None and (first or time.time() < deadline):
             first = False
-            hit, cursor = b.wait_for(lambda e, r=restarted: is_chat(e) or is_restart(e) or (r and is_back(e)),
-                                     cursor, max(0.0, deadline - time.time()))
+            wanted = lambda e, r=restarted, to_us=is_chat: to_us(e) or is_restart(e) or (r and is_back(e))  # noqa: E731
+            hit, cursor = b.wait_for(wanted, cursor, max(0.0, deadline - time.time()))
             if hit is None:
                 break
             if is_restart(hit):
@@ -616,6 +616,9 @@ class Harness:
                 restarted = False
                 with contextlib.suppress(HarnessError, BridgeError):
                     self.observe()
+                    # The restart took the agent's channel with it: make it again, and listen on the new one.
+                    channel = self.agent_channel(name)
+                    is_chat = _addressed(name, channel)
         nxt = cursor
         if ev is not None and ack:
             with contextlib.suppress(HarnessError, BridgeError):
@@ -626,16 +629,30 @@ class Harness:
                  and (ev is None or e.get("seq", 0) < ev.get("seq", 0))]
         return {"found": ev is not None, "message": ev, "kills": kills, "next": nxt}
 
+    def agent_channel(self, name: str) -> int:
+        """The radio channel named after an agent, made once per mission in its colour, with every player added (so
+        players who joined since are, on each call). Players type to the agent there without its name, and its
+        replies appear there. 0 if there's none: a mission has ten custom channels at most."""
+        try:
+            made = self.exec(_snippet("say_channel.sqf"), "server", timeout=5, args=[name, self.agent_color(name)],
+                             strip=False)
+        except (HarnessError, BridgeError):
+            return 0
+        channel = (made.get("results") or [{}])[0].get("r")
+        channel = int(channel) if isinstance(channel, int | float) and not isinstance(channel, bool) else 0
+        if channel:
+            # Also on each player's own machine, as say.sqf always did: whether the server's add reaches them
+            # hasn't been checked, and a player not in the channel can't type in it.
+            with contextlib.suppress(HarnessError, BridgeError):
+                self.exec("(_this # 0) radioChannelAdd [player]; true", "interface", timeout=5, args=[channel])
+        return channel
+
     def say(self, text: str, sender: str = "Claude", hint: bool = False, target: str = "interface") -> dict:
         """Show a chat line "<sender>: <text>" (own colour) to players; hint=true also shows a hint box."""
         sender = check_agent_name(sender)
-        made = self.exec(_snippet("say_channel.sqf"), "server", timeout=5, args=[sender, self.agent_color(sender)],
-                         strip=False)
-        channel = (made.get("results") or [{}])[0].get("r")
-        if not isinstance(channel, int | float):
-            channel = 0
         return self.exec(_snippet("say.sqf"), target, timeout=5,
-                         args=[text, sender, hint, int(channel), _hex(self.agent_color(sender))], strip=False)
+                         args=[text, sender, hint, self.agent_channel(sender), _hex(self.agent_color(sender))],
+                         strip=False)
 
     def view(self, radius: float = 300, max_objects: int = 40, target: str = "interface") -> dict:
         """What the player's camera sees, as data: player and world state plus on-screen buildings,
@@ -699,6 +716,18 @@ def _free_color(name: str, taken: list) -> list[float]:
 
 def _hex(rgba: list[float]) -> str:
     return "#" + "".join(f"{round(c * 255):02x}" for c in rgba[:3])
+
+
+# HandleChatMessage numbers the custom radio channels 6 to 15, for radioChannelCreate's 1 to 10.
+CUSTOM_CHANNEL_OFFSET = 5
+
+
+def _addressed(name: str, channel: int = 0):
+    """Whether an event is a chat message to ``name``: typed in its own radio channel, or starting with its name or
+    "everyone" anywhere else."""
+    by_name = matcher({"k": "evt", "type": "chat", "text": {"$re": _address_rx(name).pattern}})
+    in_channel = matcher({"k": "evt", "type": "chat", "channel": channel + CUSTOM_CHANNEL_OFFSET}) if channel else None
+    return lambda event: by_name(event) or (in_channel is not None and in_channel(event))
 
 
 def _address_rx(name: str) -> re.Pattern:

@@ -26,11 +26,13 @@ You control a running Arma 3 game through the `arma_*` MCP tools. This page is e
 
 ## Talking with the user in game
 
-Players address you by starting a chat message with your name: `zeus, ...`, `@zeus ...` or `hey zeus ...` (any case). The default is `Claude`. When the user says something like "listen as Zeus", call `arma_set_name("Zeus")` first. After that your replies (`arma_say`) show as "Zeus: ..." in your own colour.
+When you start listening (`arma_chat_wake` or `arma_listen`), a radio channel named after you appears in the game, with every player in it. Anything typed **in that channel** is for you, without your name. Anywhere else, players address you by starting with your name: `zeus, ...`, `@zeus ...` or `hey zeus ...` (any case). The default name is `Claude`. When the user says something like "listen as Zeus", call `arma_set_name("Zeus")` first. Your replies (`arma_say`) show in your channel as "Zeus: ...", in your own colour. When you start listening, tell the user in one line that they can type to you in the Zeus channel.
 
 - Several sessions (other agents, other windows) can listen at once, each under its own name. A message reaches only the session it names. `everyone, ...` reaches all of them, so answer it too, briefly.
 - If `arma_set_name` says the name is taken, another live session is using it: tell the user and ask for another name. Use `force=true` only if the user says that session is gone.
 - Names are one word, starting with a letter. `everyone` is reserved.
+
+**Acknowledge before a big job.** The player sees nothing while you work, and a silent minute looks like you've gone. So when a request needs more than a quick answer or a single command, such as building a camp, setting up a mission, or several spawns, first send one short `arma_say` saying you're on it, in your own words: "On it, building the outpost now." or "Give me a minute, setting up the ambush." Then work, and finish with what you did, with numbers. A greeting, a question you can answer at once, or one quick command gets just the answer, no preamble.
 
 ### Chat wakes (Claude Code and OpenCode): use these first
 
@@ -39,8 +41,9 @@ Players address you by starting a chat message with your name: `zeus, ...`, `@ze
 2. arma_chat_wake()                   -> ok: true, via ...; a test wake follows
 3. end your turn
    ... a player types "zeus, ..." -> your next turn starts with it, as a <channel source="arma"> block
-4. understand it, do it (arma_exec on "server"), check the result
-5. arma_say("short reply"), then end your turn
+4. a big job? arma_say("On it, ...") first  (see "Acknowledge" below)
+5. understand it, do it (arma_run / arma_exec on "server"), check the result
+6. arma_say("short reply"), then end your turn
 ```
 
 - Each message to you **starts your turn** by itself, even long after the last one. Nothing runs or costs anything while it's quiet. **Don't call `arma_listen`** while wakes are on.
@@ -55,9 +58,10 @@ Players address you by starting a chat message with your name: `zeus, ...`, `@ze
 ```
 1. arma_listen()                       -> {found, message:{text, name}, kills:[...], next}
 2. understand the request (look if needed: arma_snapshot, arma_view)
-3. do it with arma_exec on "server"
-4. check the result
-5. arma_say("short reply")
+3. a big job? arma_say("On it, ...") first  (see "Acknowledge" below)
+4. do it with arma_run / arma_exec on "server"
+5. check the result
+6. arma_say("short reply")
 6. arma_listen(since=<next from step 1>)   <- ALWAYS pass `next` back
 ```
 
@@ -186,6 +190,8 @@ A separate mode where an LLM commands AI squads in a battle it can't see, only t
 - **Docs:** running and scoring battles with real LLMs is in `docs/COMMANDER_BENCHMARK.md`, and running them in OpenCode in `docs/COMMANDER_OPENCODE.md`; the design is in `docs/COMMANDER.md`, and the formal model in `docs/COMMANDER_MODEL.md`. The game side is `host/src/arma_harness/adapters/commander/`, one SQF file per function, linted with `tools/lint_commander.py`.
 
 ## When stuck
+
+First, if `arma_status` shows `server_code` as anything but `current`, this MCP server is running older code than the harness now has, and something new won't work: tell the user, with the restart it gives. Then:
 
 1. `arma_errors()` for recent script errors.
 2. `arma_status()` to see if the game is still connected.

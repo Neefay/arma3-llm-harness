@@ -372,3 +372,45 @@ def test_a_kill_that_cant_be_waited_on_still_reports_the_process_gone(monkeypatc
     monkeypatch.setattr(psutil, "pid_exists", lambda pid: pid in alive)
     assert procutil.kill_tree(4242, timeout=2) is True
     assert killed == [4242]
+
+
+def test_a_message_in_the_agents_own_channel_needs_no_name():
+    from arma_harness.harness import CUSTOM_CHANNEL_OFFSET, _addressed
+
+    to_zeus = _addressed("Zeus", channel=2)  # radioChannelCreate's 2: HandleChatMessage says 7
+    in_channel = 2 + CUSTOM_CHANNEL_OFFSET
+    assert to_zeus({"k": "evt", "type": "chat", "channel": in_channel, "text": "spawn me a car"})
+    assert not to_zeus({"k": "evt", "type": "chat", "channel": in_channel + 1, "text": "spawn me a car"})
+    assert to_zeus({"k": "evt", "type": "chat", "channel": 0, "text": "zeus, spawn me a car"})  # by name still
+    assert to_zeus({"k": "evt", "type": "chat", "channel": 3, "text": "everyone, report"})
+    assert not to_zeus({"k": "evt", "type": "killed", "channel": in_channel})
+    assert not _addressed("Zeus", channel=0)({"k": "evt", "type": "chat", "channel": 5, "text": "hi"})
+
+
+def test_listening_makes_the_channel_and_hears_what_is_typed_in_it(tmp_path, monkeypatch, no_arma):
+    from arma_harness.harness import CUSTOM_CHANNEL_OFFSET, Harness
+
+    monkeypatch.setenv("BRMH_HOME", str(tmp_path))
+    events = [{"k": "evt", "type": "chat", "channel": 0, "text": "anyone there?", "seq": 1, "o": 2},
+              {"k": "evt", "type": "chat", "channel": 3 + CUSTOM_CHANNEL_OFFSET, "text": "spawn me a car",
+               "name": "Nife", "seq": 2, "o": 2}]
+
+    class Bridge:
+        def cursor(self):
+            return 0
+
+        def wait_for(self, wanted, cursor, timeout):
+            hit = next((e for e in events if e["seq"] > cursor and wanted(e)), None)
+            return hit, (hit["seq"] if hit else cursor)
+
+        def events(self, since, limit):
+            return {"events": events}
+
+    h = Harness()
+    monkeypatch.setattr(h, "observe", lambda: {"ok": True})
+    monkeypatch.setattr(h, "bridge", lambda: Bridge())
+    monkeypatch.setattr(h, "agent_channel", lambda name: 3)
+    monkeypatch.setattr(h, "exec", lambda *a, **k: {"ok": True})  # the "thinking..." hint
+    heard = h.listen("Zeus", since=0, timeout=1)
+    assert heard["found"] and heard["message"]["text"] == "spawn me a car"
+    assert h._listener("Zeus")["channel"] == 3

@@ -33,8 +33,10 @@ def wake_text(message: dict, kills: list[dict], name: str) -> tuple[str, dict, s
             how = ", ".join(str(part) for part in (kill.get("weapon"), f"{kill['distance']} m"
                                                    if kill.get("distance") is not None else None) if part)
             lines.append(f"- {kill.get('victim', '?')}{by}" + (f" ({how})" if how else ""))
-    lines += ["", f"You are {name}. Answer in game with arma_say, then end your turn: the next message to you starts "
-                  "a new one. Don't call arma_listen while chat wakes are on."]
+    lines += ["", f"You are {name}. If this needs more than a quick answer or one command, first say so in game with "
+                  "a short arma_say, such as \"On it, building the camp now.\", so they know you're working on it. "
+                  "Answer in game with arma_say, then end your turn: the next message to you starts a new one. Don't "
+                  "call arma_listen while chat wakes are on."]
     meta = {"from": sender, "to": name, "seq": str(message.get("seq", ""))}
     return "\n".join(lines), meta, f"💬 {sender} → {name}: {text}"
 
