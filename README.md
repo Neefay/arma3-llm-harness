@@ -5,7 +5,8 @@ Drive and observe Arma 3 from LLM agents and scripts. The harness is a standard 
 - run SQF on any machine, with script errors attributed to the request that caused them;
 - stream structured events;
 - take in-engine screenshots (GUI included) and terrain maps;
-- talk to the agent from in-game chat and have it act on the world ([demo](docs/DEMO.md));
+- talk to the agent from in-game chat, in its own radio channel, and have it act on the world ([demo](docs/DEMO.md));
+- give the agent a library of tested commands for common jobs (spawning, weather, tasks, buildings, cleanup), found by what they do and run by name;
 - hot-reload mission code;
 - run declarative test scenarios;
 - let an LLM command AI squads by radio, under fog of war, and score how it does ([commander mode](#commander-mode)).
@@ -66,9 +67,15 @@ host\.venv\Scripts\arma-harness.exe scenario selftest
 **5. Use it in your own game (optional).**
 1. In the Arma 3 Launcher, add the local mod `%LOCALAPPDATA%\arma-harness\mods\@brmh` (Mods → ⋯ → Add local mod), enable it with CBA_A3 and Pythia, and **turn BattlEye off**.
 2. Start a mission as host: an Eden preview, singleplayer, or Play → Multiplayer → host.
-3. Once you are in the mission, run `host\.venv\Scripts\arma-harness.exe attach`, then `arma-harness scenario attached_check` to certify it.
+3. Once you are in the mission, run `host\.venv\Scripts\arma-harness.exe attach`, then `arma-harness scenario attached_check` to certify it. Or just ask your agent to attach.
 
-To talk to your agent from in-game chat, see the demo: [`docs/DEMO.md`](docs/DEMO.md).
+**6. Talk to it in game (optional).**
+1. Start your agent in this folder. Claude Code needs the channel flag for the agent to hear chat between turns: `claude --dangerously-load-development-channels server:arma`. OpenCode needs nothing extra.
+2. With your game attached (step 5), tell it: *"Listen for in-game chat as Zeus."* In Claude Code and OpenCode it turns on chat wakes, so each message starts its turn by itself; other clients listen in a loop.
+3. A **Zeus** radio channel appears in the game's chat. Switch to it with the channel keys (by default `,` and `.`) and type normally: *"spawn a Hunter next to me"*. In any other channel, start with its name: *"zeus, spawn a Hunter next to me"*.
+4. It answers in its channel. For a bigger job it says it's on it first, then reports what it did.
+
+The demo, [`docs/DEMO.md`](docs/DEMO.md), has a mission set up for this and things to try.
 
 ### If something goes wrong
 
@@ -129,7 +136,7 @@ The harness is a standard MCP server (stdio), so any MCP-capable agent can drive
    | OpenCode | `opencode.json` (current schema: a `local` server under `mcp`, with `timeout` raised) | `AGENTS.md` natively (it ignores `CLAUDE.md` when `AGENTS.md` exists) |
    | VS Code (Copilot agent mode) | `.vscode/mcp.json` | `AGENTS.md` (setting `chat.useAgentsMdFile`) |
 
-   **OpenCode 2** uses a different layout: servers sit under `mcp.servers`, and timeouts are split into `startup`, `catalog` and `execution` (tool calls default to 12 hours, so nothing needs raising). If your OpenCode rejects the generated file, use:
+   **OpenCode 2** uses a different layout: servers sit under `mcp.servers`, and timeouts are split into `startup`, `catalog` and `execution`. OpenCode 2.2.7 converts the generated file on load, so it works as it is. If a later version rejects it, use:
 
    ```json
    { "$schema": "https://opencode.ai/config.json",
@@ -139,7 +146,9 @@ The harness is a standard MCP server (stdio), so any MCP-capable agent can drive
    These files are personal and git-ignored. A file that already exists is left alone unless you pass `--force` (the old one is kept as `.bak`); `--dry-run` shows what would be written. To use the harness from another project, for example your mission repo, register the same command there: `<repo>/host/.venv/Scripts/arma-harness-mcp.exe`.
 2. **The agent instructions.** [`AGENTS.md`](AGENTS.md) is the cheat sheet: rules, where code runs, the chat loop and the command library. Agents that don't load instruction files can get it from the `arma_guide` tool, or from `arma-harness guide` on the command line. Agents without MCP can use the CLI directly: every tool is a subcommand that prints JSON.
 
-**In-game chat.** In Claude Code and OpenCode, `arma_chat_wake` lets each player message start the agent's turn. Claude Code needs launching with `claude --dangerously-load-development-channels server:arma` for that. Other clients loop on `arma_listen`.
+**In-game chat.** When the agent starts listening, a radio channel named after it appears in the game, with every player in it: anything typed there reaches it without its name, and elsewhere a message starting with its name does. In Claude Code and OpenCode, `arma_chat_wake` lets each message start the agent's turn; Claude Code needs launching with `claude --dangerously-load-development-channels server:arma` for that. Other clients loop on `arma_listen`. Chat wakes end when their game closes or is detached.
+
+**After updating the harness**, restart the client's MCP server so it loads the new code: OpenCode's background service keeps it running across sessions (`opencode service restart`). `arma_status` says when a server is running older code (`server_code`).
 
 **Tool-call timeouts.** Clients cancel tool calls that run too long (Codex's default is 60 s). `arma_listen` waits 25 s by default for that reason. Chat is captured in game whether or not a call is waiting, so short, repeated calls lose nothing.
 
@@ -167,8 +176,8 @@ The game processes survive MCP server restarts: they are started through WMI, ou
 | `arma_map` | Terrain map as SVG, plus named locations in world coordinates (works headless) |
 | `arma_set_name(name)` | The name this session answers to in game, e.g. "Zeus" (default "Claude", or `BRMH_AGENT_NAME`). Several sessions can listen at once, each under its own name and colour; `everyone, ...` reaches all of them. A name held by another live session is refused. |
 | `arma_chat_wake(on, test)` | Each chat message addressed to this session starts the agent's turn by itself, carrying the message: no listen loop, and nothing runs while it's quiet. Claude Code (launched with `--dangerously-load-development-channels server:arma`) gets a channel notification; OpenCode gets the message posted into its session. Other clients get `ok: false` and use `arma_listen`. Sends a test wake first, so the agent knows it works. |
-| `arma_listen(since, timeout_s)` | Wait for a player to type a chat message addressed to this session (`zeus, ...`, `@zeus ...`, `hey zeus ...`, or `everyone, ...`). Shows an instant "thinking..." hint; returns the message, kills since `since`, and the next cursor. Blocks for up to `timeout_s` (default 25, under client tool timeouts); `0` checks without waiting. Chat is captured between calls, so nothing is missed. See [docs/DEMO.md](docs/DEMO.md). |
-| `arma_say(text, hint?)` | Reply in game as this session: a chat line on its own radio channel and colour, optionally also a hint box |
+| `arma_listen(since, timeout_s)` | Wait for a player to type a chat message addressed to this session: anything in its own radio channel, or elsewhere starting `zeus, ...`, `@zeus ...`, `hey zeus ...`, or `everyone, ...`. Shows an instant "thinking..." hint; returns the message, kills since `since`, and the next cursor. Blocks for up to `timeout_s` (default 25, under client tool timeouts); `0` checks without waiting. Chat is captured between calls, so nothing is missed. See [docs/DEMO.md](docs/DEMO.md). |
+| `arma_say(text, hint?)` | Reply in game as this session: a chat line on its own radio channel (made when it starts listening, with every player in it) and colour, optionally also a hint box |
 | `arma_view(radius)` | The player's view as data: position, grid, world time and weather, and on-screen buildings, vehicles and units with screen coordinates, line of sight and building positions |
 | `arma_reload(path, function?)` | Hot-reload a file from the mission source folder. Refuses files with load-time side effects unless `force`. |
 | `arma_run_scenario(path)` | Run a YAML scenario; returns pass/fail and writes a markdown report |
@@ -185,7 +194,9 @@ $h = "host\.venv\Scripts\arma-harness.exe"
 & $h wait '{"k":"evt","type":"fsm","dir":"enter","state":"ROUND_END"}' --timeout 60
 & $h snapshot --camera 4480,3800,25 --look 4500,3820,0
 & $h scenario timeout_round
-& $h listen --name Zeus --since 0 --timeout 25   # wait for "Zeus, ..." (or "everyone, ...")
+& $h listen --name Zeus --since 0 --timeout 25   # wait for "Zeus, ...", anything in the Zeus channel, or "everyone, ..."
+& $h commands spawn car                 # find a command in the library
+& $h run spawn_vehicle '{"class": "C_Offroad_01_F"}'   # and run it
 & $h say "On it." --sender Zeus
 & $h guide                              # the agent cheat sheet
 & $h setup-agents codex opencode --dry-run
@@ -237,6 +248,16 @@ steps:
   - `selftest`: the harness itself, on the bundled mission;
   - `attached_check`: certifies whatever game is attached or running;
   - `boot`, `timeout_round`, `all_targets` and `jip`: the rounds framework's seed scenarios, which need a `rounds_framework` profile.
+
+## The command library
+
+Tested commands for common jobs, so the agent doesn't write SQF for them each time: spawning vehicles, groups and animals, putting men in buildings, weapons, healing, teleporting, time and weather, tasks, a barrage with a safety check, finding classes, "who is this", arrows, laying out props, and cleaning up what it made. The agent finds them with `arma_commands("spawn car")` and runs them with `arma_run(name, args)`; AGENTS.md has the index.
+
+Each command is one SQF file, `host/src/arma_harness/library/<area>/<name>.sqf`, starting with a header that is both its documentation and what the library reads: `NAME`, `DESCRIPTION`, `PARAMETERS` (one per line, `0 - class (STRING, default "x"): text`), `RETURNS`, `TARGET` (`server` or `interface`), `TAGS` and an `EXAMPLE`. `host/src/arma_harness/library.py` explains the types, including references such as `"player"` or a grid. To add one:
+
+1. Write the file, with `params` in the header's order, and failures returned as `"ERROR: ..."`.
+2. Add it to the index in AGENTS.md (a test checks).
+3. Run the tests, `tools/lint_library.py` (HEMTT), and `host/tests/live_library.py`, which runs every example in a real game.
 
 ## Commander mode
 

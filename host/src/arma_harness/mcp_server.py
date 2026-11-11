@@ -272,15 +272,21 @@ def arma_listen(since: int | None = None, timeout_s: float = 25, name: str | Non
     "Claude") at the start, as in "zeus, ...", "@zeus ...", "hey zeus ...", or "everyone, ...". Returns
     the message, the kills since `since`, and `next`: pass it back as `since` on the following call so
     nothing said meanwhile is missed. Reply with arma_say; look with arma_view and arma_snapshot.
-    This is NOT a background service: you are listening only while this call is running. found=false just
-    means the timeout passed with no message; it does not prove anything works. To answer "is the
+    Players can also type to you in your own radio channel, named after you, without your name: it's made when
+    you first listen. This is NOT a background service: you are listening only while this call is running.
+    found=false just means the timeout passed with no message; it does not prove anything works. To answer "is the
     listener on?", use arma_status -> listener (observer per machine; per named session: a call waiting
     now, unread messages).
     The call BLOCKS for up to timeout_s seconds (default 25, max 300); you can do nothing else meanwhile.
     Keep timeout_s below your client's tool-call timeout (Codex: 60 s by default) or the client
     cancels the call. Chat is captured while you are not listening, so short calls lose nothing.
     timeout_s=0 checks for messages and returns at once (no waiting)."""
-    return h().listen(name=name or _agent_name, since=since, timeout=max(0.0, min(float(timeout_s), 300.0)))
+    who = name or _agent_name
+    heard = h().listen(name=who, since=since, timeout=max(0.0, min(float(timeout_s), 300.0)))
+    if h()._listener(who).get("channel"):
+        heard["your_channel"] = (f"Players can type to you in the {who} radio channel without starting with your "
+                                 "name. Tell the user that once, in one line, when you start listening.")
+    return heard
 
 
 @server.tool()
