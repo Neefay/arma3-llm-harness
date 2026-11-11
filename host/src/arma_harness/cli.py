@@ -107,14 +107,18 @@ def main(argv: list[str] | None = None) -> int:
     sc.add_argument("path")
     sc.add_argument("--keep-running", action="store_true")
     co = sub.add_parser("commander", help="set up, watch and review a commander battle (docs/COMMANDER.md)")
-    co.add_argument("action", choices=["list", "start", "status", "aar", "review", "compare", "site", "stop",
+    co.add_argument("action", choices=["list", "doctor", "start", "status", "aar", "review", "compare", "site", "stop",
                                        "check-lockdown"])
     co.add_argument("scenario", nargs="?", help="start: scenario name in scenarios/commander/, or a path; compare: "
                                                 "every finished battle of this scenario")
     co.add_argument("--mode", choices=["hold", "deliver"], help="what happens to messages during a turn")
     co.add_argument("--watch", action="store_true", help="also open a game window, in the mission's observer slot")
     co.add_argument("--client", choices=["claude", "opencode"], default="claude",
-                    help="start, check-lockdown: the agent the commander runs in (default: claude, Claude Code)")
+                    help="start, doctor, check-lockdown: the agent the commander runs in (default: claude, Claude "
+                         "Code)")
+    co.add_argument("--model", help="start, doctor, with --client opencode: the model as provider/model, such as "
+                                    "openai/gpt-6-luna. start then opens the commander's session and starts it")
+    co.add_argument("--json", action="store_true", help="doctor, start: print JSON even in a terminal")
     co.add_argument("--seed", type=int, help="start: the seed for the scenario's random draws, to replay a battle")
     co.add_argument("--run", help="review: the run to review (default: the newest battle)")
     co.add_argument("--attempt", type=int, help="review: which battle in that run (default: the last)")
@@ -135,11 +139,24 @@ def main(argv: list[str] | None = None) -> int:
         print(agents.guide())
         return 0
     h = Harness()
+    # A person at a terminal gets commander doctor and start laid out; anything reading the output gets JSON.
+    styled = (args.cmd == "commander" and args.action in ("doctor", "start") and not args.json
+              and sys.stdout.isatty())
     try:
         out = _dispatch(h, args)
-    except (HarnessError, BridgeError, KeyError, ValueError, FileNotFoundError) as exc:
-        print(json.dumps({"ok": False, "error": str(exc)}, indent=2))
+    except (HarnessError, BridgeError, KeyError, ValueError, FileNotFoundError, OSError) as exc:
+        if styled:
+            from .commander import console
+
+            console.error(str(exc))
+        else:
+            print(json.dumps({"ok": False, "error": str(exc)}, indent=2))
         return 1
+    if styled:
+        from .commander import console
+
+        getattr(console, args.action)(out)
+        return 0 if out.get("ok", True) else 1
     print(out if isinstance(out, str) else json.dumps(out, indent=2, default=str))
     if args.cmd == "scenario":
         return 0 if out.get("as_expected") else 1
@@ -223,7 +240,12 @@ def _commander(h: Harness, a):
         case "start":
             if not a.scenario:
                 raise ValueError("commander start needs a scenario name")
-            return operator.start(a.scenario, a.mode, h, watch=a.watch, seed=a.seed, client=a.client)
+            return operator.start(a.scenario, a.mode, h, watch=a.watch, seed=a.seed, client=a.client,
+                                  model=a.model)
+        case "doctor":
+            from .commander import doctor
+
+            return doctor.run(a.client, a.model, h.home, h)
         case "check-lockdown":
             return operator.check_lockdown(h.home, a.client)
         case "status":

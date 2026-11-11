@@ -160,13 +160,16 @@ class Harness:
     # -- lifecycle -----------------------------------------------------------------------------
 
     def forget_dead_run(self) -> bool:
-        """A run we launched whose server has exited is over, however it went. Without this it blocks the next start,
-        with an error about a bridge that nothing will ever answer on. An attached game is the user's, so it's left."""
+        """A run whose game has exited is over, however it went: a server we launched, or a game the user attached us
+        to and has since closed. Without this it blocks the next start or attach, with an error about a bridge that
+        nothing will ever answer on. Forgetting only drops the record: an attached game still running is left alone,
+        and nothing here touches a game."""
         st = self.state()
-        if st is None or st.mode != "launched":
+        if st is None:
             return False
-        server = next((p for p in st.procs if p.kind == "server"), None)
-        if server is None or procutil.alive(server.pid, server.exe or None):
+        kind = {"launched": "server", "attached": "attached"}.get(st.mode)
+        game = next((p for p in st.procs if p.kind == kind), None)
+        if game is None or procutil.alive(game.pid, game.exe or None):
             return False
         self.stop()
         return True
@@ -270,6 +273,7 @@ class Harness:
     def attach(self, pid: int | None = None, adapters_: list[str] | None = None, overrides: dict | None = None,
                timeout: float = 30) -> dict:
         """Attach to a game the user started (Eden preview, SP, host-and-play) with @Pythia and @brmh loaded."""
+        self.forget_dead_run()  # the last run's game was closed, as when the user quit to start this one
         if self.state():
             raise HarnessError("a run is already active; stop it first")
         if pid is None:
@@ -311,10 +315,14 @@ class Harness:
         return {"stopped": stopped, "mode": st.mode}
 
     def status(self) -> dict:
+        before = self.state()
+        ended = before if self.forget_dead_run() else None
         st = self.state()
         if st is None:
             return {"running": False, "profiles": sorted(self.config.missions),
-                    "default_mission": self.config.default_mission}
+                    "default_mission": self.config.default_mission,
+                    **({"ended_run": f"run {ended.run_id} ({ended.mode}, {ended.mission or 'attached game'}) had "
+                                     "ended: its game had exited. Cleared."} if ended else {})}
         procs = [{"name": p.name, "pid": p.pid, "alive": procutil.alive(p.pid, p.exe or None)} for p in st.procs]
         out = {"running": True, "mode": st.mode, "mission": st.mission, "run": st.run_id,
                "uptime_s": round(time.time() - st.started), "processes": procs, "adapters": st.adapters,
@@ -500,9 +508,16 @@ class Harness:
                  "deadline": None, "finished": None,
                  "color": held.get("color") or _free_color(name, [x.get("color") for x in others])}
         if held.get("pid") == os.getpid():
-            state.update({k: held.get(k) for k in ("since", "started", "deadline", "finished")})
+            state.update({k: held.get(k) for k in ("since", "started", "deadline", "finished", "wake")})
         self._listener(name, state)
         return {"name": name, "color": state["color"], "others": [x["name"] for x in others]}
+
+    def set_wake(self, name: str, via: str | None) -> None:
+        """Record that ``name``'s messages wake its session (via a channel, or OpenCode), for listener_status."""
+        state = self._listener(name)
+        if state.get("pid") == os.getpid():
+            state["wake"] = via
+            self._listener(name, state)
 
     def agent_color(self, name: str) -> list[float]:
         """The colour a claimed name keeps (distinct from the other sessions'), else the default pick."""
@@ -559,12 +574,13 @@ class Harness:
                 evs = b.events(since=st["since"], limit=5000).get("events", [])
                 unread = [e.get("text") for e in evs if e.get("type") == "chat" and rx.search(e.get("text") or "")]
             sessions.append({"name": st["name"], "session_alive": alive, "listen_call_waiting_now": waiting,
+                             "chat_wake": (st.get("wake") or "off") if alive else "off",
                              "last_listen_since": st.get("since"), "messages_since_last_listen_started": unread[-5:]})
         return {
             "chat_observer_installed": observers or "no interface machine connected",
             "sessions": sessions,
-            "meaning": "Chat is captured by the observer; a session only READS it while its arma_listen call "
-                       "runs. A name is listening only if its listen_call_waiting_now is true.",
+            "meaning": "Chat is captured by the observer. A session hears it while its arma_listen call runs, or "
+                       "all the time when its chat_wake is on: then each message to it starts its turn.",
         }
 
     def _listen(self, b: Bridge, name: str, start: int, timeout: float, ack: str | None) -> dict:

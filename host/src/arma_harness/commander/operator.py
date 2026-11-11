@@ -90,13 +90,21 @@ def launch_command(folder: Path, client: str = "claude") -> str:
 
 
 def start(path: str, mode: str | None = None, harness: Harness | None = None, watch: bool = False,
-          seed: int | None = None, client: str = "claude") -> dict:
+          seed: int | None = None, client: str = "claude", model: str | None = None) -> dict:
     """Boot the scenario's mission if needed, put the stations on the net, and prepare the commander's records.
 
     ``client`` is the agent the commander runs in: Claude Code, woken by a channel, or OpenCode, woken through its
-    server."""
+    server. With OpenCode, ``model`` ("provider/model") also opens the commander's session and starts it."""
     if client not in CLIENTS:
         raise HarnessError(f"client must be one of {', '.join(CLIENTS)}")
+    service, model_ref = None, None
+    if model:
+        if client != "opencode":
+            raise HarnessError("--model starts the session itself, which only OpenCode can do: add --client opencode, "
+                               "or leave --model out and pick the model in the session")
+        # Before the game is booted: a typo shouldn't cost a boot.
+        service = opencode.Service(opencode.find_cli() or "opencode")
+        model_ref = opencode.model_ref(model, opencode.models(service))
     h = harness or Harness()
     raw, seed, drawn = scenario_mod.draw(_read_raw(path), seed)
     if mode:
@@ -167,19 +175,28 @@ def start(path: str, mode: str | None = None, harness: Harness | None = None, wa
                "terrain": str(terrain_file) if terrain_file else None}
     _current_file(h.home).write_text(json.dumps(current, indent=2), encoding="utf-8")
     workspace = write_opencode_workspace(h.home) if client == "opencode" else write_workspace(h.home)
-    server = None
+    server, session = None, None
     if client == "opencode":
-        server = opencode.restart_server(opencode.Service(opencode.find_cli()), workspace, SERVER_NAME)
+        service = service or opencode.Service(opencode.find_cli() or "opencode")
+        server = opencode.restart_server(service, workspace, SERVER_NAME)
     observer = None
     if watch and not any(proc.kind == "client" for proc in state.procs):
         observer = h.client_start()
+    if model_ref is not None:
+        title = f"Commander: {scenario.name}, seed {seed}"
+        session = opencode.start_session(service, workspace, model_ref, title)
+        then = (f'Started: the session "{title}" is playing. To watch it, open the workspace as a project in the '
+                "OpenCode desktop app. Don't type in it: the radio is its only input.")
+    elif client == "opencode":
+        then = 'Start a new session there with the "commander" agent and the model you want, then type: start'
+    else:
+        then = "Accept the prompts, then type: start"
     return {"observer": observer, "scenario": scenario.name, "mode": scenario.mid_turn_messages, "run": state.run_id,
             "attempt": attempt, "seed": seed, "drawn": len(drawn),
             "records": str(records_folder), "workspace": str(workspace), "client": client,
             **({"opencode_server": server} if server else {}),
-            "launch": launch_command(workspace, client),
-            "then": ('Start a new session there with the "commander" agent and the model you want, then type: start'
-                     if client == "opencode" else 'Accept the prompts, then type: start')}
+            **({"session": session, "model": model} if session else {"launch": launch_command(workspace, client)}),
+            "then": then}
 
 
 def _sample_terrain(h: Harness, scenario: scenario_mod.Scenario, world_size: float) -> Terrain:

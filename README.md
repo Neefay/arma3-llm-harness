@@ -139,6 +139,8 @@ The harness is a standard MCP server (stdio), so any MCP-capable agent can drive
    These files are personal and git-ignored. A file that already exists is left alone unless you pass `--force` (the old one is kept as `.bak`); `--dry-run` shows what would be written. To use the harness from another project, for example your mission repo, register the same command there: `<repo>/host/.venv/Scripts/arma-harness-mcp.exe`.
 2. **The agent instructions.** [`AGENTS.md`](AGENTS.md) is the cheat sheet: rules, where code runs, the chat loop and tested recipes. Agents that don't load instruction files can get it from the `arma_guide` tool, or from `arma-harness guide` on the command line. Agents without MCP can use the CLI directly: every tool is a subcommand that prints JSON.
 
+**In-game chat.** In Claude Code and OpenCode, `arma_chat_wake` lets each player message start the agent's turn. Claude Code needs launching with `claude --dangerously-load-development-channels server:arma` for that. Other clients loop on `arma_listen`.
+
 **Tool-call timeouts.** Clients cancel tool calls that run too long (Codex's default is 60 s). `arma_listen` waits 25 s by default for that reason. Chat is captured in game whether or not a call is waiting, so short, repeated calls lose nothing.
 
 The game processes survive MCP server restarts: they are started through WMI, outside the MCP client's job object.
@@ -162,6 +164,7 @@ The game processes survive MCP server restarts: they are started through WMI, ou
 | `arma_gui_text` | Readable text of visible controls on interface machines. Display 46 is the mission HUD; others may be background displays (main menu, role assignment). |
 | `arma_map` | Terrain map as SVG, plus named locations in world coordinates (works headless) |
 | `arma_set_name(name)` | The name this session answers to in game, e.g. "Zeus" (default "Claude", or `BRMH_AGENT_NAME`). Several sessions can listen at once, each under its own name and colour; `everyone, ...` reaches all of them. A name held by another live session is refused. |
+| `arma_chat_wake(on, test)` | Each chat message addressed to this session starts the agent's turn by itself, carrying the message: no listen loop, and nothing runs while it's quiet. Claude Code (launched with `--dangerously-load-development-channels server:arma`) gets a channel notification; OpenCode gets the message posted into its session. Other clients get `ok: false` and use `arma_listen`. Sends a test wake first, so the agent knows it works. |
 | `arma_listen(since, timeout_s)` | Wait for a player to type a chat message addressed to this session (`zeus, ...`, `@zeus ...`, `hey zeus ...`, or `everyone, ...`). Shows an instant "thinking..." hint; returns the message, kills since `since`, and the next cursor. Blocks for up to `timeout_s` (default 25, under client tool timeouts); `0` checks without waiting. Chat is captured between calls, so nothing is missed. See [docs/DEMO.md](docs/DEMO.md). |
 | `arma_say(text, hint?)` | Reply in game as this session: a chat line on its own radio channel and colour, optionally also a hint box |
 | `arma_view(radius)` | The player's view as data: position, grid, world time and weather, and on-screen buildings, vehicles and units with screen coordinates, line of sight and building positions |
@@ -243,8 +246,16 @@ host\.venv\Scripts\arma-harness.exe commander start llm_hidden_gun --seed 116   
 host\.venv\Scripts\arma-harness.exe commander compare llm_hidden_gun              # afterwards, battles side by side
 ```
 
+With OpenCode, check everything first, then start the battle and the commander's session in one go:
+
+```powershell
+host\.venv\Scripts\arma-harness.exe commander doctor --client opencode
+host\.venv\Scripts\arma-harness.exe commander start poc_a_to_b --client opencode --model openai/gpt-6-luna
+```
+
 | Doc | What's in it |
 |---|---|
+| [COMMANDER_OPENCODE.md](docs/COMMANDER_OPENCODE.md) | Setting up and running battles in OpenCode, with any model it can use: step by step, for people and assistants |
 | [COMMANDER_BENCHMARK.md](docs/COMMANDER_BENCHMARK.md) | Running battles with real LLMs, the fixed seeds, and reading the scores |
 | [COMMANDER.md](docs/COMMANDER.md) | The design: turns and waking, orders, reports, the fog, operating a battle |
 | [COMMANDER_MODEL.md](docs/COMMANDER_MODEL.md) | The formal model, its order table and state charts (tested against the code) |

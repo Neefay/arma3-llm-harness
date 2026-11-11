@@ -393,3 +393,156 @@ def test_every_heading_the_briefing_writes_has_a_mark():
 
 def test_a_briefing_in_another_shape_still_gets_a_header():
     assert opencode.display_text("MISSION END").startswith("📻 RADIO  ·  MISSION END")
+
+
+# -- starting a battle's session, and the pre-flight -------------------------------------------------------------------
+
+MODELS = {"data": [
+    {"id": "gpt-6-luna", "providerID": "openai", "name": "GPT-6 Luna", "capabilities": {"tools": True},
+     "variants": [{"id": "high"}], "enabled": True},
+    {"id": "no-tools", "providerID": "openai", "name": "No Tools", "capabilities": {"tools": False}},
+    {"id": "iceman-free", "providerID": "opencode", "name": "Iceman Free", "capabilities": {"tools": True}},
+]}
+
+
+class OpenCodeServer(Permissions):
+    """OpenCode's server for a whole pre-flight: its info, its models, sessions and permission checks."""
+
+    url = "http://127.0.0.1:1"
+
+    def call(self, method, path, body=None):
+        if path == "/api/info":
+            return {"version": "2.2.7"}
+        if path == "/api/model":
+            return MODELS
+        if path.endswith("/prompt"):
+            self.calls.append((method, path, body))
+            return {"data": {}}
+        return super().call(method, path, body)
+
+
+def test_only_models_that_can_call_tools_are_offered():
+    assert [m["ref"] for m in opencode.models(OpenCodeServer())] == ["openai/gpt-6-luna", "opencode/iceman-free"]
+
+
+@pytest.mark.parametrize(("text", "ref"), [
+    ("openai/gpt-6-luna", {"providerID": "openai", "id": "gpt-6-luna"}),
+    ("OpenAI/GPT-6-Luna#high", {"providerID": "openai", "id": "gpt-6-luna", "variant": "high"}),
+])
+def test_a_model_is_named_as_provider_and_model(text, ref):
+    assert opencode.model_ref(text, opencode.models(OpenCodeServer())) == ref
+
+
+def test_a_misspelt_model_fails_with_a_suggestion():
+    with pytest.raises(ValueError, match="Did you mean: openai/gpt-6-luna"):
+        opencode.model_ref("openai/gpt-6-luna-x", opencode.models(OpenCodeServer()))
+    with pytest.raises(ValueError, match="no variant 'max'"):
+        opencode.model_ref("openai/gpt-6-luna#max", opencode.models(OpenCodeServer()))
+    with pytest.raises(ValueError, match="no model"):
+        opencode.model_ref("openai/no-tools", opencode.models(OpenCodeServer()))
+
+
+def test_the_session_is_opened_in_the_workspace_and_started():
+    service = OpenCodeServer()
+    session = opencode.start_session(service, Path(r"C:\w"), {"providerID": "openai", "id": "gpt-6-luna"}, "T")
+    assert session == "ses_check"
+    create, prompt = service.calls
+    assert create[2] == {"location": {"directory": r"C:\w"}, "agent": "commander",
+                         "model": {"providerID": "openai", "id": "gpt-6-luna"}, "title": "T"}
+    assert prompt[1] == "/api/session/ses_check/prompt" and prompt[2]["text"] == "start"
+
+
+def test_a_model_without_opencode_or_misspelt_fails_before_the_game_is_touched(monkeypatch):
+    from arma_harness.commander import operator
+    from arma_harness.harness import HarnessError
+
+    class Untouchable:
+        def __getattr__(self, name):
+            raise AssertionError("the game was touched")
+
+    with pytest.raises(HarnessError, match="only OpenCode"):
+        operator.start("poc_a_to_b", harness=Untouchable(), model="openai/gpt-6-luna")
+    monkeypatch.setattr(opencode, "Service", lambda cli: OpenCodeServer())
+    with pytest.raises(ValueError, match="Did you mean"):
+        operator.start("poc_a_to_b", harness=Untouchable(), client="opencode", model="openai/gpt-6-lunar")
+
+
+def test_the_preflight_passes_with_everything_in_place(tmp_path, monkeypatch):
+    from arma_harness.commander import doctor
+    from arma_harness.config import Home
+
+    monkeypatch.setenv(opencode.CLI_ENV, "oc.exe")
+    monkeypatch.setattr(doctor, "_version", lambda command: "2.2.7")
+    monkeypatch.setattr(doctor, "_game", lambda harness: doctor._check("Game", doctor.INFO, "not running"))
+    checks = doctor.check_opencode(Home(tmp_path), "openai/gpt-6-luna", service_factory=lambda cli: OpenCodeServer())
+    assert [(c["name"], c["status"]) for c in checks] == [
+        ("OpenCode", "ok"), ("Background server", "ok"), ("Models", "ok"), ("Chosen model", "ok"),
+        ("Lockdown", "ok"), ("Game", "info")]
+
+
+def test_the_preflight_says_what_to_do_when_opencode_is_old_or_its_server_is_down(tmp_path, monkeypatch):
+    from arma_harness.commander import doctor
+    from arma_harness.config import Home
+
+    monkeypatch.setenv(opencode.CLI_ENV, "oc.exe")
+    monkeypatch.setattr(doctor, "_game", lambda harness: doctor._check("Game", doctor.INFO, "not running"))
+    monkeypatch.setattr(doctor, "_version", lambda command: "1.19.5")
+    old = doctor.check_opencode(Home(tmp_path), service_factory=lambda cli: OpenCodeServer())
+    assert old[0]["status"] == "fail" and "OpenCode 2" in old[0]["fix"]
+
+    class Down:
+        url = None
+
+        def call(self, method, path, body=None):
+            raise OSError("OpenCode's background server isn't running")
+
+    monkeypatch.setattr(doctor, "_version", lambda command: "2.2.7")
+    down = doctor.check_opencode(Home(tmp_path), service_factory=lambda cli: Down())
+    assert down[1]["status"] == "fail" and "opencode service start" in down[1]["fix"]
+    assert [c["name"] for c in down] == ["OpenCode", "Background server", "Game"]
+
+
+def test_a_failed_lockdown_fails_the_preflight(tmp_path, monkeypatch):
+    from arma_harness.commander import doctor
+    from arma_harness.config import Home
+
+    class Leaky(OpenCodeServer):
+        def __init__(self):
+            super().__init__({"commander_commander_order", "browser"})
+
+    monkeypatch.setenv(opencode.CLI_ENV, "oc.exe")
+    monkeypatch.setattr(doctor, "_version", lambda command: "2.2.7")
+    monkeypatch.setattr(doctor, "_game", lambda harness: doctor._check("Game", doctor.INFO, "not running"))
+    original = doctor.check_opencode
+    monkeypatch.setattr(doctor, "check_opencode", lambda home, model, harness: original(
+        home, model, harness, service_factory=lambda cli: Leaky()))
+    result = doctor.run("opencode", home=Home(tmp_path))
+    assert not result["ok"]
+    assert "browser:*" in next(c for c in result["checks"] if c["name"] == "Lockdown")["detail"]
+
+
+def test_piped_output_stays_json(monkeypatch, capsys):
+    """Assistants and scripts read the CLI's output: only a person at a terminal gets it laid out."""
+    from arma_harness import cli
+    from arma_harness.commander import doctor
+
+    monkeypatch.setattr(doctor, "run", lambda client, model, home, harness: {
+        "ok": True, "client": client, "checks": [], "next": "Ready."})
+    assert cli.main(["commander", "doctor", "--client", "opencode"]) == 0
+    assert json.loads(capsys.readouterr().out)["next"] == "Ready."
+
+
+def test_a_terminal_gets_the_preflight_laid_out(monkeypatch, capsys):
+    from arma_harness import cli
+    from arma_harness.commander import doctor
+
+    monkeypatch.setattr(doctor, "run", lambda client, model, home, harness: {
+        "ok": False, "client": client, "next": "Fix what failed above, then run this again.",
+        "checks": [{"name": "Background server", "status": "fail", "detail": "not reachable",
+                    "fix": "Open the OpenCode desktop app"}]})
+    monkeypatch.setattr(cli.sys.stdout, "isatty", lambda: True)
+    assert cli.main(["commander", "doctor", "--client", "opencode"]) == 1
+    out = capsys.readouterr().out
+    assert "Commander pre-flight · OpenCode" in out and "✗" in out and "→ Open the OpenCode desktop app" in out
+    assert cli.main(["commander", "doctor", "--client", "opencode", "--json"]) == 1
+    assert json.loads(capsys.readouterr().out)["ok"] is False

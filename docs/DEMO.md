@@ -16,7 +16,15 @@ That is the part a heuristic mission script can't do.
    - Use **Play → Play in Multiplayer** and host a LAN game; the harness is built around a server.
    - You spawn as a squad leader with two AI squadmates, on a slope 250 m north-east of Athira, facing the town.
 3. **Attach the harness:** `host\.venv\Scripts\arma-harness.exe attach`. Optionally run `arma-harness scenario attached_check`.
-4. **Tell your agent to start listening** (Claude Code, Codex, or any client set up with `arma-harness setup-agents`). It loops on `arma_listen` (or `arma-harness listen --since <next>`): it handles each message, replies with `arma_say`, and listens again.
+4. **Tell your agent to listen for in-game chat** (any client set up with `arma-harness setup-agents`).
+   - **Claude Code and OpenCode** turn on chat wakes (`arma_chat_wake`): each message to the agent starts its turn by itself, and nothing runs while it's quiet. Claude Code has to be launched with the channel flag for this, from the repo folder:
+
+     ```powershell
+     claude --dangerously-load-development-channels server:arma
+     ```
+
+     Without the flag, the agent's test wake never arrives, and it falls back to the listen loop below.
+   - **Other clients** loop on `arma_listen` (or `arma-harness listen --since <next>`): the agent handles each message, replies with `arma_say`, and listens again.
 
 Talk to Claude by starting a chat message (any channel) with `claude`, `@claude` or `hey claude`. A "Claude thinking..." hint appears at once. The answer takes 10 to 40 seconds, so cut the waits in the edit.
 
@@ -44,12 +52,15 @@ Talk to Claude by starting a chat message (any channel) with `claude`, `@claude`
 ## How it works
 
 ```
-you type "claude, ..."  -> HandleChatMessage on your machine -> evt type=chat -> arma_listen returns
+you type "claude, ..."  -> HandleChatMessage on your machine -> evt type=chat
+     -> chat wakes: the arma server's watcher starts Claude's turn with it
+        (a channel notification in Claude Code, a prompt posted to OpenCode's server)
+     -> or, in a listen loop: arma_listen returns it
 Claude: arma_view (objects on screen, positions, line of sight) + arma_snapshot (the frame)
      -> arma_exec (SQF it writes for this request, on the server or your machine)
      -> arma_say (reply on Claude's own radio channel)
-     -> arma_listen(since=next)
-kills -> EntityKilled on the server -> evt type=killed -> returned with the next message
+     -> ends its turn (wakes), or arma_listen(since=next) (loop)
+kills -> EntityKilled on the server -> evt type=killed -> delivered with the next message
 ```
 
-The observers are installed by `arma_listen`. Re-running them replaces the handlers, so they survive harness restarts. After a mission restart, the next `arma_listen` reinstalls them.
+The observers are installed by `arma_listen` and by the wake's watcher, which waits on chat the same way. Re-running them replaces the handlers, so they survive harness restarts. After a mission restart, they're reinstalled once your machine is back.

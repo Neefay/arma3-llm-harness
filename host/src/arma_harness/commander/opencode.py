@@ -11,6 +11,7 @@ tool is called. Its first call is in the turn the operator starts by typing "sta
 from __future__ import annotations
 
 import base64
+import difflib
 import json
 import os
 import queue
@@ -147,6 +148,42 @@ class Service:
         raise AssertionError("unreachable")
 
 
+def models(service: Service) -> list[dict]:
+    """The models OpenCode can use now that can call tools, which the commander needs: each with its reference, as
+    "provider/model", its name, and its variants (reasoning effort and the like), newest first within a provider."""
+    rows = service.call("GET", "/api/model").get("data") or []
+    return [{"ref": f"{row['providerID']}/{row['id']}", "name": row.get("name") or row["id"],
+             "provider": row["providerID"], "variants": [v["id"] for v in row.get("variants") or []]}
+            for row in rows if row.get("enabled", True) and (row.get("capabilities") or {}).get("tools")]
+
+
+def model_ref(text: str, available: list[dict]) -> dict:
+    """A model as OpenCode's API takes it, from "provider/model" or "provider/model#variant", checked against what's
+    available, so a typo fails before a game is booted for it."""
+    ref, _, variant = text.partition("#")
+    found = next((model for model in available if model["ref"].lower() == ref.lower()), None)
+    if found is None:
+        refs = {model["ref"].lower(): model["ref"] for model in available}
+        near = [refs[match] for match in difflib.get_close_matches(ref.lower(), list(refs), n=3, cutoff=0.6)]
+        hint = f" Did you mean: {', '.join(near)}?" if near else " `commander doctor --client opencode` lists them."
+        raise ValueError(f"OpenCode has no model {ref!r} that can call tools.{hint}")
+    if variant and variant not in found["variants"]:
+        raise ValueError(f"{found['ref']} has no variant {variant!r}: it has {', '.join(found['variants']) or 'none'}")
+    provider, _, model = found["ref"].partition("/")
+    return {"providerID": provider, "id": model, **({"variant": variant} if variant else {})}
+
+
+def start_session(service: Service, workspace: Path, model: dict, title: str) -> str:
+    """Open the commander's session in its workspace, with its agent and this model, and type "start" into it: what
+    an operator would do in the app. It shows in the app like any other session, to watch."""
+    created = service.call("POST", "/api/session", {"location": {"directory": str(workspace)}, "agent": AGENT,
+                                                   "model": model, "title": title})
+    session = created["data"]["id"]
+    service.call("POST", f"/api/session/{session}/prompt",
+                 {"text": "start", "metadata": {"displayText": "start", "comments": [], "attachments": []}})
+    return session
+
+
 def restart_server(service: Service, workspace: Path, name: str) -> str:
     """Start the workspace's commander server afresh, for a new battle.
 
@@ -240,15 +277,20 @@ def display_text(briefing: str) -> str:
 
 
 class Wakes:
-    """Sends each wake into the commander's session, in order, on a thread of its own so the battle never waits."""
+    """Sends each wake into a session, in order, on a thread of its own so the game never waits. The commander's, by
+    default: the chat wake uses it too, with its own source and display."""
 
     RETRY_S = 5.0
     TRIES = 12
 
     def __init__(self, service: Service, workspace: str, log: Callable[[str], None],
-                 found: Callable[[str], None] | None = None):
-        """``found`` is told the session once it's known."""
+                 found: Callable[[str], None] | None = None, source: str = "commander",
+                 display: Callable[[str], str] | None = None, lone: bool = False):
+        """``found`` is told the session once it's known. ``display`` turns a wake into what the app shows, by default
+        a commander briefing's layout. ``lone``: with no session running in the workspace, take the only one running
+        anywhere, for a client opened on some other folder. Never for the commander, whose session must be its own."""
         self.service, self.workspace, self.log, self.found = service, workspace, log, found
+        self.source, self.display, self.lone = source, display or display_text, lone
         self.session: str | None = None
         self.queue: queue.Queue = queue.Queue()
         threading.Thread(target=self._work, daemon=True).start()
@@ -262,8 +304,10 @@ class Wakes:
             if _same_folder((info.get("location") or {}).get("directory", ""), self.workspace):
                 ours.append(session_id)
         if len(ours) > 1:
-            self.log(f"OpenCode: {len(ours)} sessions are running in the commander's workspace, {ours}, and wakes "
-                     "can only go to one. Close the others.")
+            self.log(f"OpenCode: {len(ours)} sessions are running in {self.workspace}, {ours}, and wakes can only go "
+                     "to one. Close the others.")
+        if not ours and self.lone and len(active) == 1:
+            ours = list(active)
         return ours[0] if len(ours) == 1 else None
 
     def tool_called(self) -> None:
@@ -279,11 +323,11 @@ class Wakes:
             if self.found is not None:  # a score of requests to OpenCode: the commander's tool call shouldn't wait
                 threading.Thread(target=self.found, args=(self.session,), daemon=True).start()
 
-    def send(self, text: str, meta: dict, steer: bool = False) -> None:
+    def send(self, text: str, meta: dict, steer: bool = False, display: str | None = None) -> None:
         attributes = "".join(f' {key}="{value}"' for key, value in meta.items())
-        self.queue.put({"text": f'<channel source="commander"{attributes}>\n{text}\n</channel>',
+        self.queue.put({"text": f'<channel source="{self.source}"{attributes}>\n{text}\n</channel>',
                         "delivery": "steer" if steer else "queue",
-                        "metadata": {"displayText": display_text(text), "comments": [], "attachments": []}})
+                        "metadata": {"displayText": display or self.display(text), "comments": [], "attachments": []}})
 
     def _work(self) -> None:
         while True:

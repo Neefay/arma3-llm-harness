@@ -43,7 +43,7 @@ All six are on the `commander_stratis` profile, so ACE isn't needed. All six use
      Remove-Item Env:ANTHROPIC_API_KEY -ErrorAction SilentlyContinue
      ```
 
-   - **OpenCode 2**, for everything else: a ChatGPT, GitHub Copilot or other subscription login, an API key, OpenRouter or a local model, whatever OpenCode can sign in to. OpenCode has no channels; its background server takes the wakes instead, so the desktop app or `opencode service start` must be running. Battles are set up with `--client opencode`.
+   - **OpenCode 2**, for everything else: a ChatGPT, GitHub Copilot or other subscription login, an API key, OpenRouter or a local model, whatever OpenCode can sign in to. OpenCode has no channels; its background server takes the wakes instead, so the desktop app or `opencode service start` must be running. Battles are set up with `--client opencode`. [COMMANDER_OPENCODE.md](COMMANDER_OPENCODE.md) has the setup step by step, and `commander doctor --client opencode` checks it.
 
 3. **Check the lockdown** once per client version. It proves the commander's session gets only its own tools:
 
@@ -96,7 +96,7 @@ To see every scenario, with the benchmark's first and their seeds:
      ```
 
      Use the model names the `claude` CLI takes (`opus`, `sonnet`, `haiku`, or a full model id).
-   - **OpenCode:** open `C:\Users\ianri\AppData\Local\arma-harness\commander\workspace-opencode` as a project in the desktop app (or run OpenCode's CLI with that folder), start a new session, and pick the model there. The agent is already **commander**: the workspace has switched the others off.
+   - **OpenCode:** add `--model provider/model` to step 1's `start`, and it opens the commander's session with that model and types `start` into it, so steps 2 and 3 are done. Or by hand: open `C:\Users\ianri\AppData\Local\arma-harness\commander\workspace-opencode` as a project in the desktop app (or run OpenCode's CLI with that folder), start a new session, and pick the model there. The agent is already **commander**: the workspace has switched the others off.
 
    The battle record reads the model actually used from the session itself.
 

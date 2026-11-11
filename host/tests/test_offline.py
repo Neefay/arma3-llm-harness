@@ -300,13 +300,38 @@ def test_a_run_whose_server_is_up_is_left_alone(tmp_path, monkeypatch, no_arma):
     assert h.forget_dead_run() is False and h.state() is not None
 
 
-def test_a_game_the_user_started_is_never_forgotten(tmp_path, monkeypatch, no_arma):
+def test_a_game_the_user_started_is_left_alone_while_it_runs(tmp_path, monkeypatch, no_arma):
+    import os
+
+    from arma_harness.harness import Harness
+
+    monkeypatch.setenv("BRMH_HOME", str(tmp_path))
+    h = Harness()
+    run_with_server(h, os.getpid(), mode="attached", kind="attached")
+    assert h.forget_dead_run() is False and h.state() is not None
+
+
+def test_a_game_the_user_has_closed_is_forgotten(tmp_path, monkeypatch, no_arma):
+    """Or the next attach is refused, as "a run is already active", for a game that's gone."""
     from arma_harness.harness import Harness
 
     monkeypatch.setenv("BRMH_HOME", str(tmp_path))
     h = Harness()
     run_with_server(h, 999999, mode="attached", kind="attached")
-    assert h.forget_dead_run() is False and h.state() is not None
+    assert h.forget_dead_run() is True and h.state() is None
+
+
+def test_status_clears_a_run_whose_game_has_gone_and_says_so(tmp_path, monkeypatch, no_arma):
+    """It used to report the last battle as running, with only a bridge error, and an agent took that as true."""
+    from arma_harness.harness import Harness
+
+    monkeypatch.setenv("BRMH_HOME", str(tmp_path))
+    h = Harness()
+    run_with_server(h, 999999)
+    status = h.status()
+    assert status["running"] is False
+    assert "run r (launched, commander) had ended" in status["ended_run"]
+    assert "ended_run" not in h.status()
 
 
 def test_claimed_names_get_distinct_colors(tmp_path, monkeypatch, no_arma):
