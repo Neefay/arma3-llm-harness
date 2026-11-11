@@ -7,7 +7,10 @@ session's name, has the client start a turn with it: Claude Code through a chann
 OpenCode by posting the message into its session through OpenCode's server. Between messages nothing runs and nothing
 is billed.
 
-The thread survives the game going away: it waits, and carries on once a game is attached or started again.
+A wake belongs to the game run it was turned on in, and ends with it: when that game closes or is detached, the thread
+stops and says so. It used to wait for the next game instead, and an MCP server left running in OpenCode's background
+service, after its app was closed, picked up the next game the user started and would have posted their chat into a
+session nobody could see, each message a billed turn. A mission restart is the same run, and keeps it.
 """
 from __future__ import annotations
 
@@ -38,11 +41,16 @@ def wake_text(message: dict, kills: list[dict], name: str) -> tuple[str, dict, s
 
 class ChatWake:
     """Waits on the game's chat on a thread of its own and calls ``deliver(text, meta, display)`` for each message
-    addressed to ``name()``. ``listen`` is Harness.listen of a harness used only by this thread."""
+    addressed to ``name()``. ``listen`` is Harness.listen of a harness used only by this thread. ``run`` says which
+    game run is on now (None for none, after forgetting one whose game has exited): the wake ends as soon as it isn't
+    the one it started in, and ``ended`` is told why."""
 
     def __init__(self, listen: Callable[..., dict], name: Callable[[], str],
-                 deliver: Callable[[str, dict, str], None], log: Callable[[str], None]):
+                 deliver: Callable[[str, dict, str], None], log: Callable[[str], None],
+                 run: Callable[[], str | None] | None = None, ended: Callable[[str], None] | None = None):
         self.listen, self.name, self.deliver, self.log = listen, name, deliver, log
+        self.run, self.ended = run, ended
+        self.started_in = run() if run is not None else None
         self.stop = threading.Event()
         self.cursor: int | None = None
         self.delivered = 0
@@ -53,17 +61,43 @@ class ChatWake:
         self.thread.start()
         return self
 
+    def _over(self) -> str | None:
+        """Why this wake is over, if it is: its game run has gone."""
+        if self.run is None:
+            return None
+        try:
+            now = self.run()
+        except Exception:
+            return None
+        if now != self.started_in:
+            return "its game has closed or been detached" if now is None else "another game has been attached"
+        return None
+
+    def _end(self, why: str) -> None:
+        self.stop.set()
+        self.log(f"chat wake: off, because {why}")
+        if self.ended is not None:
+            self.ended(why)
+
     def _run(self) -> None:
         while not self.stop.is_set():
             try:
                 result = self.listen(name=self.name(), since=self.cursor, timeout=WAIT_S)
-            except Exception as exc:  # no game, or it went away: wait for one, from where we were
+            except Exception as exc:  # the game may be restarting a mission, or gone: which, the run says
+                why = self._over()
+                if why:
+                    self._end(why)
+                    return
                 if self.problem != str(exc):
-                    self.log(f"chat wake: waiting for a game ({exc})")
+                    self.log(f"chat wake: the game can't be reached ({exc}); trying again")
                 self.problem = str(exc)
                 self.stop.wait(RETRY_S)
                 continue
             self.problem = None
+            why = self._over()
+            if why:
+                self._end(why)
+                return
             self.cursor = result.get("next", self.cursor)
             if self.stop.is_set() or not result.get("found"):
                 continue

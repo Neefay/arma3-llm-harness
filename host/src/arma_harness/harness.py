@@ -11,6 +11,7 @@ import os
 import re
 import secrets
 import socket
+import threading
 import time
 from dataclasses import asdict, dataclass, field
 from importlib import resources
@@ -478,7 +479,9 @@ class Harness:
         return self.exec(_snippet("observe.sqf"), "all", timeout=5, strip=False)
 
     # Several agent sessions can listen at once, each under its own name ("Zeus, spawn me a car").
-    # Each name has a registry file in sessions/listeners/, owned by the process that claimed it.
+    # Each name has a registry file in sessions/listeners/, owned by the process that claimed it. Within a process,
+    # the tools and a chat wake's thread both update it: _LISTENERS keeps each read-and-write whole, or one undoes
+    # the other (a wake's own listen used to wipe the note that it was on, and status said it was off).
 
     def _listener_file(self, name: str) -> Path:
         return self.home.sessions / "listeners" / f"{name.lower()}.json"
@@ -498,26 +501,28 @@ class Harness:
         """Register this process as the session answering to ``name``. Refused if another live process
         holds it (two sessions answering the same name would both act on every message)."""
         name = check_agent_name(name)
-        held = self._listener(name)
-        pid = held.get("pid")
-        if pid and pid != os.getpid() and procutil.alive(pid) and not force:
-            raise HarnessError(f"name {name!r} is taken by another live session (pid {pid}); pick another "
-                               "name, or pass force=true if that session is gone")
-        others = [x for x in self._listeners() if x["name"].lower() != name.lower()]
-        state = {"name": name, "pid": os.getpid(), "claimed": time.time(), "since": None, "started": None,
-                 "deadline": None, "finished": None,
-                 "color": held.get("color") or _free_color(name, [x.get("color") for x in others])}
-        if held.get("pid") == os.getpid():
-            state.update({k: held.get(k) for k in ("since", "started", "deadline", "finished", "wake")})
-        self._listener(name, state)
+        with _LISTENERS:
+            held = self._listener(name)
+            pid = held.get("pid")
+            if pid and pid != os.getpid() and procutil.alive(pid) and _listening(held) and not force:
+                raise HarnessError(f"name {name!r} is taken by another live session (pid {pid}) that is listening; "
+                                   "pick another name, or pass force=true if that session is gone")
+            others = [x for x in self._listeners() if x["name"].lower() != name.lower()]
+            state = {"name": name, "pid": os.getpid(), "claimed": time.time(), "since": None, "started": None,
+                     "deadline": None, "finished": None,
+                     "color": held.get("color") or _free_color(name, [x.get("color") for x in others])}
+            if held.get("pid") == os.getpid():
+                state.update({k: held.get(k) for k in ("since", "started", "deadline", "finished", "wake")})
+            self._listener(name, state)
         return {"name": name, "color": state["color"], "others": [x["name"] for x in others]}
 
     def set_wake(self, name: str, via: str | None) -> None:
         """Record that ``name``'s messages wake its session (via a channel, or OpenCode), for listener_status."""
-        state = self._listener(name)
-        if state.get("pid") == os.getpid():
-            state["wake"] = via
-            self._listener(name, state)
+        with _LISTENERS:
+            state = self._listener(name)
+            if state.get("pid") == os.getpid():
+                state["wake"] = via
+                self._listener(name, state)
 
     def agent_color(self, name: str) -> list[float]:
         """The colour a claimed name keeps (distinct from the other sessions'), else the default pick."""
@@ -546,16 +551,19 @@ class Harness:
             raise HarnessError(f"could not install observers: {obs}")
         b = self.bridge()
         start = b.cursor() if since is None else since
-        state = self._listener(name)
-        state.update({"since": start, "started": time.time(), "deadline": time.time() + timeout, "finished": None})
-        self._listener(name, state)
+        with _LISTENERS:
+            state = self._listener(name)
+            state.update({"since": start, "started": time.time(), "deadline": time.time() + timeout,
+                          "finished": None})
+            self._listener(name, state)
         try:
             return self._listen(b, name, start, timeout, ack)
         finally:
-            state = self._listener(name)
-            if state.get("pid") == os.getpid():
-                state["finished"] = time.time()
-                self._listener(name, state)
+            with _LISTENERS:
+                state = self._listener(name)
+                if state.get("pid") == os.getpid():
+                    state["finished"] = time.time()
+                    self._listener(name, state)
 
     def listener_status(self, b: Bridge) -> dict:
         """Deterministic answer to "is the listener on?": the chat observer per interface machine (it
@@ -641,6 +649,20 @@ def _observer_boot_item() -> dict:
     always captured, whether or not a listen call is waiting."""
     code = '[[], compile (_this # 0)] remoteExec ["call", 0, "brmh_observers"]; true'
     return {"code": code, "target": "server", "args": [_snippet("observe.sqf")], "label": "observers"}
+
+
+_LISTENERS = threading.Lock()
+# A name is someone's while they listen for it: a wake on, a listen call running, or one that ended within this long,
+# the most a listen loop spends on one request between calls. After that a live process that stopped listening, such
+# as an MCP server left idle in OpenCode's background service, no longer keeps the name from a new session.
+NAME_IDLE_S = 600
+
+
+def _listening(state: dict) -> bool:
+    if state.get("wake"):
+        return True
+    last = max(state.get("finished") or 0, state.get("deadline") or 0, state.get("claimed") or 0)
+    return time.time() - last < NAME_IDLE_S
 
 
 _ACK_SQF = """hintSilent parseText format ["<t color='%3'>%1</t> %2", _this # 0, _this # 1, _this # 2]"""

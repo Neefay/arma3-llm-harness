@@ -77,12 +77,43 @@ def test_the_watcher_survives_a_delivery_that_fails():
 
 # -- the arma server as a Claude Code channel -------------------------------------------------------------------------
 
+def game_on(home, monkeypatch=None):
+    """A game run recorded in ``home``, its server this test process: alive for as long as the test runs."""
+    from arma_harness.harness import Harness, Proc, RunState
+
+    before = os.environ.get("BRMH_HOME")
+    os.environ["BRMH_HOME"] = str(home)  # Harness finds its home here
+    try:
+        Harness()._save(RunState(
+            run_id="r1", mode="launched", mission="demo", folder="", token="t", bridge_pid=os.getpid(), adapters=[],
+            overrides={}, procs=[Proc(os.getpid(), "server", "server", "", "")], started=0.0))
+    finally:
+        if before is None:
+            os.environ.pop("BRMH_HOME", None)
+        else:
+            os.environ["BRMH_HOME"] = before
+
+
 def run_server(*requests, home):
-    """The real arma MCP server over stdio, as a client starts it."""
-    lines = "".join(json.dumps({"jsonrpc": "2.0", **request}) + "\n" for request in requests)
-    done = subprocess.run([sys.executable, "-m", "arma_harness.mcp_server"], input=lines, capture_output=True,
-                          text=True, encoding="utf-8", timeout=60, env={**os.environ, "BRMH_HOME": str(home)})
-    return {row["id"]: row for row in map(json.loads, done.stdout.splitlines()) if "id" in row}
+    """The real arma MCP server over stdio, as a client starts it. Its input stays open until every request is
+    answered: closing it at once shut the server down with the last answer still in flight, now and then."""
+    proc = subprocess.Popen([sys.executable, "-m", "arma_harness.mcp_server"], stdin=subprocess.PIPE,
+                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8",
+                            env={**os.environ, "BRMH_HOME": str(home)})
+    rows: dict = {}
+    reader = threading.Thread(target=lambda: rows.update(
+        (row["id"], row) for row in map(json.loads, proc.stdout) if "id" in row), daemon=True)
+    reader.start()
+    for request in requests:
+        proc.stdin.write(json.dumps({"jsonrpc": "2.0", **request}) + "\n")
+    proc.stdin.flush()
+    wanted = {request["id"] for request in requests if "id" in request}
+    deadline = time.time() + 60
+    while not wanted <= set(rows) and time.time() < deadline:
+        time.sleep(0.05)
+    proc.stdin.close()
+    proc.wait(timeout=30)
+    return rows
 
 
 def test_the_server_is_a_channel_on_a_handshake_revision(tmp_path):
@@ -109,6 +140,7 @@ def test_chat_wake_answers_by_client(tmp_path, monkeypatch, client, ok):
 
     monkeypatch.setenv("BRMH_HOME", str(tmp_path))
     monkeypatch.setattr(mcp_server, "_harness", None)
+    game_on(tmp_path)
 
     async def go():
         async with Client(mcp_server.server, client_info=Implementation(name=client, version="1"),
@@ -127,6 +159,7 @@ def test_chat_wake_answers_by_client(tmp_path, monkeypatch, client, ok):
 
 def test_a_wake_reaches_claude_code_as_a_channel_notification(tmp_path):
     """The real server over stdio, as Claude Code sees it: the test wake comes out as a channel notification."""
+    game_on(tmp_path)
     proc = subprocess.Popen([sys.executable, "-m", "arma_harness.mcp_server"], stdin=subprocess.PIPE,
                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8",
                             env={**os.environ, "BRMH_HOME": str(tmp_path)})
@@ -176,6 +209,7 @@ def test_in_opencode_wakes_go_to_the_calling_session(tmp_path, monkeypatch):
             return {"data": {}}
 
     monkeypatch.setenv("BRMH_HOME", str(tmp_path))
+    game_on(tmp_path)
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(mcp_server, "_harness", None)
     monkeypatch.setattr(opencode, "Service", Server)
@@ -197,3 +231,107 @@ def test_in_opencode_wakes_go_to_the_calling_session(tmp_path, monkeypatch):
     assert body["text"].startswith('<channel source="arma" from="Nife">\nNife: zeus, hi')
     assert body["metadata"]["displayText"] == "💬 Nife → Zeus: zeus, hi"
     assert body["delivery"] == "queue"
+
+
+def test_claude_codes_opening_ends_in_the_handshake_not_a_dead_end(tmp_path):
+    """Claude Code opens with a stateless server/discover. The library let that make the whole connection stateless,
+    which then refused the initialize Claude Code fell back to with -32022, the one error it doesn't fall back from:
+    the arma tools didn't connect at all. Now the stateless request is refused in a way clients do fall back from."""
+    meta = {"io.modelcontextprotocol/protocolVersion": "2026-07-28", "io.modelcontextprotocol/clientCapabilities": {},
+            "io.modelcontextprotocol/clientInfo": {"name": "claude-code", "version": "2"}}
+    rows = run_server(
+        {"id": 1, "method": "server/discover", "params": {"_meta": meta}},
+        {"id": 2, "method": "initialize", "params": {"protocolVersion": "2026-07-28", "capabilities": {},
+                                                     "clientInfo": {"name": "claude-code", "version": "2"}}},
+        {"method": "notifications/initialized"},
+        {"id": 3, "method": "tools/list", "params": {}},
+        home=tmp_path)
+    assert rows[1]["error"]["code"] not in (-32022,)  # anything else, and the client falls back to initialize
+    assert rows[2]["result"]["protocolVersion"] == "2025-11-25"
+    assert rows[2]["result"]["capabilities"]["experimental"] == {"claude/channel": {}}
+    assert "arma_chat_wake" in {tool["name"] for tool in rows[3]["result"]["tools"]}
+
+
+def test_a_wake_needs_a_game(tmp_path, monkeypatch):
+    import anyio
+    from mcp import Client
+    from mcp.types import Implementation
+
+    from arma_harness import mcp_server
+
+    monkeypatch.setenv("BRMH_HOME", str(tmp_path))
+    monkeypatch.setattr(mcp_server, "_harness", None)
+
+    async def go():
+        async with Client(mcp_server.server, client_info=Implementation(name="claude-code", version="2"),
+                          mode="legacy") as session:
+            return json.loads((await session.call_tool("arma_chat_wake", {"test": False})).content[0].text)
+
+    reply = anyio.run(go)
+    assert reply["ok"] is False and "attach" in reply["error"]
+
+
+def test_a_wake_ends_with_its_game():
+    """It used to wait for the next game: a server left in OpenCode's background service took up the user's next
+    game and would have posted their chat into a session nobody could see."""
+    runs = iter(["r1", "r1", None])
+    ended, delivered = [], []
+
+    def listen(name, since, timeout):
+        time.sleep(0.01)
+        return {"found": False, "next": since}
+
+    wake = chatwake.ChatWake(listen, lambda: "Zeus", lambda *a: delivered.append(a), lambda text: None,
+                             run=lambda: next(runs, None), ended=ended.append).start()
+    wake.thread.join(3)
+    assert not wake.thread.is_alive() and wake.stop.is_set()
+    assert ended == ["its game has closed or been detached"]
+
+
+def test_another_game_ends_a_wake_too():
+    runs = iter(["r1", "r2"])
+    ended = []
+
+    def listen(name, since, timeout):
+        raise OSError("bridge unreachable")
+
+    wake = chatwake.ChatWake(listen, lambda: "Zeus", lambda *a: None, lambda text: None,
+                             run=lambda: next(runs, "r2"), ended=ended.append).start()
+    wake.thread.join(3)
+    assert ended == ["another game has been attached"]
+
+
+def test_a_name_held_by_a_session_that_stopped_listening_comes_free(tmp_path, monkeypatch):
+    """A server idling in OpenCode's background service kept "Luna" from every new session."""
+    from arma_harness import harness as harness_mod
+    from arma_harness.harness import Harness, HarnessError
+
+    monkeypatch.setenv("BRMH_HOME", str(tmp_path))
+    h = Harness()
+    other = os.getppid()  # alive, and not us
+    stale = {"name": "Luna", "pid": other, "claimed": time.time() - 3600, "since": 1,
+             "started": time.time() - 3600, "deadline": time.time() - 3540, "finished": None}
+    h._listener("Luna", stale)
+    assert h.claim_name("Luna")["name"] == "Luna"
+
+    h._listener("Luna", {**stale, "deadline": time.time() + 30})  # listening right now
+    with pytest.raises(HarnessError, match="is listening"):
+        h.claim_name("Luna")
+    h._listener("Luna", {**stale, "wake": "opencode session ses_x"})  # a wake on
+    with pytest.raises(HarnessError, match="is listening"):
+        h.claim_name("Luna")
+    monkeypatch.setattr(harness_mod, "NAME_IDLE_S", 0)
+    h._listener("Luna", {**stale, "finished": time.time() - 1})
+    assert h.claim_name("Luna")["name"] == "Luna"
+
+
+def test_the_wake_note_survives_the_listeners_own_updates(tmp_path, monkeypatch):
+    """The wake's thread rewrote the record after each listen, and the note that the wake was on went with it."""
+    from arma_harness.harness import Harness
+
+    monkeypatch.setenv("BRMH_HOME", str(tmp_path))
+    h = Harness()
+    h.claim_name("Zeus")
+    h.set_wake("Zeus", "claude code channel")
+    h.claim_name("Zeus")  # as every listen does
+    assert h._listener("Zeus")["wake"] == "claude code channel"

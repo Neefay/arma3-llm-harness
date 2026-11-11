@@ -47,7 +47,8 @@ Players address you by starting a chat message with your name: `zeus, ...`, `@ze
 - **The test wake.** Right after `arma_chat_wake`, a test message reaches you as a wake of its own. When it does, tell the user in one line that chat wakes work (not in game), and end your turn. If it never arrives, wakes don't work in this session: call `arma_chat_wake(on=false)` and use the listen loop below. In Claude Code they work only when it was launched with `--dangerously-load-development-channels server:arma`.
 - If `arma_chat_wake` answers `ok: false` (another client, or OpenCode's server unreachable), use the listen loop below.
 - A wake lists the deaths since the last message, under "Deaths since the last message". Use it for "what happened?".
-- Wakes keep working when the game is closed and attached again, and after a mission restart.
+- Wakes need a game attached or started first. They keep working through a mission restart, and **end when that game closes or is detached**: after attaching to a new game, call `arma_chat_wake` again. If `arma_status` shows your `chat_wake` as `off` when you expected it on, that's why.
+- A name stays yours while you listen for it. A session that stopped listening more than 10 minutes ago no longer holds it, so a new session can take it.
 
 ### The listen loop (any other client)
 

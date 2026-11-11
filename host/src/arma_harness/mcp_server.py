@@ -337,8 +337,9 @@ async def arma_chat_wake(on: bool = True, test: bool = True, ctx: Context = None
     of waiting in an arma_listen loop: you hear players even between turns, and nothing runs, or costs, while it's
     quiet. Works in Claude Code (launched with --dangerously-load-development-channels server:arma) and OpenCode;
     for other clients it says so, and you use arma_listen. A wake arrives as a <channel source="arma"> block: answer
-    it with arma_say, then end your turn. on=false turns it off. It keeps working if the game is closed and
-    attached again. test=true (the default) also sends you one test wake right away: if it doesn't reach you
+    it with arma_say, then end your turn. on=false turns it off. It needs a game attached or started, keeps working
+    through a mission restart, and ends when that game closes or is detached: turn it on again for the next one.
+    test=true (the default) also sends you one test wake right away: if it doesn't reach you
     shortly after this turn ends, wakes don't work in this session, so turn them off and use arma_listen."""
     global _wake, _wake_via
     if not on:
@@ -378,11 +379,27 @@ async def arma_chat_wake(on: bool = True, test: bool = True, ctx: Context = None
     else:
         return {"ok": False, "error": f"this client ({client or 'unknown'}) can't be woken from outside: use an "
                                       "arma_listen loop, as AGENTS.md describes"}
+    h().forget_dead_run()
+    if h().state() is None:
+        return {"ok": False, "error": "no game: attach to it (arma_attach) or start one first. A wake belongs to the "
+                                      "game it's turned on in, and ends when that game closes or is detached."}
     if _wake is not None:
         _wake.stop.set()
     listener = Harness()  # its own: the thread waits on the bridge while tools use theirs
+
+    def current_run() -> str | None:
+        listener.forget_dead_run()  # a closed game's run is kept until someone notices: notice here
+        state = listener.state()
+        return state.run_id if state else None
+
+    def ended(why: str) -> None:
+        global _wake_via
+        _wake_via = None
+        h().set_wake(_agent_name, None)
+
     h().claim_name(_agent_name)
-    _wake = chatwake.ChatWake(listener.listen, lambda: _agent_name, deliver, _log).start()
+    _wake = chatwake.ChatWake(listener.listen, lambda: _agent_name, deliver, _log, run=current_run,
+                              ended=ended).start()
     _wake_via = via
     h().set_wake(_agent_name, via)
     note = ("Claude Code delivers these only when it was launched with --dangerously-load-development-channels "
@@ -405,17 +422,27 @@ TEST_WAKE = ("Chat wake test: this message reached you through a wake, so player
 
 
 async def _serve() -> None:
-    """As server.run("stdio"), declaring the channel capability Claude Code wakes a session through.
+    """As server.run("stdio"), declaring the channel capability Claude Code wakes a session through, and serving only
+    the initialize handshake.
 
-    Only the initialize handshake: a channel needs a connection that stays open both ways, and Claude Code doesn't
-    register a server that settles on the stateless 2026-07-28 revision as one, and says nothing. Without a
-    server/discover handler, a client that asks gets "method not found" and falls back to initialize, where the
-    library answers with the newest revision that has a handshake. tests/test_chatwake.py checks both."""
+    A channel needs a connection that stays open both ways: Claude Code doesn't register a server that settles on the
+    stateless 2026-07-28 revision as one, and says nothing. The library would let the client's first request choose:
+    Claude Code opens with a stateless server/discover, and the connection would be stateless for good, refusing the
+    initialize it falls back to with -32022, the one error clients don't fall back from. That's how removing the
+    discover handler alone broke the arma tools in Claude Code. Serving the handshake era from the start, a stateless
+    first request gets "invalid request" instead, which clients do fall back from, to initialize. The library answers
+    that with the newest revision that has a handshake. tests/test_chatwake.py replays Claude Code's opening."""
+    from mcp.server.runner import _serve_legacy_stream  # the library's own era-specific loop
+
     low = server._lowlevel_server
-    low._request_handlers.pop("server/discover", None)
-    async with stdio_server() as (read_stream, write_stream):
-        await low.run(read_stream, write_stream,
-                      low.create_initialization_options(experimental_capabilities={"claude/channel": {}}))
+    low._request_handlers.pop("server/discover", None)  # and a plain one gets "method not found"
+    options = low.create_initialization_options(experimental_capabilities={"claude/channel": {}})
+    async with stdio_server() as (read_stream, write_stream), low.lifespan(low) as state:
+        try:
+            await _serve_legacy_stream(low, read_stream, write_stream, lifespan_state=state, session_id=None,
+                                       init_options=options, raise_exceptions=False)
+        finally:
+            await write_stream.aclose()
 
 
 def main() -> None:
